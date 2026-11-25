@@ -29,6 +29,7 @@ import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } fro
 import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
+import { migrateWorkspaceAgentDeviceDir } from '../workspace/noindex-folders.ts';
 import { MODE_EXPO, detectDevServer, readMetroTunnel } from '../stimd/metro/state.ts';
 import { repackReachRefusal } from '../stimd/metro/server-repack.ts';
 import {
@@ -824,8 +825,8 @@ export async function startDevServer(
               message: `The managed ${record.provider} tunnel is no longer verified running before supervisor startup.`,
               remedy:
                 stopped.status === 'failed'
-                  ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason}. The tunnel record remains available to \`stim stop\`.`
-                  : 'Retry `stim start --remote`.',
+                  ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason}. The tunnel record remains available to \`stim stop\`. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.`
+                  : 'Retry `stim start --remote`. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.',
             });
           } else startMetro(record.url);
           publicOrigin = record.url;
@@ -854,8 +855,8 @@ export async function startDevServer(
             message: `The managed ${record.provider} tunnel is no longer verified running before the dev server became ready.`,
             remedy:
               stopped.status === 'failed'
-                ? `The tunnel cleanup also failed: ${stopped.reason}. Run \`stim stop\`, then retry.`
-                : 'Run `stim stop`, then `stim start --remote`.',
+                ? `The tunnel cleanup also failed: ${stopped.reason}. Run \`stim stop\`, then retry. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.`
+                : 'Run `stim stop`, then `stim start --remote`. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.',
           });
         };
 
@@ -1227,6 +1228,7 @@ export async function startDevServer(
     }
   };
   try {
+    migrateWorkspaceAgentDeviceDir(root);
     const facts = await run();
     try {
       writeAgentDeviceBootHook(root);

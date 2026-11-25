@@ -22,7 +22,7 @@ procedures too long for a remedy.
 
 `start --json`, `ios --json`, `android --json` and `macos --json` report
 `agentDevice: { stateDir }`, an absolute path under
-`$STIM_HOME/workspaces/<name>/agent-device/`. Each `status --json` environment
+`$STIM_HOME/workspaces/<name>/agent-device.noindex/`. Each `status --json` environment
 reports the same field, shared by its slots, without creating the directory.
 Set `AGENT_DEVICE_STATE_DIR` to it when driving a device yourself; see
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
@@ -89,6 +89,13 @@ checkout's fitness as a seed. It reports missing or stale dependencies,
 CocoaPods state, cache conflicts, device capacity, remote session problems and
 fingerprint evaluation problems. The checkout is left untouched unless
 `--fix` is passed.
+
+In a git repository, doctor also notes the linked worktrees: their count, real
+size and the bytes kept worktrees hold, up to three old or large kept ones with
+their reason, how old the saved verdicts and sizes are, and the totals for
+every repository maintenance has checked on this machine. It reads only the
+verdicts and sizes maintenance saved; it never measures or checks a worktree.
+Run `stim worktree list` for current numbers.
 
 Fingerprint checks evaluate project configuration, including
 `fingerprint.config.js`, in a child process. Doctor reads a project eas-cli's
@@ -1448,7 +1455,10 @@ stim test --list --json
   starts, is not counted and does not hold the slot.
 - The command gets `STIM_TEST_RUN`, naming its slot claim. A `stim test`
   started inside it while that claim is held takes no slot and runs in the
-  caller's process group, so the outer run stops anything it leaves behind. Stim does not check that the inner run really descends from the
+  caller's process group, so the outer run stops anything it leaves behind. It
+  still passes its own worker count, so the
+  `concurrency.maxTests x concurrency.testWorkers` bound on the runs Stim
+  sizes does not include nested runs. Stim does not check that the inner run really descends from the
   outer one: a process that inherited the value runs without a slot until the
   outer run ends. A nested `stim test` started with a cleared environment, as
   with `env -i`, has no `STIM_TEST_RUN` and queues for a slot its own outer
@@ -2564,6 +2574,38 @@ change. A tracked file marked `assume-unchanged`, or `skip-worktree` with the
 file on disk, hides edits from `git status`, so removal refuses and names it
 with the `git update-index` command that shows it, until you pass `--force`.
 Files a sparse checkout leaves out are not on disk and do not count.
+
+## `worktree list`
+
+```text
+stim worktree list
+stim worktree list --all --json
+```
+
+Lists linked worktrees by real size, with branch, idle age, apparent size and
+cleanup's verdict. `old` means idle at least 30 days; `large` means at least
+1 GiB real. The summary splits kept bytes by reason. `--all` lists repositories
+from saved maintenance observations and marks unobserved worktrees not checked.
+Each `--all` repository header shows when its worktrees were last checked,
+and the oldest check when it differs by more than a day. A repository with no
+observations says the maintenance worktree check has not run; run
+`stim worktree list` there for current verdicts. When automatic maintenance is
+off, a notice on stderr explains that saved verdicts are not refreshed.
+A removal that `maintenance.removeFinishedWorktrees` or
+`maintenance.removeIdleWorktrees` turns off, or an idle removal while
+`maintenance.olderThanDays` is 0, is listed as kept, reason `removal-off`,
+naming the setting.
+JSON includes top-level `daemonMode` (`on`, `report` or `off`) and each
+repository's `checkedAt` (newest) and `oldestCheckedAt` (oldest), or null with
+no observations. For a current repository check, both are now. Per-worktree
+`checkedAt` and `measuredAt` remain the verdict and measurement times.
+Neither form deletes anything. A worktree with no measure, or one over an hour
+old, is walked again, within a two-minute budget for the whole command; what the
+budget leaves unwalked keeps its older measure, with its date in `measuredAt`, or prints `not measured` when it has none. JSON includes measurement and check dates.
+Real size is the private bytes of the whole worktree; apparent size is its
+allocated bytes. Shared clone and hard-link bytes are excluded from real size
+when the volume can count them (APFS on macOS, link counts on Linux); otherwise,
+or when the walk could not read every file, real size is unknown. Neither size includes Stim workspace data outside the checkout.
 
 ## `gc`
 

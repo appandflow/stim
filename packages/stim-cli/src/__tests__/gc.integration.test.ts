@@ -3602,6 +3602,7 @@ test.each(['normal', 'critical'] as const)(
       join(fakeHome, '.agent-device'),
       join(tmpHome, 'server', 'agent-device'),
       join(workspaceDir(project), 'agent-device'),
+      join(workspaceDir(project), 'agent-device.noindex'),
     ];
     for (const dir of dirs) {
       mkdirSync(dir, { recursive: true });

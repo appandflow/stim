@@ -126,7 +126,7 @@ test('a name that was removed from the settings is refused and warned about like
   ]);
 });
 
-test('removed names at machine scope are reported with their file and unset refuses them as on main', async () => {
+test('retired 1.x names at machine scope are reported with their file and unset removes them', async () => {
   const machine = join(home, 'config.json');
   writeFileSync(
     machine,
@@ -159,11 +159,12 @@ test('removed names at machine scope are reported with their file and unset refu
   );
   expect(note).toEqual([]);
 
-  const before = readFileSync(machine, 'utf-8');
-  const unset = await settings(['unset', 'remote.buildMode']);
-  expect(unset.exitCode).toBe(1);
-  expect(unset.note.join('\n')).toContain('"remote.buildMode" is not a Stim setting.');
-  expect(readFileSync(machine, 'utf-8')).toBe(before);
+  const unset = await settings(['unset', 'devices.reclaimIdleMinutes', '--scope', 'machine']);
+  expect(unset).toMatchObject({ exitCode: 0, out: [`unset devices.reclaimIdleMinutes in ${machine}`] });
+  const after = JSON.parse(readFileSync(machine, 'utf-8'));
+  expect(after.devices).toBeUndefined();
+  expect(after.remote).toEqual({ buildMode: 'force', machines: [] });
+  expect(after.concurrency).toEqual({ maxBuilds: 2 });
 });
 
 test('machine records are not unknown keys and unset refuses to remove them', async () => {

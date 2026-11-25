@@ -1,3 +1,4 @@
+import { linkedWorktreeFindings } from '../diagnostics/doctor-worktrees.ts';
 import { trashHealthFindings } from '../diagnostics/doctor-trash.ts';
 import { gcMarkHealthFindings } from '../diagnostics/doctor-gc-marks.ts';
 import { diskPacerFindings } from '../diagnostics/doctor-gc-pacer.ts';
@@ -22,8 +23,7 @@ import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry 
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import chalk from 'chalk';
 import { defineOp, type Op } from '../cli/define-op.ts';
-import { hungRead } from '../workspace/bounded-read.ts';
-import { exitCli, runProcessOperation } from '../cli-operation.ts';
+import { runProcessOperation } from '../cli-operation.ts';
 import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
@@ -657,6 +657,7 @@ async function assembleDoctorReport(
   const { settingsContext, machineSettings, settings, selected, doctors } = prepared;
   const env = operation?.env ?? process.env;
   const io = doctorIo(operation);
+  const worktrees = withoutUnhandledRejection(linkedWorktreeFindings(root, operation));
   const stim = await inspectVersions(version);
 
   const { findings, context } = await runDoctor(
@@ -793,6 +794,7 @@ async function assembleDoctorReport(
     ...daemonFindings(answered, { probed: true, now: decidedAt }),
     ...gcMarkHealthFindings(answered, decidedAt),
     ...diskPacerFindings(answered, decidedAt),
+    ...(await worktrees),
     ...(await trashHealthFindings(decidedAt, operation?.signal)),
   );
   const silent = unansweredFindings(answered, decidedAt);
@@ -885,7 +887,6 @@ export function doctorOp(
       const { selected, doctors } = prepared;
       const finish = () => {
         recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
-        if (hungRead() !== null) exitCli(typeof process.exitCode === 'number' ? process.exitCode : 0);
       };
 
       if (opts.fix) {

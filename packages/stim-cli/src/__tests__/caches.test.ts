@@ -14,7 +14,7 @@ import { cacheUser } from '../cache/cache-claim.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
-import { discoverCaches, jestCacheDir, pruneCache, sizeCaches } from '../cache/caches.ts';
+import { discoverCaches, jestCacheDir, pruneCache, pruneCacheAsync, sizeCaches } from '../cache/caches.ts';
 import { emptyCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
@@ -434,6 +434,28 @@ test.skipIf(windows)(
     }
   },
 );
+
+describe.skipIf(windows)('symlinked intermediate cache directories', () => {
+  test.each([
+    ['pruneCache', pruneCache],
+    ['pruneCacheAsync', pruneCacheAsync],
+  ])('%s preserves aged files behind a symlinked intermediate cache directory', async (_name, prune) => {
+    const dir = join(tmpHome, 'cache');
+    const outside = join(tmpHome, 'outside-cache');
+    const entry = join(outside, 'aged-entry');
+    mkdirSync(dir);
+    mkdirSync(outside);
+    writeFileSync(entry, 'keep');
+    age(entry);
+    symlinkSync(outside, join(dir, 'linked-directory'), 'dir');
+
+    const cache = makeCacheDescriptor({ dir, prune: 'entries', entriesDepth: 2 });
+    const result = await prune(cache, { olderThanDays: 30 });
+
+    expect(readFileSync(entry, 'utf8')).toBe('keep');
+    expect(result.removed).toBe(0);
+  });
+});
 
 test.skipIf(windows)('a symlinked entry in the Jest cache is never removed', async () => {
   processTable('');

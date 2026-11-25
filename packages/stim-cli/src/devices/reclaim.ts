@@ -63,7 +63,7 @@ import { runOperationFile } from '../engine/operation-exec.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
-import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceStateDirs, workspaceDir } from '../workspace/paths.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { emptyWorkspaceDir, withIdleWorkspace } from '../workspace/in-use.ts';
 import {
@@ -483,8 +483,8 @@ async function removeWorkspaceOutput(
   lockDir: string,
   operation?: StimContext,
 ): Promise<void> {
-  const stateDir = workspaceAgentDeviceDir(path);
-  if (agentDeviceDaemon(stateDir) !== 'none') {
+  for (const stateDir of workspaceAgentDeviceStateDirs(path)) {
+    if (agentDeviceDaemon(stateDir) === 'none') continue;
     const exec = getExecutor();
     try {
       if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');

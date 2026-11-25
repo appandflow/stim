@@ -176,8 +176,24 @@ leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary:
-        'every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules',
-      body: () => `  stim start --json
+        'every field of the start, ios, android, macos, web, reload, revive and worktree list payloads, the error contract, the device rules',
+      body: () => `  worktree list --json is a separate payload:
+    { scope: "repository" | "machine", daemonMode: "on" | "report" | "off",
+      repositories: [{ repository, checkedAt, oldestCheckedAt,
+      worktrees: [{ path, branch, idleDays, realBytes, apparentBytes,
+        measuredAt, willRemove, reason, detail, checkedAt, old, large }],
+      summary: Summary }], total: Summary }
+    Summary = { count, realBytes, unmeasured, unchecked, removeBytes,
+      keptBytes, kept: [{ reason, count, realBytes }] }
+    Paths are absolute. Unknown values are null; reason is the kept gc code or removal-off.
+    Repository checkedAt/oldestCheckedAt are the newest/oldest observation times
+    (--all), or now (current check); null when never checked. --all uses saved
+    observations; unchecked worktrees have willRemove null.
+    Real size is whole-worktree private bytes (APFS or Linux link counts),
+    unknown when unavailable; apparent size is allocated bytes. Neither includes
+    Stim workspace data outside the checkout.
+
+  stim start --json
 
   port            the Metro port RESERVED for this workspace
   supervisorPid   the pid of the dev server stimd runs, or NULL when a dev
@@ -2025,8 +2041,8 @@ RULES
     running daemon's. running comes from a live claim at
     $STIM_HOME/daemon/claim. older is a stim-daemon from before Stim 2.0 that
     holds that claim exclusively, with its pid and the command that stops it;
-    verified is true when its claim has the record that daemon writes, which
-    the next stimd start stops. It is not the running daemon, so running is
+    verified is true when its claim has the record that daemon writes; stimd
+    never stops it. It is not the running daemon, so running is
     null and the old daemon's tick and pressure are not reported. lastTickAt and
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null

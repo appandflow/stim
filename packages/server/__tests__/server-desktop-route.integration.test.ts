@@ -48,6 +48,7 @@ import * as stimSelf from 'stim/internal/api-self';
 import * as shareLinks from 'stim/internal/share-links';
 import { type ServerMessage } from '../src/protocol.ts';
 import { runNodeCommand } from '../src/stim-command.ts';
+import { createRequestLog } from '../src/request-log.ts';
 import {
   capabilitiesFor,
   createPairingToken,
@@ -1238,8 +1239,13 @@ if (delayed) {
     }
   });
 
-  it('applies the report byte quota to both get and pushed errors', async () => {
+  it('applies the report byte quota to both get and pushed errors, and logs the failed report target', async () => {
+    const lines: string[] = [];
     await start({
+      requestLog: createRequestLog({
+        service: (line) => lines.push(line),
+        debug: { enabled: () => false, log: () => {} },
+      }),
       commandLimits: { maxOutputBytes: 1 },
       env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_DAEMON: 'off' },
     });
@@ -1247,6 +1253,9 @@ if (delayed) {
     expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
       error: { code: 'stim-failed', message: 'stim gc printed more than 1 bytes.' },
     });
+    expect(lines).toEqual([
+      expect.stringMatching(/request failed method=desktop\.reports\.get .*report=gc .*error=stim-failed$/),
+    ]);
     await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(await client.next()).toMatchObject({
       event: 'desktop-report',

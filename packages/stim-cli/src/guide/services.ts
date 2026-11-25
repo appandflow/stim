@@ -42,7 +42,8 @@ FIELDS
   orphanTeardown  overrides teardown for a gone folder; runs from home,
                   so it must name its target by id
   ready           a command that exits 0 once it serves; default: every port
-                  listens, else the process lives. Waited up to 60 seconds
+                  listens, else it lives one second after the start. Waited
+                  up to 60 seconds
   ports           named port labels it owns, a list, or an object of label to
                   the environment variable that receives the number (or null),
                   or to { "env": name, "reverse": false } for a port the app
@@ -51,6 +52,10 @@ FIELDS
                   id>, stable for the workspace path, for per-workspace
                   container and volume names
   env             more variables; values may use placeholders
+  envFile         a dotenv file relative to the workspace, inside its
+                  checkout, read at each launch; env, ports and idEnv win.
+                  Its values stay out of Stim state and services env; the
+                  orphan teardown runs without it
   cwd             its folder, relative to the workspace (default the
                   workspace), anywhere in its checkout, e.g. ../api
   dependsOn       services started before it and stopped after it; naming
@@ -107,6 +112,10 @@ EXAMPLES
 A web server that takes its port as an argument:
 
   "services": { "web": { "ports": ["web"], "start": "python3 -m http.server {web}" } }
+
+An API that listens before it answers, ready once its health URL does:
+
+  "api": { "ports": ["api"], "start": "node api.js {api}", "ready": "curl -sf http://127.0.0.1:{api}/health" }
 
 A mock API server, its port by environment:
 

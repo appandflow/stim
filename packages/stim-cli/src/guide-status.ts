@@ -10,7 +10,7 @@ import { readSettingsContext, unknownEntries } from './workspace/settings-payloa
 import {
   isJsonObject,
   parseUnit,
-  REMOVED_SETTINGS,
+  RETIRED_SETTING_KEYS,
   UPGRADE_GUIDE_URL,
   type DoctorRunRecord,
   type ProjectRecord,
@@ -151,28 +151,6 @@ const majorOf = (version: string | undefined): number | null => {
 const listed = (names: string[]): string =>
   names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
 
-/** The setting keys a 1.x Stim read that 2.0 does not; other unknown keys are left to stim settings and doctor. */
-const RETIRED_KEYS = new Set([
-  ...[...REMOVED_SETTINGS].flatMap(([key, entry]) => (entry.kept ? [] : [key])),
-  'remote.buildMode',
-  'daemon.enabled',
-  'caches.injectMetroStore',
-  'devices.reclaimIdleMinutes',
-  'share.webrtc',
-  'budget.maxCommittedMemoryGb',
-  'budget.maxLiveWorkspaces',
-  'maintenance.pressureCheckMinutes',
-  'maintenance.sizeCheckMinutes',
-  'maintenance.maxLoadPerCore',
-  'maintenance.memoryPressureLevel',
-  'maintenance.memoryWarningMinutes',
-  'maintenance.minAvailableMemoryGb',
-  'maintenance.capTargetPercent',
-  'maintenance.idleCheckMinutes',
-  'maintenance.urgentFreeDiskGb',
-  'maintenance.pressureProtectMinutes',
-]);
-
 /** The environment variables a 1.x Stim read that 2.0 refuses or ignores; the migration guide names each one's remedy. */
 const RETIRED_EXPORTS = [
   'STIM_MAINTENANCE',
@@ -312,7 +290,7 @@ async function upgradeLeftovers(
       ...new Set(
         unknownEntries(await readSettingsContext(cwd, env))
           .map((entry) => entry.key)
-          .filter((key) => RETIRED_KEYS.has(key)),
+          .filter((key) => RETIRED_SETTING_KEYS.has(key)),
       ),
     ];
     if (keys.length) found.push(`retired settings (${listed(keys)})`);

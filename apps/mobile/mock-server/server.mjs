@@ -28,6 +28,7 @@ const { values } = parseArgs({
     port: { type: 'string', default: '7787' },
     name: { type: 'string', default: 'studio' },
     read: { type: 'boolean', default: false },
+    'no-device-rename': { type: 'boolean', default: false },
     workspaces: { type: 'string' },
     'free-gb': { type: 'string', default: '212' },
     overlay: { type: 'string' },
@@ -55,6 +56,7 @@ const recordingFor = (params) => {
 let recordingEnabled = true;
 const hash = (token) => createHash('sha256').update(token).digest('hex');
 
+const deviceNames = new Map();
 let deviceKeys = new Set();
 try {
   deviceKeys = new Set(JSON.parse(readFileSync(DEVICES_FILE, 'utf8')));
@@ -310,7 +312,7 @@ async function authenticate(ws, data, isBinary) {
   }
   const key = accepted.clientKey.toString('base64url');
   if (accepted.mode !== MODE_FIRST_CONTACT) {
-    if (deviceKeys.has(key)) return { socket: accepted.socket, device: { key, name: 'Phone' } };
+    if (deviceKeys.has(key)) return { socket: accepted.socket, device: { key, name: deviceNames.get(key) ?? 'Phone' } };
     ws.close(CLOSE_REFUSED, 'unauthorized');
     return null;
   }
@@ -369,6 +371,8 @@ function serve(socket, device) {
       notificationLog: NOTIFICATION_LOG,
       onNotifications: (send) => notificationListeners.add(send),
       readOnly: values.read,
+      noDeviceRename: values['no-device-rename'],
+      onDeviceRename: (name) => deviceNames.set(device.key, name),
       get recordingEnabled() {
         return recordingEnabled;
       },

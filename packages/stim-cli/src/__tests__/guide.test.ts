@@ -1,4 +1,4 @@
-import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
+import { REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import iosCommand from '../commands/ios.ts';
 import androidCommand from '../commands/android.ts';
 import { runCli } from '../cli/define-op.ts';
@@ -1059,12 +1059,11 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(renderSection('agent', 'device')).toContain('stim agent-device');
 });
 
-test('the hosted device sections name every command the agent-device driver allows or refuses', () => {
+test('the hosted device sections name every public command the agent-device driver refuses', () => {
   const clientSide = REFUSED_DEVICE_COMMANDS.auth;
-  const named = [
-    ...Object.keys(DEVICE_COMMAND_RULES),
-    ...Object.keys(REFUSED_DEVICE_COMMANDS).filter((name) => REFUSED_DEVICE_COMMANDS[name] !== clientSide),
-  ];
+  const named = Object.keys(REFUSED_DEVICE_COMMANDS).filter(
+    (name) => REFUSED_DEVICE_COMMANDS[name] !== clientSide && !name.includes('_') && name !== 'runtime',
+  );
   for (const section of ['hosted-ios', 'hosted-android']) {
     const words = new Set(renderSection('lifecycle', section)?.split(/[^a-z-]+/));
     expect(named.filter((name) => !words.has(name))).toEqual([]);

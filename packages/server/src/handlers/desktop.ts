@@ -537,6 +537,7 @@ function desktopReport(ctx: ConnectionContext, id: RequestId, method: string, pa
     return send(ctx.socket, { id, result: {} });
   }
   if (method === 'desktop.reports.get') {
+    ctx.tracker.step(id, 'report', target.report);
     return void ctx.inProcessRead<'desktop.reports.get'>(
       id,
       `stim ${target.report}`,

@@ -543,11 +543,14 @@ export async function pruneCacheAsync(
     const next: string[] = [];
     for (const parent of entries) {
       signal?.throwIfAborted();
-      const names = await readdir(parent).catch((error: NodeJS.ErrnoException) => {
+      const names = await readdir(parent, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') unlisted++;
         return [];
       });
-      next.push(...names.map((name) => join(parent, name)));
+      for (const entry of names) {
+        if (depth < (cache.entriesDepth ?? 1) - 1 && entry.isSymbolicLink()) continue;
+        next.push(join(parent, entry.name));
+      }
     }
     entries = next;
   }
@@ -598,11 +601,14 @@ function entriesAtDepth(dir: string, depth: number): string[] {
     for (const parent of level) {
       let names;
       try {
-        names = readdirSync(parent);
+        names = readdirSync(parent, { withFileTypes: true });
       } catch {
         continue;
       }
-      for (const name of names) next.push(join(parent, name));
+      for (const entry of names) {
+        if (i < depth - 1 && entry.isSymbolicLink()) continue;
+        next.push(join(parent, entry.name));
+      }
     }
     level = next;
   }

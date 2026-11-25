@@ -21,13 +21,10 @@ import {
   tryAcquireClaim,
   type ClaimHolder,
 } from '@stim-cli/core/ownership-claim';
-import { execStartOverride } from '@stim-cli/core';
 import { inspectProcessIdentity, sameProcessRecord, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { readJsonObject, stimBuildDigest, stimdClaimRoot, stimdRecordFile, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
-  jobArguments,
-  withProgramArguments,
   DEFAULT_LABEL,
   DEFAULT_PORT,
   validateLabel,
@@ -48,7 +45,6 @@ import {
   type ServiceJob,
   type ServiceManager,
 } from './service-manager.ts';
-import { editUnit } from './service-unit.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { tailscalePackage } from './tailnet-helper.ts';
 import { markTailnet } from './tailnet-marker.ts';
@@ -415,58 +411,6 @@ function engineShim(env: NodeJS.ProcessEnv = process.env): string | null {
 const unitShim = (): string | null => (serviceManager().name === 'taskscheduler' ? null : engineShim());
 
 /**
- * Moves the LaunchAgent or systemd unit `label` onto the engine store's `bin/stimd` shim and returns whether the running
- * server must restart to run it, which is when this call changed what the manager will start.
- *
- * A unit that names node and a Stim script (`<node> <copy>/bin/stim.mjs serve --service`, as Stim 1.42 wrote it) is
- * rewritten to name the shim with the same options. launchd reads the file only when the job is bootstrapped. systemd
- * restarts a job from the definition it already loaded, so a unit that names the shim also has to be loaded: this
- * reloads it without restarting the job and checks `systemctl show` for the shim, which a later boot retries when a
- * reload failed. A drop-in or multi-line `ExecStart=` is refused and the file left as written; a symlinked unit is
- * written through.
- */
-export async function rewriteUnitToShim(label: string): Promise<boolean> {
-  const manager = serviceManager();
-  const stimd = unitShim();
-  const installed = stimd ? await readInstalled(label) : null;
-  if (!stimd || !installed?.managed || installed.script === null || installed.port === null) return false;
-  const path = plistPath(label);
-  let changed = false;
-  if (installed.node !== null) {
-    const text = readFileSync(path, 'utf8');
-    const args = [
-      ...(installed.host ? [installed.host, 'run'] : []),
-      ...jobArguments({ ...installed, node: installed.node, script: installed.script, port: installed.port, stimd }),
-    ];
-    const rewritten =
-      manager.name === 'launchd' ? withProgramArguments(text, args) : editUnit(text, { programArguments: args });
-    if (rewritten !== text) {
-      const problem = manager.name === 'systemd' ? execStartOverride(path, text) : null;
-      if (problem) throw new ServiceError(`${problem}; not rewriting ${label} to the engine shim.`);
-      const target = realpathSync(path);
-      const partial = `${target}.${process.pid}.tmp`;
-      writeFileSync(partial, rewritten, { mode: 0o644 });
-      renameSync(partial, target);
-      changed = true;
-    }
-  } else if (installed.script !== stimd) return false;
-  if (manager.loadedCommand) {
-    const loadsShim = async () => ((await manager.loadedCommand?.(label)) ?? '').includes(`path=${stimd} ;`);
-    if (!(await loadsShim())) {
-      const reloaded = await manager.reload?.();
-      if (!reloaded?.ok || !(await loadsShim())) {
-        const override = execStartOverride(path, readFileSync(path, 'utf8'));
-        throw new ServiceError(
-          `${manager.noun} has not loaded the engine shim for ${label}${override ? ` (${override})` : reloaded?.ok ? '' : ` (${reloaded?.stderr.trim()})`}; ${manager.restartRemedy(label)} when no build runs.`,
-        );
-      }
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-/**
  * Why the LaunchAgent `installed` describes is stale (`staleLaunchAgent`), with the install that writes and loads it
  * again; null when it is current or the service is not a LaunchAgent. Reads only.
  */
@@ -488,7 +432,7 @@ async function launchdStale(
  */
 function systemdStale(installed: InstalledService): { reason: string; remedy: string } | null {
   if (serviceManager().name !== 'systemd' || !installed.managed) return null;
-  const reason = staleSystemdUnit(readFileSync(plistPath(installed.label), 'utf8'));
+  const reason = staleSystemdUnit(installed, readFileSync(plistPath(installed.label), 'utf8'), unitShim());
   if (!reason) return null;
   const fill = installed.env.length ? ', with each <value> set to what the service sets now' : '';
   return { reason, remedy: `run \`${serviceInstallCommand(installed)}\` once when no build runs${fill}` };
@@ -603,7 +547,7 @@ export async function installJob(
   } catch (error) {
     if (oldPlist !== null) writeFileSync(path, oldPlist, { mode: 0o644 });
     if (routeCreated && serve)
-      await run(tailscale, ['serve', `--https=${serve.port}`, 'off'], tailscaleEnv(process.env));
+      await run(tailscale, ['serve', `--https=${serve.port}`, '--set-path=/', 'off'], tailscaleEnv(process.env));
     if (bootstrapped) {
       try {
         await unload(options.label, options.port);
@@ -1112,10 +1056,14 @@ async function uninstallJob(label: string): Promise<string[]> {
   await unload(label, null);
   await requireUninstallPortReleased(label, installed, routeOff);
   if (routeOff && tailscale) {
-    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
+    const removed = await run(
+      tailscale,
+      ['serve', `--https=${routeOff}`, '--set-path=/', 'off'],
+      tailscaleEnv(process.env),
+    );
     if (!removed.ok) {
       throw new ServiceError(
-        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}. Retry \`stim service uninstall --label ${label}\`, or remove the route with \`tailscale serve --https=${routeOff} off\` and then retry.`,
+        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}. Retry \`stim service uninstall --label ${label}\`, or remove the route with \`tailscale serve --https=${routeOff} --set-path=/ off\` and then retry.`,
       );
     }
     notes.push(`Removed the tailscale serve route on https port ${routeOff}.`);

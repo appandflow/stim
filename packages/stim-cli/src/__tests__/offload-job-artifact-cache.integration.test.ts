@@ -613,8 +613,9 @@ if (process.argv[2] !== 'build') {
     expect(await warm('builder', 'app-1')).toEqual({ build: false, project: false });
     await build('app-1');
     expect(await warm('builder', 'app-1')).toEqual({ build: true, project: false });
+    const claimRoot = `${join(host.clientDir('builder'), 'repos', 'app-1')}.claims`;
     const busy = tryAcquireClaim({
-      root: `${join(host.clientDir('builder'), 'repos', 'app-1')}.claims`,
+      root: claimRoot,
       mode: 'exclusive',
       label: 'build worker',
     }).acquired;
@@ -624,6 +625,14 @@ if (process.argv[2] !== 'build') {
       'another build of this repository is running here',
     );
     releaseClaim(busy);
+    expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty('result.capacity.declined', null);
+    const querying = tryAcquireClaim({ root: claimRoot, mode: 'shared', label: 'Completed artifact query' }).acquired;
+    if (!querying) throw new Error('Expected to hold the shared area claim.');
+    expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty(
+      'result.capacity.declined',
+      'another build of this repository is running here',
+    );
+    releaseClaim(querying);
     expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty('result.capacity.declined', null);
     expect(await warm('builder', 'app-1', { platform: 'android', project })).toEqual({ build: false, project: false });
     expect(await warm('builder', 'app-1', { platform: 'ios', project: 'fedcba9876543210' })).toEqual({

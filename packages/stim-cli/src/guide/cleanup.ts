@@ -3,7 +3,17 @@ import type { GuideTopic } from './types.ts';
 
 const cleanup: GuideTopic = {
   summary: 'Where simulators come from, and how they get reclaimed',
-  preamble: () => `DEVICE SLOTS
+  preamble: () => `WORKTREE LIST
+
+stim worktree list shows linked worktrees, real and apparent sizes, idle age,
+old/large marks and cleanup verdicts. --all uses saved maintenance observations
+across repositories. Both only report and never delete. --json prints one payload
+(guide facts payloads). Sizes missing or over an hour old are measured within a two-minute budget.
+stim doctor notes the same summary from saved data only.
+Real size is whole-worktree private bytes; apparent size is allocated bytes.
+Neither includes Stim workspace data outside the checkout.
+
+DEVICE SLOTS
 
 Cleanup enumerates every slot. stop --slot <name> keeps the shared server and
 other slots; plain stop and worktree remove handle the whole workspace.
@@ -334,7 +344,7 @@ kind or label.
 CLEANUP AND DISK
 
 worktree remove stops the agent-device daemon when the workspace's
-agent-device/daemon.json exists, then removes its state directory with the
+agent-device(.noindex)/daemon.json exists, then removes its state directory with the
 workspace. If agent-device is missing or the stop fails, it keeps the directory
 and reports the retry command: agent-device daemon stop --state-dir <dir> --clean.
 A daemon.json whose process is gone is stale and does not block removal.
@@ -426,14 +436,15 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
       summary: 'Opt-in macOS runaway service helper',
       body: () => `Replace stim with npx stim if it is not installed globally.
 
-stim service install --helper registers only the root helper in an installed,
-Developer ID-signed, notarized Stim Host.app (~/Applications or /Applications).
-Approve Stim Host in System Settings > General > Login Items & Extensions with
+stim service install --helper installs or updates the pinned Developer
+ID-signed, notarized Stim Host.app in ~/Applications (a download when the
+installed version differs), then registers only its root helper. Approve Stim Host in System Settings > General > Login Items & Extensions with
 an administrator password. Desktop preferences has the same toggle and a button
 opening that pane. stim service status (--json too) reports registered,
 requires approval, not registered, unavailable on this OS, Stim Host missing,
-Stim Host too old, status timed out or status error.
-stim service uninstall --helper unregisters only the helper. Do not combine
+Stim Host too old, status timed out or status error; for a missing or too old
+Stim Host, run stim service install --helper.
+stim service uninstall --helper unregisters only the helper and downloads nothing. Do not combine
 --helper with server service options. Linux and Windows refuse these mutations.
 
 The helper has no inbound IPC or configurable thresholds. Once a minute it
@@ -2015,7 +2026,7 @@ SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and, with
   one exception, not touched by \`gc\` below critical, apart from trimming over
   their caps. The exception is the
-  Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache):
+  Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache.noindex):
   once it is over caches.swiftCompilationCacheMaxGb (default 0, no cap), \`gc\`
   empties it whole, since age trimming would corrupt its
   index. It is kept, with the build named, while an iOS build holds its shared
@@ -2025,12 +2036,23 @@ SHARED BUILD CACHES
     stim gc --pressure high            # trim Build and Metro caches to half their caps
     stim gc --pressure critical        # empty every shared cache Stim registered,
                                          # index-backed ones (the Xcode CAS) included
-  $STIM_HOME/ccache (default ~/.stim/ccache) holds the Android C++ objects
+  $STIM_HOME/ccache.noindex (default ~/.stim/ccache.noindex) holds the Android C++ objects
   \`stim android\` compiles through ccache. ccache keeps it under CCACHE_MAXSIZE
   on its own, so \`gc\` reports its size and leaves it alone below critical,
   where it empties it whole like the Xcode CAS. That
   bound is Stim's: it sets CCACHE_MAXSIZE on the Gradle run, which wins over
   a max_size written into the cache directory's own ccache.conf.
+
+  The folders Stim fills with churn end in .noindex, which keeps macOS
+  Spotlight out of them: metro-cache.noindex, compilation-cache.noindex and
+  ccache.noindex, and agent-device.noindex in each workspace. A home that
+  still has the old names keeps using them until stimd renames each folder
+  (daemon.mode on), once no build, dev server or agent-device daemon holds
+  it. An old folder left beside its new name stays, and gc measures and
+  trims it like the cache.
+  A path that caches.metroCache, STIM_METRO_CACHE or server.workerRoot
+  names never moves; set server.workerRoot to a *.noindex path to keep
+  worker checkouts out of Spotlight.
 
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
   report-only as a registered cache because every Gradle build shares it:

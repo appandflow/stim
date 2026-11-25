@@ -155,7 +155,7 @@
     "exitCode": 0
   },
   "[\"worktree\",\"--help\"]": {
-    "out": "Usage: stim worktree [options] [command]\n\nWarm and remove Git worktrees\n\nOptions:\n  -h, --help                 display help for command\n\nCommands:\n  warm [options]             Copy missing ignored paths from the source checkout\n                             into the current linked worktree.\n  remove [options] [target]  Remove a worktree, its unused Stim-created branch,\n                             build artifacts, owned devices, and Metro port.\n                             Defaults to the current workspace. On the source\n                             checkout it reclaims the environment only and\n                             leaves the tree in place. From a subfolder, in the\n                             source checkout or in a linked worktree, it\n                             reclaims only the project at or above that folder,\n                             with the projects nested under it, and leaves the\n                             tree; pass the root of a linked worktree to remove\n                             it.\n  help [command]             display help for command\n",
+    "out": "Usage: stim worktree [options] [command]\n\nWarm, remove and list Git worktrees\n\nOptions:\n  -h, --help                 display help for command\n\nCommands:\n  warm [options]             Copy missing ignored paths from the source checkout\n                             into the current linked worktree.\n  remove [options] [target]  Remove a worktree, its unused Stim-created branch,\n                             build artifacts, owned devices, and Metro port.\n                             Defaults to the current workspace. On the source\n                             checkout it reclaims the environment only and\n                             leaves the tree in place. From a subfolder, in the\n                             source checkout or in a linked worktree, it\n                             reclaims only the project at or above that folder,\n                             with the projects nested under it, and leaves the\n                             tree; pass the root of a linked worktree to remove\n                             it.\n  list [options]             List this repository's linked worktrees with their\n                             real and apparent size, idle time and what cleanup\n                             does with each; reads only\n  help [command]             display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -280,7 +280,7 @@
     "exitCode": 0
   },
   "[\"service\",\"install\",\"--help\"]": {
-    "out": "Usage: stim service install [options]\n\nOptions:\n  --label <name>        service label\n  --helper              register the macOS runaway service helper only\n  --port <n>            server port\n  --serve               add a tailnet-only Tailscale route\n  --env <KEY=VALUE>     set a server environment variable (default: [])\n  --path-prepend <dir>  prepend a server tool directory (default: [])\n  -h, --help            display help for command\n",
+    "out": "Usage: stim service install [options]\n\nOptions:\n  --label <name>        service label\n  --helper              install Stim Host and register only the macOS runaway\n                        service helper\n  --port <n>            server port\n  --serve               add a tailnet-only Tailscale route\n  --env <KEY=VALUE>     set a server environment variable (default: [])\n  --path-prepend <dir>  prepend a server tool directory (default: [])\n  -h, --help            display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -1564,7 +1564,7 @@
   },
   "[\"worktree\"]": {
     "out": "",
-    "err": "Usage: stim worktree [options] [command]\n\nWarm and remove Git worktrees\n\nOptions:\n  -h, --help                 display help for command\n\nCommands:\n  warm [options]             Copy missing ignored paths from the source checkout\n                             into the current linked worktree.\n  remove [options] [target]  Remove a worktree, its unused Stim-created branch,\n                             build artifacts, owned devices, and Metro port.\n                             Defaults to the current workspace. On the source\n                             checkout it reclaims the environment only and\n                             leaves the tree in place. From a subfolder, in the\n                             source checkout or in a linked worktree, it\n                             reclaims only the project at or above that folder,\n                             with the projects nested under it, and leaves the\n                             tree; pass the root of a linked worktree to remove\n                             it.\n  help [command]             display help for command\n",
+    "err": "Usage: stim worktree [options] [command]\n\nWarm, remove and list Git worktrees\n\nOptions:\n  -h, --help                 display help for command\n\nCommands:\n  warm [options]             Copy missing ignored paths from the source checkout\n                             into the current linked worktree.\n  remove [options] [target]  Remove a worktree, its unused Stim-created branch,\n                             build artifacts, owned devices, and Metro port.\n                             Defaults to the current workspace. On the source\n                             checkout it reclaims the environment only and\n                             leaves the tree in place. From a subfolder, in the\n                             source checkout or in a linked worktree, it\n                             reclaims only the project at or above that folder,\n                             with the projects nested under it, and leaves the\n                             tree; pass the root of a linked worktree to remove\n                             it.\n  list [options]             List this repository's linked worktrees with their\n                             real and apparent size, idle time and what cleanup\n                             does with each; reads only\n  help [command]             display help for command\n",
     "exitCode": 1
   },
   "[\"worktree\",\"warm\"]": {
@@ -2785,5 +2785,10 @@
     "err": "",
     "exitCode": 1,
     "error": "error: option '--wait <seconds>' argument missing"
+  },
+  "[\"worktree\",\"list\",\"--help\"]": {
+    "out": "Usage: stim worktree list [options]\n\nList this repository's linked worktrees with their real and apparent size, idle\ntime and what cleanup does with each; reads only\n\nOptions:\n  --all       list the linked worktrees of every repository the maintenance\n              worktree check has observed on this machine, from its saved\n              verdicts\n  --json      print the listing as one JSON payload\n  -h, --help  display help for command\n",
+    "err": "",
+    "exitCode": 0
   }
 }

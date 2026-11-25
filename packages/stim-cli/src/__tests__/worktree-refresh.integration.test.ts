@@ -511,8 +511,10 @@ test('--refresh leaves a branch with no upstream where it is', async () => {
 }, 120_000);
 
 test('--refresh warns when the source checkout is not on the default branch, and stays quiet when it is', async () => {
+  git(root, 'tag', 'main');
   const onDefault = await runWarm(target, '--refresh');
   expect(onDefault.stderr).not.toMatch(/default branch/);
+  expect(onDefault.stderr).toContain('checkout    main up to date with origin/main');
 
   process.exitCode = 0;
   git(root, 'checkout', '-qb', 'wip');

@@ -2,7 +2,7 @@ import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import type { NdjsonRecord } from '@stim-cli/core/state';
+import { agentDeviceStateDirsIn, type NdjsonRecord } from '@stim-cli/core/state';
 import { envDir } from './activity.ts';
 
 interface Binding {
@@ -88,7 +88,7 @@ export function followAgentActions(
     try {
       for (const entry of readdirSync(workspaces, { withFileTypes: true }))
         if (entry.isDirectory() || entry.isSymbolicLink())
-          roots.set(join(workspaces, entry.name, 'agent-device'), true);
+          for (const root of agentDeviceStateDirsIn(join(workspaces, entry.name))) roots.set(root, true);
     } catch {}
     rootCount = roots.size;
     for (const [root, binding] of bindings) {

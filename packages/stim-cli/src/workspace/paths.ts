@@ -16,6 +16,7 @@ export {
   workspaceLogErrorIndex,
   workspaceLogsDir,
   workspaceAgentDeviceDir,
+  workspaceAgentDeviceStateDirs,
   workspaceStateFile,
   workspaceStateLock,
 } from '@stim-cli/core/state';

@@ -3,7 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { configDir } from '../index.ts';
 import { ambientEnv } from '../context.ts';
-import { userHome } from './paths.ts';
+import { agentDeviceStateDirsIn, userHome } from './paths.ts';
 
 export function agentDeviceStateDirs(
   home: string = userHome(ambientEnv()),
@@ -13,12 +13,11 @@ export function agentDeviceStateDirs(
   const dirs = new Set([override ? resolve(override) : join(home, '.agent-device')]);
   const workspaces = join(configDir(), 'workspaces');
   try {
-    for (const name of readdirSync(workspaces)) {
-      const dir = join(workspaces, name, 'agent-device');
-      try {
-        if (statSync(dir).isDirectory()) dirs.add(dir);
-      } catch {}
-    }
+    for (const name of readdirSync(workspaces))
+      for (const dir of agentDeviceStateDirsIn(join(workspaces, name)))
+        try {
+          if (statSync(dir).isDirectory()) dirs.add(dir);
+        } catch {}
   } catch {}
   return [...dirs];
 }
@@ -31,12 +30,11 @@ export async function agentDeviceStateDirsAsync(
   const dirs = new Set([override ? resolve(override) : join(home, '.agent-device')]);
   const workspaces = join(configDir(), 'workspaces');
   try {
-    for (const name of await readdir(workspaces)) {
-      const dir = join(workspaces, name, 'agent-device');
-      try {
-        if ((await stat(dir)).isDirectory()) dirs.add(dir);
-      } catch {}
-    }
+    for (const name of await readdir(workspaces))
+      for (const dir of agentDeviceStateDirsIn(join(workspaces, name)))
+        try {
+          if ((await stat(dir)).isDirectory()) dirs.add(dir);
+        } catch {}
   } catch {}
   return [...dirs];
 }

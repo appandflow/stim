@@ -13,14 +13,13 @@ const SELF_TEST_TIMEOUT_MS = 60_000;
 export const scratchName = (): string => `.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 export function setWritable(path: string, writable: boolean): void {
-  const entries = readdirSync(path, { recursive: true, withFileTypes: true }).map((each) =>
-    join(each.parentPath, each.name),
-  );
-  for (const each of writable ? [path, ...entries] : [...entries.toReversed(), path]) {
-    const stat = lstatSync(each);
-    if (stat.isSymbolicLink()) continue;
-    chmodSync(each, writable ? stat.mode | 0o200 : stat.mode & ~0o222);
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) return;
+  if (writable) chmodSync(path, stat.mode | 0o200);
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(path)) setWritable(join(path, entry), writable);
   }
+  if (!writable) chmodSync(path, stat.mode & ~0o222);
 }
 
 /** Removes a tree that `seal` made read-only. */
@@ -59,6 +58,9 @@ export async function cloneTree(source: string, scratch: string, ctx: StimContex
   cpSync(source, scratch, { recursive: true, verbatimSymlinks: true });
 }
 
+const missingCacheFile = (error: unknown): error is Error =>
+  error instanceof Error && /ENOENT/.test(error.message) && /\.npm-cache[\\/]_cacache/.test(error.message);
+
 /**
  * Installs `stim@<version>` from npm, or a development checkout through `npm pack`, into `scratch`, with npm's cache inside the store. `--install-strategy=shallow`
  * nests the package's dependencies under it, so the package directory is a whole tree.
@@ -85,7 +87,20 @@ export async function fetchTree(
     // it was cached fails with ETARGET. --prefer-online refetches packuments, takes tarballs from the cache, and falls
     // back to the cache when the registry cannot be reached.
     const options = ['--cache', join(root, '.npm-cache'), '--prefer-online', '--install-strategy=shallow'];
-    const { dir } = await installServer(join(installs, 'versions'), from, process.execPath, log, options);
+    const install = () => installServer(join(installs, 'versions'), from, process.execPath, log, options);
+    const { dir } = await install().catch(async (error: unknown) => {
+      if (!missingCacheFile(error)) throw error;
+      log('Engine npm cache has a missing file; clearing it and retrying once.');
+      const cache = join(root, '.npm-cache');
+      rmSync(cache, { recursive: true, force: true });
+      return install().catch((retryError: unknown) => {
+        if (!missingCacheFile(retryError)) throw retryError;
+        const quoted = "'" + cache.replaceAll("'", "'\\''") + "'";
+        throw new Error(
+          `${retryError.message}\nRemove the engine npm cache with rm -rf ${quoted} and run the same command again.`,
+        );
+      });
+    });
     renameSync(join(dir, 'node_modules', 'stim'), scratch);
   } finally {
     rmSync(installs, { recursive: true, force: true });

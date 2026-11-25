@@ -239,3 +239,26 @@ rebuilds (LLP 0005, The loss budget for regenerable build output).
   `packages/stim-cli/src/commands/worktree.ts` (`provenPodChurn`),
   `packages/stim-cli/src/workspace/hidden-edits.ts`,
   `packages/stim-cli/src/workspace/dependency-edits.ts`.
+
+## Kept worktrees are listed, never acted on
+
+List and doctor report what cleanup keeps and its real size; they delete nothing.
+Sizes come from saved whole-worktree measures: private bytes for real size,
+allocated bytes for apparent size. Real size is unknown when private bytes
+cannot be counted. Neither includes Stim workspace data outside the checkout.
+Old is 30 days idle; large is 1 GiB real.
+Doctor reports one note from saved verdicts and measures only, stating their
+age; it never measures or runs the check. List and doctor describe removals
+disabled by `maintenance.removeFinishedWorktrees` or
+`maintenance.removeIdleWorktrees`, and idle removals while
+`maintenance.olderThanDays` is 0, as kept with reason `removal-off`.
+
+[Issue #6365](https://github.com/appandflow/stim/issues/6365)
+
+Maintainer decision: "Another thing that I don't know if we do would be to warn about worktrees that cannot be deleted, once in a while maybe in doctor?", 2026-11-25
+
+Maintainer decision: "Esp if pas certain size / age", 2026-11-25
+
+Maintainer decision: "Lets start with surfacing in doc, can we also add a command in stim worktrees that could list them and surface old / large", 2026-11-25
+
+Maintainer decision: "Can doctor also have a summary of all the worktrees with the list to know total that could be reclaimed, also is it per project? Can it also be machine wide?", 2026-11-25

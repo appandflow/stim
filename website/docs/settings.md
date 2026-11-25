@@ -264,7 +264,8 @@ keyboard lets Stim Desktop and stim-server type through the emulator's gRPC
 endpoint; the on-screen keyboard still opens.
 
 The validated keys cover CPU count, RAM, heap size, screen density, graphics,
-orientation, network conditions, and common hardware switches. On displayless Linux,
+orientation, network conditions, cold boot (`fastboot.forceColdBoot`), and common
+hardware switches. On displayless Linux,
 Stim also launches the emulator with `-no-window -noaudio -no-boot-anim`.
 With `androidEmulatorApp` resolved to `"stim-desktop"` on macOS, Stim launches it with
 `-no-window -gpu host`; see [Machine settings](#machine-settings).
@@ -716,10 +717,10 @@ Offload runs this machine's exact Stim build on the worker, so the two machines
 can run different Stim releases. A service installed while the Stim engine is
 installed (`stim engine install`) runs the engine's `bin/stimd`, so it follows
 the engine on macOS and Linux (a Windows task runs the build it was installed
-with, [#5602](https://github.com/appandflow/stim/issues/5602)). A Linux service
-installed before the engine moves onto the shim by itself: its first boot on this
-Stim rewrites the unit, and the service restarts once when idle, about 30 s down,
-which disconnects connected phones and Desktop until it is back. To move the remote machine to another build, run one of these there:
+with, [#5602](https://github.com/appandflow/stim/issues/5602)). A service
+installed before the engine keeps running the build it names until you run
+`stim service install` (or `stim setup`) there once; with the engine installed,
+`stim doctor` and `stim service status` report it as stale with that command. To move the remote machine to another build, run one of these there:
 
 ```bash
 stim engine update          # the newest release on the engine's channel
@@ -779,7 +780,9 @@ launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove server 
 `stim service status` and the reported log when readiness is unavailable.
 launchd reads a LaunchAgent only when it loads it. When a LaunchAgent that
 `stim service install` wrote does not match what install writes now (its
-`ProgramArguments` or `ProcessType`, or the arguments launchd loaded),
+`ProgramArguments` or `ProcessType`, or the arguments launchd loaded), or a
+systemd unit it wrote sets no `KillMode=process` or names node while the engine
+store has the shim,
 `stim service status` adds a `stale:` line with the reason and the
 `stim service install` command that fixes it, and `--json` reports the same
 as `stale` (`{ reason, remedy }`, null otherwise). `stim doctor` reports it as
@@ -1052,16 +1055,16 @@ override `STIM_DEBUG` (`1` or `0` for one command). While it is on, the CLI
 writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
 end, every child process with its program name, duration and exit status, and
 every request to another machine with its duration and result code. stim-server
-writes `server.ndjson` there and logs every request with its timings to its
-service log. On a build worker, `server.ndjson` also follows each offloaded
+writes request timings and error messages only to `server.ndjson`; errors
+still reach the service log. On a build worker, `server.ndjson` also follows each offloaded
 build: its start and claims, why it was cancelled, the processes in its
 process group just before the first signal (pid, parent, elapsed time and
 executable), each signal, its exit with the worker process's last stderr lines,
 and whether its claims were released. Whether or not `debug.logs` is on, the
 service log gets one line for a cancel and one for a build that ended without
 an artifact. Records never carry arguments, environment values, tokens or
-tickets, apart from whatever an offloaded build's last output line and the
-worker's stderr lines contain; nothing is sent anywhere, and the file
+tickets, apart from whatever a request's error message, an offloaded build's
+last output line and the worker's stderr lines contain; nothing is sent anywhere, and the file
 rotates at about 8 MiB with one previous generation kept.
 
 <StimTabs code="stim settings set debug.logs true --scope machine" />
@@ -1258,8 +1261,9 @@ build phase and which child process took the most time.
 
 The optional root helper in a current Developer ID-signed, notarized Stim Host.app
 restarts only PerfPowerServices, mds_stores, mdworker_shared, photoanalysisd and
-mediaanalysisd. Install Stim Host in `~/Applications` or `/Applications` first.
-Registration requires macOS and administrator approval in **System Settings >
+mediaanalysisd. `stim service install --helper` first installs or updates the
+pinned Stim Host in `~/Applications`, downloading it when the installed version
+differs, then registers the helper. Registration requires macOS and administrator approval in **System Settings >
 General > Login Items & Extensions**. Stim Desktop preferences offers the same
 toggle and a button opening that pane.
 
@@ -1268,9 +1272,10 @@ stim service status
 stim service uninstall --helper`} />
 
 These install/uninstall commands affect only the helper; run server service
-options separately. `service status --json` includes `helper`, with `registered`,
+options separately. Uninstall downloads nothing. `service status --json` includes `helper`, with `registered`,
 `requires approval`, `not registered`, `unavailable on this OS`,
 `Stim Host missing`, `Stim Host too old`, `status timed out` or `status error`.
+For a missing or too old Stim Host, run `stim service install --helper`.
 
 The helper samples every minute using exact system executable paths. More than
 150% CPU or 2 GiB resident memory for 10 continuous minutes triggers SIGTERM so

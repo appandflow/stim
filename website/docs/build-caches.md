@@ -520,10 +520,52 @@ does an app built by the same run. A cache provider keeps its own copy of an
 entry; add `--no-build-cache` to skip it.
 
 Each iOS build holds a shared claim on the compilation cache while xcodebuild
-runs, in a `compilation-cache.claims` directory beside it. `gc`,
+runs, in a `compilation-cache.noindex.claims` directory beside it. `gc`,
 automatic maintenance, the pressure ladder and the corruption check empty the cache only
 after taking that claim exclusively, so none of them can empty it under a
 running xcodebuild. Xcode builds you run outside Stim take no claim.
+
+### Folders Spotlight skips
+
+On macOS, Spotlight never indexes a folder whose name ends in `.noindex`, or
+anything below it. Xcode names its own caches this way. Stim does the same for
+the folders it fills with regenerable churn, on every platform:
+
+| Folder                                              | Holds                              |
+| --------------------------------------------------- | ---------------------------------- |
+| `$STIM_HOME/metro-cache.noindex`                    | Metro transform caches             |
+| `$STIM_HOME/compilation-cache.noindex`              | the Xcode compilation cache        |
+| `$STIM_HOME/ccache.noindex`                         | Android C++ objects from ccache    |
+| `$STIM_HOME/workspaces/<name>/agent-device.noindex` | the workspace's agent-device state |
+
+Config, state and logs keep their names and stay searchable. A Stim home that
+still has these folders under their old names, without `.noindex`, keeps using
+them until stimd renames each one, which it does while `daemon.mode` is `on`,
+not in `report` mode. It renames a folder only when nothing holds it: no build
+runs for the compilation cache or ccache, no dev server runs in the home for
+the Metro cache, and no agent-device daemon may still be running in that
+workspace's directory. If both names exist, Stim uses the new one and leaves the old one where it is,
+and `gc` measures and trims it like the cache it was.
+
+The old `compilation-cache` name stays as a link to `compilation-cache.noindex`,
+so an Xcode build outside Stim whose `COMPILATION_CACHE_CAS_PATH` names the old
+path keeps sharing Stim's cache. Spotlight does not follow the link, and `gc`
+counts the cache once.
+
+The rename is one-way. After `stim engine rollback` to a release from before
+it, the older engine sees only the old names: its dev servers and Gradle builds
+start with cold caches (Xcode builds reach the compilation cache through the
+`compilation-cache` link), its `gc` does not measure the `.noindex` folders, and its
+`worktree remove` can empty a workspace while an agent-device daemon still runs
+in `agent-device.noindex`. Stop agent-device sessions before rolling back past
+this release.
+
+A path you set yourself never moves: `caches.metroCache`, `STIM_METRO_CACHE` and
+`server.workerRoot` stay as they are. The build worker's default root,
+`$STIM_HOME/build-worker`, keeps its name, since its checkouts hold absolute
+paths. To keep a build worker's checkouts out of Spotlight, set
+`server.workerRoot` to a path that ends in `.noindex` before the worker takes
+its first build.
 
 ### Workspace build outputs
 

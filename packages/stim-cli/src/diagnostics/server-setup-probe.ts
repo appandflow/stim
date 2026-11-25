@@ -164,7 +164,8 @@ async function readSystemdServices(): Promise<{
           { timeoutMs: PROBE_TIMEOUT_MS, env },
         );
         const override = dropInExecStart(join(dir, name));
-        const stale = installed.managed ? staleSystemdUnit(text) : null;
+        const shim = join(engineRoot(process.env), 'bin', 'stimd');
+        const stale = installed.managed ? staleSystemdUnit(installed, text, existsSync(shim) ? shim : null) : null;
         const loadedKillMode =
           installed.managed && stale === null
             ? await getExecutor().runFileQuietAsync(
@@ -384,14 +385,8 @@ export async function readServerSetup(
   const { services, stale, killModeOverrides } =
     platform === 'darwin' ? { ...(await readLaunchdServices()), killModeOverrides: [] } : await readSystemdServices();
   const socket = existsSync(cliSocket());
-  if (
-    processes.length === 0 &&
-    services.length === 0 &&
-    stale.length === 0 &&
-    killModeOverrides.length === 0 &&
-    !socket
-  )
-    return null;
+  const hasServer = processes.length > 0 || services.length > 0 || killModeOverrides.length > 0 || socket;
+  if (!hasServer && stale.length === 0) return null;
   const classified = classifyServers(processes, rows, services);
   const [servers, local, network, permissions, linger] = await Promise.all([
     Promise.all(
@@ -400,8 +395,17 @@ export async function readServerSetup(
       ),
     ),
     socket ? readLocalHello(version, HELLO_TIMEOUT_MS) : null,
-    readNetwork(share, socket),
-    platform === 'darwin' ? readPermissions(services) : null,
+    hasServer
+      ? readNetwork(share, socket)
+      : ({
+          host: '',
+          tailscaleStatus: null,
+          serve: null,
+          share: { exposure: 'auto', publicUrl: null },
+          shares: null,
+          notsentLowat: null,
+        } satisfies NetworkReading),
+    hasServer && platform === 'darwin' ? readPermissions(services) : null,
     platform === 'linux' ? readLinger(services) : null,
   ]);
   return {
@@ -414,7 +418,7 @@ export async function readServerSetup(
     killModeOverrides,
     servers,
     local,
-    clients: readServerClientCounts(),
+    clients: hasServer ? readServerClientCounts() : { build: 0, deviceHost: 0 },
     network,
     socket: socket ? readSocket() : null,
     permissions,

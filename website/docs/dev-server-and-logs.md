@@ -173,7 +173,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 
 After 15 minutes of inactivity by default, Stim can stop Metro, keep its port, shut down owned devices and clear regenerable build output. The next Debug run starts Metro again.
 
-Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
+Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. A device shut down for being idle that another tool boots again counts as active for one idle window, except under memory or disk pressure. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
 
 Set `idle.minutes` to `0` to disable idle stop. Under memory pressure, idle stop acts after two idle minutes. Under [disk pressure](./build-caches.md#disk-pressure) alone it waits for `idle.minutes`, and cleanup deletes the build outputs of workspaces with nothing running after two idle minutes.
 
@@ -538,7 +538,13 @@ checkout (`idle_stage_candidates`, `stopped_output_candidates`,
 `dormant_dependencies`). A record has `step`, `startedAt`, `durationMs`, `items`
 (the items it visited or returned, when it counts any), and `outcome`
 (`finished`, `threw` or `aborted`); a rung adds `rung` and `pressureLevel`, and a step
-that threw adds `error`. A tick at normal writes one, up to 16 at high and up
+that threw adds `error`. Rung 1 also splits its time, in milliseconds, into
+`marksMs` (reading saved marks), `queueMs` (yielding the disk queue to
+higher-priority work), `authorizeMs`, `measureMs` (disk pressure reads),
+`clearMs` (rechecking and clearing each target), `refreshDiscoverMs` and `refreshReadMs` (finding
+and re-reading checkouts), with `targets` and the slowest target and root
+(`slowestTarget`, `slowestTargetMs`, `slowestRoot`, `slowestRootMs`); a part
+that never ran is absent. A tick at normal writes one, up to 16 at high and up
 to 22 at critical. Use them to see which step a slow tick or maintenance run
 spent its time in. The records change nothing a pass does. A step still
 running after 10 minutes also writes a `daemon_step_running` record (`step`,
@@ -653,7 +659,7 @@ AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
 ```
 
 Sessions, logs, metro-sessions, allocations and daemon files live under
-`$STIM_HOME/workspaces/<name>/agent-device/`. The Apple runner build cache and
+`$STIM_HOME/workspaces/<name>/agent-device.noindex/`. The Apple runner build cache and
 device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
 `AGENT_DEVICE_CLAIMS_DIR` unset. Each active workspace adds one daemon, which
 exits after five idle minutes with no open session. This is opt-in per command; forgetting the
@@ -799,6 +805,13 @@ process identity. A service with a `stop` command manages itself (`docker
 compose up -d`, a database CLI), and Stim runs its `stop`, `teardown` and
 `orphanTeardown` commands instead.
 
+`envFile` names a dotenv file, relative to the workspace and inside its
+checkout, for secrets kept out of `.stim.json`. Stim reads it each time it runs
+one of the service's commands or starts its process; `env`, ports and `idEnv`
+win over it, and a missing file fails the command. Only its path is recorded,
+so its values stay out of Stim state and `stim services env`. The orphan
+teardown runs without it.
+
 Each start, including a restart from `stim revive`, waits for a slot shared
 with native builds under `concurrency.maxBuilds`. Queue progress goes to stderr,
 also with `--json`. The slot covers the start command and readiness wait only
@@ -807,7 +820,9 @@ timeout or cancellation. Running services, stop and teardown hold no slot.
 Ctrl+C during a start exits 130 with `STIM_CANCELLED`, or with
 `STIM_CLAIM_UNAVAILABLE` when child cleanup cannot be verified.
 Readiness uses `ready` when declared, otherwise every declared port listening,
-otherwise the process alive.
+otherwise the process alive one second after the start. For a server that
+listens before it answers, `"ready": "curl -sf http://127.0.0.1:{api}/health"`
+waits until its health URL answers without an HTTP error.
 
 Ports come from the [named port](#named-server-ports) pool. Each reaches the
 service as an environment variable (`ports` maps a label to one) or a
@@ -903,10 +918,9 @@ A tunnel an older Stim started is reused or stopped by its recorded process iden
 
 After an upgrade, a daemon from Stim 1.40 to 1.42 can still hold this Stim home,
 because it runs until every workspace has been idle for `idle.dormantDays`. stimd
-stops it by its process identity when it starts, and your dev servers and devices
-keep running. If the holder cannot be verified as that daemon, or does not stop,
-`stim start` and the other commands that need Metro or a managed tunnel report its
-PID and the command that stops it.
+does not stop it: `stim start` and the other commands that need stimd report its
+PID and the command that stops it. Your dev servers and devices keep running when
+you stop it.
 
 ## Metro for hosted iOS
 

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, sep } from 'node:path';
 import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
+import { leftoverNoindexCaches } from '../../workspace/noindex-folders.ts';
 import { cacheLabel } from './budget.ts';
 import { unregister, readManifest } from '../../cache/cache-manifest.ts';
 import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
@@ -162,11 +163,16 @@ function outcomeOf(results: readonly GcResult[], fallbackBytes: number): ActionO
   return kept(results.find((result) => result.detail)?.detail ?? 'nothing was eligible when the action ran');
 }
 
+const leftoverOf = (category: 'compilation-cache' | 'metro-cache') =>
+  leftoverNoindexCaches()
+    .filter((leftover) => leftover.category === category)
+    .map((leftover) => canonicalPath(leftover.dir));
+
 function rootCache(dir: string): CacheDescriptor | null {
   const name =
     canonicalPath(dir) === canonicalPath(buildCacheRoot())
       ? 'Build cache'
-      : canonicalPath(dir) === canonicalPath(metroCacheRoot())
+      : [canonicalPath(metroCacheRoot()), ...leftoverOf('metro-cache')].includes(canonicalPath(dir))
         ? 'Metro transform caches'
         : null;
   return name ? { name, dir, prune: 'entries', entriesDepth: name === 'Build cache' ? 2 : 3, note: '' } : null;
@@ -215,7 +221,9 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
 async function emptyCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const dir = action.dir ?? sharedCompilationCache();
   const discovered = await discoverCachesAsync();
-  const compilation = canonicalPath(dir) === canonicalPath(sharedCompilationCache());
+  const compilation = [canonicalPath(sharedCompilationCache()), ...leftoverOf('compilation-cache')].includes(
+    canonicalPath(dir),
+  );
   if (compilation) {
     const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' }, discovered);
     if (blocked) return kept(blocked);
@@ -498,8 +506,14 @@ async function deleteTrashAction(context: ActContext): Promise<ActionOutcome> {
     : kept('none is deletable now');
 }
 
-async function deleteTempLeftoversAction(): Promise<ActionOutcome> {
-  const { value: done } = await quietly(() => deleteTempLeftovers());
+async function deleteTempLeftoversAction(context: ActContext): Promise<ActionOutcome> {
+  const { value: done } = await quietly(() =>
+    deleteTempLeftovers({
+      env: context.operation?.env,
+      signal: context.operation?.signal,
+      operation: context.operation,
+    }),
+  );
   if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
   return done.count ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` } : kept('none is idle now');
 }
@@ -606,7 +620,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-delete-gradle-version':
       return deleteGradleVersionAction(action, context);
     case 'would-delete-temp-leftovers':
-      return deleteTempLeftoversAction();
+      return deleteTempLeftoversAction(context);
     case 'would-delete-trash':
       return deleteTrashAction(context);
     case 'would-delete-status-caches':

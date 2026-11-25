@@ -1,20 +1,13 @@
 import { mkdirSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
-import { readHostedSessions } from '@stim-cli/core/state';
+import { readHostedSessions, type HelperState } from '@stim-cli/core/state';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.ts';
 import type { StatusWorkerRequest } from './status-feed.ts';
 import { readAudit } from './actions.ts';
-import {
-  installService,
-  listenerPids,
-  rewriteUnitToShim,
-  serviceStatus,
-  statusLines,
-  uninstallService,
-} from './service.ts';
+import { installService, listenerPids, serviceStatus, statusLines, uninstallService } from './service.ts';
 import {
   applyServeEnvironment,
   DEFAULT_LABEL,
@@ -45,6 +38,7 @@ import {
 } from './registry.ts';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from './stim-host.ts';
+export { installHostApp } from './stim-host.ts';
 import { defaultSetupDeps, runSetup } from './setup.ts';
 import { startServer, type RunningServer } from './server.ts';
 import { DesktopBootstrap } from './desktop-bootstrap.ts';
@@ -131,14 +125,12 @@ export class NetRefusal extends Error {}
 
 /**
  * stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends;
- * `requestUpdate` asks stimd to check for a newer engine; `requestRestart` asks it to exit once it is idle, so the
- * service manager starts it again from the unit it rewrote. `spawnStatusWorker` asks stimd to start the status worker.
+ * `requestUpdate` asks stimd to check for a newer engine. `spawnStatusWorker` asks stimd to start the status worker.
  */
 export async function serve(
   options: NetOptions,
   idle: () => void,
   requestUpdate: (why: string) => void = () => {},
-  requestRestart: (why: string) => void = () => {},
   spawnStatusWorker?: (request: StatusWorkerRequest) => void,
   busy?: (count: number) => void,
 ): Promise<NetThread> {
@@ -212,21 +204,6 @@ export async function serve(
     }
     throw error;
   }
-  const label = serviceManagerOrNull()?.runningLabel(process.env);
-  if (label)
-    void rewriteUnitToShim(label).then(
-      (rewritten) => {
-        if (rewritten) {
-          const reloaded = serviceManagerOrNull()?.loadedCommand !== undefined;
-          console.log(
-            `Rewrote ${label} to start the Stim engine's stimd shim${reloaded ? '; restarting once idle to run it' : ''}.`,
-          );
-          if (reloaded) requestRestart('its service unit now starts the engine shim');
-        }
-        return rewritten;
-      },
-      (error: Error) => console.error(`stim: could not rewrite ${label} to name the stimd shim: ${error.message}`),
-    );
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
@@ -504,6 +481,11 @@ export function rename(id: string, name: string): void {
   console.log(`Renamed ${id}.`);
 }
 
+const HELPER_REMEDIES: Partial<Record<HelperState, string>> = {
+  'requires approval': '; approve Stim Host in System Settings > General > Login Items & Extensions',
+  'Stim Host too old': '; run `stim service install --helper` to update Stim Host and register the helper',
+};
+
 export async function runService(
   sub: string,
   values: {
@@ -549,9 +531,7 @@ export async function runService(
           : [
               ...statusLines(status, panes),
               ...(process.platform === 'darwin' && values.helper
-                ? [
-                    `Runaway service helper: ${values.helper}${values.helper === 'requires approval' ? '; approve Stim Host in System Settings > General > Login Items & Extensions' : ''}`,
-                  ]
+                ? [`Runaway service helper: ${values.helper}${HELPER_REMEDIES[values.helper] ?? ''}`]
                 : []),
             ].join('\n'),
       );

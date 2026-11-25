@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { sharedCompilationCache } from '@stim-cli/core/state';
@@ -45,6 +45,8 @@ test('high load defers scans and every measured output/cache uses a bounded du c
   mkdirSync(cas);
   const sentinel = join(cas, 'keep');
   writeFileSync(sentinel, 'cache bytes');
+  const leftover = join(home, 'compilation-cache');
+  mkdirSync(leftover);
   const registered = join(home, 'registered');
   mkdirSync(registered);
   register({ dir: registered, name: 'Test cache', prune: 'entries' });
@@ -69,6 +71,7 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     expect.arrayContaining([
       expect.objectContaining({ category: 'workspace-outputs', workspace: app, bytes: 123 * 1024, measuredAt: 100 }),
       expect.objectContaining({ category: 'compilation-cache', dir: cas, bytes: 123 * 1024 }),
+      expect.objectContaining({ category: 'compilation-cache', dir: leftover, bytes: 123 * 1024 }),
       expect.objectContaining({ category: 'other', dir: registered, bytes: 123 * 1024 }),
     ]),
   );
@@ -80,6 +83,25 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     expect(call.timeout).toBe(120_000);
   }
   expect(existsSync(sentinel)).toBe(true);
+});
+
+test('the link left at the old compilation-cache name is measured once, as the renamed cache', async () => {
+  const cas = join(home, 'compilation-cache.noindex');
+  mkdirSync(cas);
+  symlinkSync('compilation-cache.noindex', join(home, 'compilation-cache'), 'junction');
+  register({ dir: join(home, 'compilation-cache'), name: 'Xcode compilation cache', prune: 'atomic' });
+  setExecutor({
+    runFile: (file, args) => (file === 'du' ? `123\t${args[1]}\n` : ''),
+    runFileQuiet: () => null,
+    runQuiet: () => null,
+    findExecutable: () => null,
+  });
+
+  const sizes = await measureSizes(100, () => {});
+
+  expect(sizes.filter((size) => size.category === 'compilation-cache' || size.category === 'other')).toEqual([
+    expect.objectContaining({ category: 'compilation-cache', dir: cas }),
+  ]);
 });
 
 const cas = () => ({

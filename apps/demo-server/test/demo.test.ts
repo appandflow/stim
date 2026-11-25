@@ -169,6 +169,26 @@ describe('pairing', () => {
     again.close();
   });
 
+  it('keeps the name a phone gives itself with device.rename for its next connection', async () => {
+    const devices = new Map<string, DeviceRecord>();
+    const machine = demo({ devices });
+    const phoneKey: NoiseKeyPair = generateNoiseKeyPair();
+    const first = await pair(machine, { keyPair: phoneKey, secret: SECRET, name: 'Review iPhone' });
+    const device = first.hello.result?.device;
+    if (typeof device !== 'object' || device === null || !('id' in device) || typeof device.id !== 'string') {
+      throw new Error('hello has no device id');
+    }
+    const { id } = device;
+    expect((await first.request('device.rename', { id, name: ' Reviewer iPhone ' })).result).toEqual({
+      name: 'Reviewer iPhone',
+    });
+    first.close();
+
+    const again = await pair(machine, { keyPair: phoneKey, serverKey: SERVER_KEY.publicKey });
+    expect(again.hello.result?.device).toEqual({ id, name: 'Reviewer iPhone' });
+    again.close();
+  });
+
   it('refuses a wrong token, an unknown returning phone, and every phone when the token is missing or changed', async () => {
     await expect(connect(demo(), { secret: randomBytes(32) })).rejects.toMatchObject({
       code: 'unknown-secret',

@@ -31,6 +31,17 @@ test('--json prints a coded error when config cannot be parsed', () => {
   expect(result.stderr).toContain('STIM_CONFIG_CORRUPT:');
 });
 
+test('--json after the terminator does not print a coded error on stdout', () => {
+  const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
+  const result = spawnSync(process.execPath, [cli, 'test', '--', 'vitest', '--json'], {
+    env: { ...process.env, HOME: home, STIM_HOME: 'relhome' },
+    encoding: 'utf8',
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toContain('STIM_RELATIVE_PATH');
+});
+
 test('--json keeps the existing payload when a command prints and then throws a coded error', async () => {
   Reflect.set(globalThis, Symbol.for('stim.main'), true);
   const { main } = await import('../../bin/cli.ts');

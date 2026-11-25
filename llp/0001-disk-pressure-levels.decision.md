@@ -1017,10 +1017,11 @@ still exists, and holds no registered project. Such a root is
 judged idle by the full evidence, as a discovered checkout is, since most
 commands run in an unregistered root do not record their use. A registered app
 inside a worktree covers that worktree instead, so a recorded worktree root
-never takes the trees of an app in use. The stim-daemon takes such a root's
-`node_modules` and Pods but not yet its non-Cargo build outputs, which only
-`stim gc` removes, because its saved output marks are not authorized for
-recorded roots (#6214).
+never takes the trees of an app in use. Saved output marks of such a root are
+authorized like a registered root's, so the daemon's dormant pass removes its
+outputs as `stim gc` does. The stimd output sweep of the pressure ladder still
+rechecks each mark against the registry or targeted discovery and keeps such a
+root's outputs.
 
 Reason: `stim worktree warm` at a repository root records use of the root but
 registers only the app it finds, and older Stim versions dropped the app's
@@ -1243,7 +1244,14 @@ Registration is opt-in through the signed Stim Host executable, using
 SMAppService.daemon and an embedded LaunchDaemon plist with BundleProgram.
 An administrator approves it under Login Items & Extensions. Both Desktop
 preferences and service install/uninstall --helper use that executable; these
-flags affect only the helper. The helper has no listener, Mach service, socket
+flags affect only the helper. Install --helper first installs or updates the
+pinned signed release in ~/Applications as the full service install does, so a
+Mac that never installed the server service, or installed it before a
+helper-capable Host, still registers
+([#6297](https://github.com/appandflow/stim/issues/6297)). It replaces only the
+bundle: a server already running from the old one keeps running until its next
+restart. Uninstall --helper downloads nothing. Desktop does not download Stim
+Host; for a missing or too old one it shows that command. The helper has no listener, Mach service, socket
 or request file. It does not accept targets, paths or thresholds from callers.
 It is independent of daemon.mode and STIM_HOME until unregistered.
 

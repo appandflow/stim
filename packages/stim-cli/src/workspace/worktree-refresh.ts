@@ -387,7 +387,8 @@ function readMainCheckoutState(root: string): MainCheckoutState {
   // whose working file was restored to the HEAD contents without resetting the index.
   const worktreeChanged = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
   const indexChanged = gitQuiet(root, ['diff', '--name-only', '--cached', 'HEAD']);
-  const branch = gitQuiet(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
+  const ref = gitQuiet(root, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  const branch = ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
   const paths = [worktreeChanged, indexChanged].flatMap((out) =>
     (out ?? '')
       .split('\n')

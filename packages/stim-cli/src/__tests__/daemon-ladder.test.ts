@@ -12,6 +12,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -28,6 +29,7 @@ import {
   gcMarkFile,
   readGcMark,
   IDLE_STOP_KEY,
+  readArchives,
   readDormantStage,
   readIdleStage,
   readJsonObject,
@@ -387,6 +389,38 @@ describe('the dormant stage', () => {
       runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed: false, operation }),
     ).rejects.toBe(failure);
     expect(write).toHaveBeenCalledWith(root, 'maintenance', expect.anything(), operation);
+  });
+
+  test('a refused archive leaves the logs in the workspace and the event does not claim them archived', async () => {
+    const root = join(projects, 'refused-archive');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, {});
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{"kept":true}\n');
+    const outside = join(home, 'outside');
+    mkdirSync(outside);
+    mkdirSync(join(workspaceDir(root), 'agent-device.noindex'));
+    symlinkSync(
+      outside,
+      join(workspaceDir(root), 'agent-device.noindex', 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    vi.stubEnv('STIM_ARCHIVE_ENABLED', 'true');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await dormant()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+
+    const [kept, event] = readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')
+      .trim()
+      .split('\n');
+    expect(kept).toBe('{"kept":true}');
+    expect(JSON.parse(event ?? '')).toMatchObject({ event: 'workspace_dormant', archived: false });
+    expect(JSON.parse(event ?? '').msg).not.toContain('archived its logs');
+    expect(readArchives()).toEqual([]);
+    expect(readdirSync(join(home, 'archive')).filter((name) => name.startsWith('.incoming-'))).toEqual([]);
+    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ archived: false });
   });
 
   test.skipIf(process.platform !== 'darwin')(
@@ -1502,7 +1536,7 @@ describe('the pressure ladder', () => {
     expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
   });
 
-  test('critical output sweep keeps a marked nested checkout after discoverRoots is broadened', async () => {
+  test('critical output sweep removes marked outputs of a recorded-only nested checkout after registration is removed', async () => {
     const { root } = workspace('team/app', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
     mkdirSync(output, { recursive: true });
@@ -1522,7 +1556,7 @@ describe('the pressure ladder', () => {
       pressure('critical'),
     );
 
-    expect(existsSync(output)).toBe(true);
+    expect(existsSync(output)).toBe(false);
   });
 
   test('high output sweep does not refresh once the disk reaches critical', async () => {
@@ -3397,6 +3431,57 @@ describe('rung timing records', () => {
   beforeEach(() => {
     let clock = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100));
+  });
+
+  test.each([false, true])('rung 1 records queue and refresh time, including a rejected yield: %s', async (reject) => {
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const { root } = workspace('timed-output', 5 * MINUTE_MS, 'Shutdown');
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    await marks.markWriter(config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    vi.spyOn(checkoutDiscovery, 'discoverCheckouts').mockImplementation(async () => {
+      clock += 23;
+      rmSync(gcMarkFile(root), { force: true });
+      return [];
+    });
+    const read = stages.readCheckout;
+    vi.spyOn(stages, 'readCheckout').mockImplementation(async (...args) => {
+      clock += 47;
+      return read(...args);
+    });
+    await runLadder(
+      {
+        config,
+        act: true,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure('high'),
+        fromRung: 1,
+        lastRung: 1,
+        between: async () => {
+          clock += 31;
+          if (reject) throw new Error('yield failed');
+        },
+      },
+      pressure('high'),
+    );
+    expect(steps()).toMatchObject([
+      {
+        rung: 1,
+        queueMs: 31,
+        outcome: reject ? 'threw' : 'finished',
+        ...(reject ? {} : { refreshDiscoverMs: 23, refreshReadMs: 47, slowestRoot: root, slowestRootMs: 47 }),
+      },
+    ]);
   });
 
   test('a rung that finishes records its start, duration, actions and outcome', async () => {

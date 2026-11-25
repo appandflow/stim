@@ -84,12 +84,15 @@ describe('Android AVD config settings', () => {
         {
           android: {
             avdConfigFile: 'android-avd.ini',
-            avdConfig: { 'hw.keyboard': true, 'vm.heapSize': 512 },
+            avdConfig: { 'hw.keyboard': true, 'vm.heapSize': 512, 'fastboot.forceColdBoot': true },
           },
         },
         tmpHome,
       ),
-    ).toEqual({ 'hw.ramSize': '3072', 'hw.keyboard': 'yes', 'vm.heapSize': '512' });
+    ).toEqual({ 'hw.ramSize': '3072', 'hw.keyboard': 'yes', 'vm.heapSize': '512', 'fastboot.forceColdBoot': 'yes' });
+    expect(
+      androidAvdConfigSettingError({ android: { avdConfig: { 'fastboot.forceFastBoot': true } } }, tmpHome),
+    ).toMatch(/Unsupported android\.avdConfig key/);
   });
 
   test('parses comments and values containing equals, and rejects malformed or duplicate lines', () => {

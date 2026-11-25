@@ -21,11 +21,17 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
     edit: (text: string) => string,
     loadedKillMode = 'process',
     code = 'server-service-stale',
+    namesNode = false,
   ) => {
     home = mkdtempSync(join(tmpdir(), 'stim-probe-systemd-'));
     vi.stubEnv('HOME', home);
     vi.stubEnv('STIM_HOME', join(home, 'state'));
+    vi.stubEnv('STIM_ENGINE_ROOT', join(home, 'engine'));
     const shim = join(home, 'engine', 'bin', 'stimd');
+    if (namesNode) {
+      mkdirSync(join(home, 'engine', 'bin'), { recursive: true });
+      writeFileSync(shim, '#!/bin/sh\n', { mode: 0o755 });
+    }
     const units = join(home, '.config', 'systemd', 'user');
     mkdirSync(units, { recursive: true });
     const text = renderUnit({
@@ -33,7 +39,7 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
       host: null,
       node: '/usr/bin/node',
       script: join(home, 'npm', 'lib', 'node_modules', 'stim', 'bin', 'stim.mjs'),
-      stimd: shim,
+      ...(namesNode ? {} : { stimd: shim }),
       port: 7787,
       env: [],
       pathPrepend: [],
@@ -63,6 +69,12 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
     const [stale] = await readUnit((text) => text.replace('KillMode=process\n', ''));
     expect(stale?.detail).toMatch(/^Its unit sets no KillMode= where `stim service install` writes KillMode=process/);
     expect(stale?.fix).toContain(`STIM_HOME=${join(home, 'state')} stim service install --port 7787`);
+  });
+
+  it('reports a unit that names node while the engine store has the shim', async () => {
+    const [stale] = await readUnit((text) => text, 'process', 'server-service-stale', true);
+    expect(stale?.detail).toBe("Its unit does not start the engine's stimd shim.");
+    expect(stale?.fix).toContain('stim service install --port 7787');
   });
 
   it('reports nothing for a unit as install writes it', async () => {

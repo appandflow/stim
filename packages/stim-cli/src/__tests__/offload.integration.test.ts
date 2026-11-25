@@ -8,6 +8,7 @@ import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
   missingPackageManagerRemedy,
+  prebuildFailedRemedy,
   workerFailureReason,
   requireLocalBuild,
   resolveBuildMachine,
@@ -931,4 +932,11 @@ describe('missingPackageManagerRemedy', () => {
     expect(remedy).not.toMatch(/approv|doctor/i);
     expect(missingPackageManagerRemedy('linux-box', 'deps-failed: spawn yarn ENOENT')).toContain('no yarn');
   });
+});
+
+it('a worker prebuild failure points at its relayed output instead of build approval', () => {
+  expect(prebuildFailedRemedy('build-mac', workerFailureReason('prebuild-failed', 'config plugin failed'))).toBe(
+    '`stim logs --source build` shows the `expo prebuild` output from build-mac. Fix what it reports, then run the same command again, or rerun with --remote-build local.',
+  );
+  expect(prebuildFailedRemedy('build-mac', 'deps-failed: spawn pnpm ENOENT')).toBeUndefined();
 });

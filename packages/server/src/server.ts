@@ -179,6 +179,7 @@ import { replayRange, archiveDetail, replayKeyframe, setRecording } from './hand
 import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
 import { runAction } from './handlers/lifecycle.ts';
 import { beginControl, input } from './handlers/control.ts';
+import { renameSelf } from './handlers/device-rename.ts';
 import { registerPush } from './handlers/push.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
@@ -1760,6 +1761,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         void input(ctx, id, inputMethod, message.params, device);
         return;
       }
+      if (message.method === 'device.rename') return renameSelf(ctx, id, message.params, device);
       if (message.method === 'push.register') return registerPush(ctx, id, message.params, device);
       if (message.method === 'notifications.list') {
         const params = message.params ?? {};

@@ -3,7 +3,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
-import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceStateDirs } from '../workspace/paths.ts';
 import { phaseLine, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import { agentDeviceDaemon, readAgentDeviceRecords } from './activity.ts';
@@ -146,10 +146,11 @@ export async function closeOwnedDeviceSessions(
       root === undefined
         ? undefined
         : { workspace: root, repoRoot: repoRoot && (canonical(repoRoot) ?? undefined), claims: deviceClaims(device) };
-    const stateDir = root === undefined ? undefined : workspaceAgentDeviceDir(root);
     const stateDirs = [
       undefined,
-      ...(stateDir && !['none', 'dead'].includes(agentDeviceDaemon(stateDir)) ? [stateDir] : []),
+      ...(root === undefined ? [] : workspaceAgentDeviceStateDirs(root)).filter(
+        (dir) => !['none', 'dead'].includes(agentDeviceDaemon(dir)),
+      ),
     ];
     const busy = new Set<string>();
     for (const dir of stateDirs) {

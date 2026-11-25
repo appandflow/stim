@@ -285,10 +285,14 @@ KEYS STIM READS
                         Supported keys and values:
 ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).join('\n')}
                         Identity, architecture, host path, storage, image,
-                        kernel, camera, snapshot, boot-lifecycle, and unknown
-                        keys are protected. The emulator may normalize a valid
-                        value. These overrides apply only to a newly created
-                        AVD; existing and recovered AVDs are never rewritten.
+                        kernel, camera, other snapshot and boot-lifecycle, and
+                        unknown keys are protected. fastboot.forceColdBoot=yes
+                        cold boots the AVD on every start without saving a
+                        Quick Boot snapshot, useful for tools such as Maestro
+                        that fail on snapshot boots. The emulator may normalize
+                        a valid value. These overrides apply only to a newly
+                        created AVD; existing and recovered AVDs are never
+                        rewritten.
                         Unless these settings set hw.keyboard, every AVD Stim
                         creates gets hw.keyboard=yes, so the emulator takes
                         gRPC key events. The one rewrite: a parked AVD created
@@ -540,8 +544,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         until stim stop. Unset runs here. See stim guide macos.
   services              the workspace services, keyed by name: { "start":
                         command, "stop"?, "teardown"?, "orphanTeardown"?,
-                        "ready"?, "ports"?, "idEnv"?, "env"?, "cwd"?,
-                        "dependsOn"? }. Without stop, start is a process Stim
+                        "ready"?, "ports"?, "idEnv"?, "env"?, "envFile"?,
+                        "cwd"?, "dependsOn"? }. Without stop, start is a process Stim
                         supervises. stim services start records each service
                         as resolved and later stops run only that record.
                         See \`guide services\`.
@@ -658,7 +662,8 @@ or via the environment, which overrides the file:
 Unset or 0 means the derived cap: concurrency.maxBuilds max(1, floor(CPU
 cores / 6)), concurrency.maxTests max(1, floor(CPU cores / 6)),
 concurrency.maxDevices max(2, floor((RAM - 4 GB) / 1.5 GB)). The
-per-platform caps stay unlimited at 0. See \`guide lifecycle concurrency\` for
+per-platform caps stay unlimited at 0, and concurrency.testWorkers at 0 keeps
+the per-run worker formula. See \`guide lifecycle concurrency\` for
 what each cap does.
 
 DISK PRESSURE THRESHOLDS ARE MACHINE-LEVEL AND ON BY DEFAULT
@@ -682,7 +687,7 @@ for one command. While on, the CLI writes debug records to
 STIM_HOME/logs/debug/cli.ndjson (run_start, run_end, exec with the program name,
 duration and exit status but never arguments, remote_connect and
 remote_request with durations and codes); stim-server writes server.ndjson there
-and logs every request with its timings to its service log. A build worker
+with request timings; errors still reach the service log. A build worker
 also records each offloaded build's start, cancel reason, the process group
 running at the cancel, signals, exit with the worker process's last stderr
 lines, and claim release in server.ndjson. The file rotates at about 8 MiB and keeps one previous
@@ -752,12 +757,10 @@ run waiting to boot, and automatic maintenance.
           stimd keeps serving until nothing runs in the home, and the next
           command starts its own build's stimd. A stim-daemon from Stim
           1.40 to 1.42 holds the daemon claim exclusively and does not
-          exit when its workspaces stop; stimd checks its process identity
-          and stops it with SIGTERM, in every daemon.mode, which leaves the dev servers and
-          devices it did not own running. A holder that is not a verified
-          stim-daemon, or that does not stop, makes stim start and the
-          commands that need Metro or a managed tunnel exit with its PID
-          and the stop command. Update projects that pin the older Stim.
+          exit when its workspaces stop. stimd does not stop it: stim
+          start and the commands that need Metro or a managed tunnel exit
+          with its PID and the stop command. Update projects that pin the
+          older Stim.
   report  the same passes log what they would do and act on nothing.
   off     no pass. stimd still starts when a command needs it, because it
           runs each workspace's Metro and tunnel and collects device logs;
@@ -1551,14 +1554,11 @@ pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
 A macOS or Linux service installed while the Stim engine is installed runs the
 engine's \`bin/stimd\`, so it follows the engine (a Windows task runs the build
-it was installed with, #5602). A Linux or macOS service installed before the
-engine moves onto the shim the first time its server boots with this Stim:
-it rewrites its unit, and on Linux restarts once, when idle, through
-systemd's \`Restart=always\` (about 30 s down; connected phones and Desktop
-reconnect, since only commands and pinned work delay it); on macOS the rewritten
-LaunchAgent takes effect after \`launchctl bootout\` and \`bootstrap\` (#5608); a service that never restarts
-onto this Stim stays on its build until \`stim service install\` or a restart
-of the service. The engine switch then works: \`stim engine update\` there moves it
+it was installed with, #5602). A service installed before the engine keeps
+running the build it names until \`stim service install\` (or \`stim setup\`)
+runs once; once the engine is installed, \`stim doctor\` and \`stim service
+status\` report it as stale with that command.
+The engine switch then works: \`stim engine update\` there moves it
 to the newest release on the engine's channel and \`stim engine rollback\`
 back to the previous build, each switching once running builds and hosted
 native steps have drained; a shim service's job restarts stimd on the new
@@ -1603,10 +1603,11 @@ list, a \`note\` finding only the doctor report:
                          \`stim engine rollback\` when the engine has a
                          previous build); note: it restarted but runs now
   server-service-override   note: a systemd drop-in sets ExecStart=, so the unit
-                         cannot move onto the engine, or KillMode=, so stimd
+                         does not run the engine, or KillMode=, so stimd
                          keeps the successor handover; it names the drop-in
   server-service-stale   note: launchd runs an outdated LaunchAgent definition, or
-                         a systemd unit lacks KillMode=process; run
+                         a systemd unit lacks KillMode=process or names node
+                         while the engine store has the shim; run
                          \`stim service install\` once
   server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so

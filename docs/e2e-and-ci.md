@@ -319,9 +319,8 @@ suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
   No workflow uses a larger runner, because larger runners are billed per minute
   even on public repositories.
 
-- The release gate in RELEASE.md section 4 is the merge queue's `Merge gate`
-  plus the `test (node 22)`, `test (node 24)` and `published runtime (node
-22.12.0)` jobs of the push `CI` run on the release commit, and, for a stable
+- The release gate in RELEASE.md section 4 is the `test (node 22)`,
+  `test (node 24)` and `published runtime (node 22.12.0)` jobs of the push `CI` run on the release commit, and, for a stable
   version, a green `Full suite` run with the native E2E.
 
 - **`desktop.yml`** -- "Desktop". On a pull request or push to `main` that

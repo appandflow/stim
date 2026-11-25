@@ -25,7 +25,7 @@ test.each([0, 1024 * 1024])('plain GC reports keep a partial %i-byte measurement
   };
   const size = bytes ? '1M' : '0K';
   const lines = formatGcSummary(run, { act: true, chosen: false, detail: '/report' });
-  expect(lines).toContain(`Freed at least ${size} in 1 action; kept 0; 0 failed.`);
+  expect(lines).toContain(`Removed at least ${size} in 1 action; kept 0; 0 failed.`);
   expect(lines).toContain(`  Workspace build outputs (1, at least ${size})`);
   expect(lines).toContain(`    at least ${size}  /project`);
   expect(gcDetailLines(run)[1]).toContain(`\tat least ${size}\t`);

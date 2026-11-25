@@ -44,7 +44,12 @@ import { resolveSupervisorTarget } from '../../stimd/metro/ownership.ts';
 import { MODE_COMMAND, readRemoteSession } from '../../stimd/metro/state.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
-import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
+import {
+  workspaceAgentDeviceStateDirs,
+  workspaceDir,
+  workspaceLogsDir,
+  workspaceStateFile,
+} from '../../workspace/paths.ts';
 import { resolveProjectSettings, resolveProjectSettingsAsync, settingValueAt } from '../../workspace/settings.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { readWebRecord, webFacts } from '../../web/state.ts';
@@ -155,21 +160,24 @@ const missing = (error: unknown) =>
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function agentSessionsActedAt(root: string): number | string {
-  const dir = join(workspaceAgentDeviceDir(root), 'sessions');
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch (error) {
-    return missing(error) ? NaN : `its agent-device sessions cannot be read (${message(error)})`;
-  }
   let latest = NaN;
-  for (const name of names) {
-    if (name === STIM_SESSION) continue;
+  for (const stateDir of workspaceAgentDeviceStateDirs(root)) {
+    const dir = join(stateDir, 'sessions');
+    let names: string[];
     try {
-      const at = statSync(join(dir, name, 'events.ndjson')).mtimeMs;
-      if (!(at <= latest)) latest = at;
+      names = readdirSync(dir);
     } catch (error) {
-      if (!missing(error)) return `its agent-device session ${name} cannot be read (${message(error)})`;
+      if (missing(error)) continue;
+      return `its agent-device sessions cannot be read (${message(error)})`;
+    }
+    for (const name of names) {
+      if (name === STIM_SESSION) continue;
+      try {
+        const at = statSync(join(dir, name, 'events.ndjson')).mtimeMs;
+        if (!(at <= latest)) latest = at;
+      } catch (error) {
+        if (!missing(error)) return `its agent-device session ${name} cannot be read (${message(error)})`;
+      }
     }
   }
   return latest;
