@@ -682,7 +682,7 @@ for one command. While on, the CLI writes debug records to
 STIM_HOME/logs/debug/cli.ndjson (run_start, run_end, exec with the program name,
 duration and exit status but never arguments, remote_connect and
 remote_request with durations and codes); stim-server writes server.ndjson there
-and logs every request with its timings to its service log. A build worker
+with request timings; errors still reach the service log. A build worker
 also records each offloaded build's start, cancel reason, the process group
 running at the cancel, signals, exit with the worker process's last stderr
 lines, and claim release in server.ndjson. The file rotates at about 8 MiB and keeps one previous

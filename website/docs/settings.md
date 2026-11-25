@@ -1052,7 +1052,7 @@ override `STIM_DEBUG` (`1` or `0` for one command). While it is on, the CLI
 writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
 end, every child process with its program name, duration and exit status, and
 every request to another machine with its duration and result code. stim-server
-writes `server.ndjson` there and logs every request with its timings to its
+writes request timings only to `server.ndjson`; errors still reach the
 service log. On a build worker, `server.ndjson` also follows each offloaded
 build: its start and claims, why it was cancelled, the processes in its
 process group just before the first signal (pid, parent, elapsed time and

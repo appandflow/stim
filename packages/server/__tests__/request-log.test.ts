@@ -79,3 +79,24 @@ test('a refusal that differs only in its numbers is logged once a minute', () =>
   }
   expect(lines).toHaveLength(1);
 });
+
+test('with debug on, requests and host events go to the debug log and only failures to the service log', () => {
+  const { lines, records, log } = setup(true);
+  const tracker = log.track();
+  tracker.begin(1, 'machine.get');
+  tracker.reply({ id: 1, result: {} });
+  tracker.begin(2, 'no.such.method');
+  tracker.reply({ id: 2, error: { code: 'unknown-method', message: 'x' } });
+  log.host('host_connect', { host: 'mac', ms: 5 });
+  log.host('host_connect', { host: 'mac', error: 'refused' }, true);
+  expect(lines).toEqual([
+    '1970-01-01T00:00:00.000Z stim-server: request failed method=no.such.method ms=0 error=unknown-method',
+    '1970-01-01T00:00:00.000Z stim-server: host_connect host=mac error=refused',
+  ]);
+  expect(records).toEqual([
+    expect.objectContaining({ event: 'request', method: 'machine.get' }),
+    expect.objectContaining({ event: 'request', method: 'no.such.method', error: 'unknown-method' }),
+    { event: 'host_connect', host: 'mac', ms: 5 },
+    { event: 'host_connect', host: 'mac', error: 'refused' },
+  ]);
+});

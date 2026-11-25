@@ -478,15 +478,15 @@ client=<id> reason=<why> silentSeconds=<n>" and "build job ended job=<id>
 client=<id> code=<code> stopped=<why> exit=<n> signal=<s> claimsReleased=<bool>"
 (empty fields omitted) for an offloaded build that is stopped or ends without
 an artifact; a client that ends its build closes its connection, so why reads
-connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server it logs every
-request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
-slow=true whois=<ms> probe=<ms> error=<code> reason="<message>"" (slow means 1000 ms or more;
-whois and probe are the hello's Tailscale identity lookup and its wait for
-the host permission probe; a method name that is not a plain dotted lowercase
-name is logged as unknown)
-and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>" (reused=true instead of the two
-timings when an open connection was shared), also as
-records in STIM_HOME/logs/debug/server.ndjson. Search the run id in both logs.
+connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server, every request and
+host_connect is recorded only in STIM_HOME/logs/debug/server.ndjson. Request
+fields: method, client, runId, ms, slow, steps such as whois and probe, error,
+reason. slow means 1000 ms or more; whois and probe time hello's Tailscale
+identity lookup and host permission probe. Unknown method names are logged as
+unknown. host_connect carries host, ms, connectMs and helloMs, or reused=true
+when an open connection was shared. Errors still reach the service log as
+request failed lines. Search runId in server.ndjson and run=<runId> in service
+error lines.
 
 DEBUG LOGS
 With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
