@@ -29,7 +29,28 @@ test('uses du allocated bytes and marks the volume unknown when real-size exits 
   });
 });
 
-test('one deadline covers real-size and the du fallback: du gets what remains, and none starts once it is spent', async () => {
+test('returns both lower bounds without du when real-size skips an unreadable entry', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  const runFileAsync = vi.fn<ReturnType<typeof getExecutor>['runFileAsync']>(async () => {
+    throw Object.assign(new Error('unreadable entry'), {
+      status: 1,
+      stdout: JSON.stringify({
+        paths: [{ path: '/tree', allocated: 8192, private: 4096, files: 1, exact: false, skipped: 1 }],
+        total: { allocated: 8192, private: 4096, files: 1, exact: false, skipped: 1 },
+      }),
+    });
+  });
+  setExecutor({ ...getExecutor(), runFileAsync });
+
+  expect(await measureTree('/tree', { timeoutMs: 1000 })).toEqual({
+    bytes: 8192,
+    privateBytes: 4096,
+    partial: true,
+  });
+  expect(runFileAsync).toHaveBeenCalledTimes(1);
+});
+
+test.each(['', 'not JSON'])('one deadline covers real-size exit 1 (%j) and the du fallback', async (stdout) => {
   Object.defineProperty(process, 'platform', { value: 'linux' });
   let takesMs = 0;
   const duTimeouts: number[] = [];
@@ -38,7 +59,7 @@ test('one deadline covers real-size and the du fallback: du gets what remains, a
     runFileAsync: async (file, args, options) => {
       if (file === '/fake/real-size' || args.includes('/fake/real-size')) {
         vi.setSystemTime(Date.now() + takesMs);
-        throw Object.assign(new Error('unreadable'), { status: 1, stdout: '' });
+        throw Object.assign(new Error('unreadable'), { status: 1, stdout });
       }
       if (file === 'du' || args.includes('du')) {
         duTimeouts.push(options?.timeoutMs ?? 0);

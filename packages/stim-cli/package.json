@@ -101,7 +101,7 @@
     "@xmldom/xmldom": "0.9.12",
     "chalk": "^6.0.0",
     "cross-spawn": "^7.0.6",
-    "real-size": "0.1.0",
+    "real-size": "0.1.1",
     "unique-pid": "0.1.1",
     "which": "^5.0.0",
     "ws": "^8.21.3"

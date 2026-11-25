@@ -103,9 +103,16 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
       const size = paths[0];
       if (size) return { bytes: size.allocated, privateBytes: size.private };
     } catch (error) {
-      const { status } = failed(error);
+      const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
       if (status === UNSUPPORTED_STATUS) privateUnknown = 'volume';
+      if (status === 1 && typeof stdout === 'string') {
+        try {
+          const { total, paths }: RealSizeResult = JSON.parse(stdout);
+          const size = paths[0];
+          if (total.skipped > 0 && size) return { bytes: size.allocated, privateBytes: size.private, partial: true };
+        } catch {}
+      }
     }
   }
   const unknown = counted && privateUnknown ? { privateUnknown } : {};
