@@ -59,6 +59,8 @@ import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { measureDisk, measureDiskAsync } from '../stimd/passes/measure.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { nativeRunWaitNotice } from '../engine/native-run.ts';
+import type { IdleWorkspaceWait } from '../workspace/in-use.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
@@ -972,11 +974,13 @@ async function reclaimAll(
     preserveRootProject = false,
     preserveAllProjects = false,
     removedBy,
+    lockWait,
     operation,
   }: {
     preserveRootProject?: boolean;
     preserveAllProjects?: boolean;
     removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
+    lockWait?: IdleWorkspaceWait;
     operation?: StimContext;
   } = {},
 ): Promise<ReclaimAllResult> {
@@ -1009,6 +1013,7 @@ async function reclaimAll(
         parkOwnedDevices: pressure !== 'critical',
         preserveProjectRecord: preserveAllProjects || (preserveRootProject && key === rootPath),
         stopRequester: { by: 'stim worktree remove' },
+        ...(lockWait ? { lockWait } : {}),
         operation,
       });
     } catch (error) {
@@ -1150,6 +1155,7 @@ async function reclaimEnvironment(
   root: string,
   why: string,
   output: RemovalOutput,
+  lockWait: IdleWorkspaceWait | undefined,
   operation?: StimContext,
   beforeRemove?: (workspace: string) => void,
   preserveRootProject = false,
@@ -1165,6 +1171,7 @@ async function reclaimEnvironment(
           const result = await reclaimAll(root, lockedKeys, {
             preserveRootProject,
             removedBy: 'worktree-remove',
+            lockWait,
             operation,
           });
           for (const line of poolLines(result)) output.error(line);
@@ -1233,6 +1240,14 @@ interface RemovalOutput {
   fail: () => void;
 }
 
+const REMOVAL_LOCK_WAIT_MS = 60_000;
+
+function removalLockWait(output: RemovalOutput, enabled = true): IdleWorkspaceWait | undefined {
+  if (!enabled) return undefined;
+  const notice = nativeRunWaitNotice({ write: (line) => output.error(chalk.dim(phaseLine('lock', line))) });
+  return { ms: REMOVAL_LOCK_WAIT_MS, onWait: (holder) => notice(holder) };
+}
+
 const REMOVAL_OUTPUT: RemovalOutput = {
   error: (line) => console.error(line),
   fail: () => {
@@ -1246,6 +1261,8 @@ interface RemoveOptions {
   operation?: StimContext;
   removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
   force?: boolean;
+  /** Wait for a background pass that holds a workspace's native-run lock before keeping the workspace; true by default. */
+  backgroundLockWait?: boolean;
   linkedOnly?: boolean;
   /** A modification to a tracked file is dirty work even in the files `pod install` rewrites, as in a checkout Stim never ran in. */
   podChurnIsDirty?: boolean;
@@ -1586,6 +1603,7 @@ async function removeOrRefuse(
     signal: opts.operation?.signal,
     declareFor: opts.operation,
   };
+  const lockWait = removalLockWait(output, opts.backgroundLockWait);
   options.signal?.throwIfAborted();
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
@@ -1667,7 +1685,7 @@ async function removeOrRefuse(
       return;
     }
     if (deadProjects.length) {
-      await reclaimEnvironment(path, 'its folder is already gone', output, opts.operation, opts.beforeRemove);
+      await reclaimEnvironment(path, 'its folder is already gone', output, lockWait, opts.operation, opts.beforeRemove);
       return;
     }
     output.error(chalk.red(`No such worktree: ${path}`));
@@ -1679,7 +1697,7 @@ async function removeOrRefuse(
   const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
     if (!opts.linkedOnly && (await gitCommonDirAsync(path, options)) === null && hasRegisteredProjectUnder(path)) {
-      await reclaimEnvironment(path, 'it is not a git repository', output, opts.operation, opts.beforeRemove);
+      await reclaimEnvironment(path, 'it is not a git repository', output, lockWait, opts.operation, opts.beforeRemove);
       return;
     }
     output.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
@@ -1728,6 +1746,7 @@ async function removeOrRefuse(
       project,
       isSource ? 'it is the source checkout' : 'it was run from a subfolder of the worktree',
       output,
+      lockWait,
       opts.operation,
       opts.beforeRemove,
       !isSource && nativeCanonicalPath(project) === nativeCanonicalPath(entry.path),
@@ -1735,7 +1754,14 @@ async function removeOrRefuse(
     return;
   }
   if (isSource) {
-    await reclaimEnvironment(entry.path, 'it is the source checkout', output, opts.operation, opts.beforeRemove);
+    await reclaimEnvironment(
+      entry.path,
+      'it is the source checkout',
+      output,
+      lockWait,
+      opts.operation,
+      opts.beforeRemove,
+    );
     return;
   }
   path = entry.path;
@@ -1866,6 +1892,7 @@ async function removeOrRefuse(
           const result = await reclaimAll(path, lockedKeys, {
             preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
+            lockWait,
             operation: opts.operation,
           });
           if (result.keptEntries.length) {

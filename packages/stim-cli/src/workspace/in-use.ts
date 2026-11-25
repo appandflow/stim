@@ -17,7 +17,9 @@ import {
   isClaimRefusal,
   isClaimUnavailable,
   readClaimSet,
+  type ClaimHolder,
 } from '../ownership-claim.ts';
+import { describeNativeRunHolder } from '../engine/native-run.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { managedLockHolders } from '../engine/tunnel.ts';
@@ -169,6 +171,18 @@ export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal, prese
 
 export type IdleWorkspaceRun<T> = { ran: true; value: T } | { ran: false; reasons: string[] };
 
+/**
+ * Wait up to `ms` while the native-run lock is held by a claim that names no command, such as a daemon pass or a
+ * fingerprint evaluation; a claim that names a command (`ios`, `android`, `stop`, `share`, ...) refuses at once.
+ * `onWait` is called on every poll of that wait.
+ */
+export interface IdleWorkspaceWait {
+  ms: number;
+  onWait: (holder: ClaimHolder) => void;
+}
+
+class HeldByCommand extends Error {}
+
 export async function withIdleWorkspace<T>(
   root: string,
   fn: () => T | Promise<T>,
@@ -176,9 +190,17 @@ export async function withIdleWorkspace<T>(
     purpose,
     operation,
     signal = operation?.signal,
+    wait,
     ...checks
-  }: InUseChecks & { purpose: string; signal?: AbortSignal; operation?: StimContext },
+  }: InUseChecks & { purpose: string; signal?: AbortSignal; operation?: StimContext; wait?: IdleWorkspaceWait },
 ): Promise<IdleWorkspaceRun<T>> {
+  let holder: ClaimHolder | undefined;
+  const onHeld = (held: ClaimHolder): void => {
+    holder = held;
+    if (!wait) return;
+    if (typeof held.details.command === 'string') throw new HeldByCommand();
+    wait.onWait(held);
+  };
   try {
     return await withWorkspaceProcessLock(
       workspaceDir(root),
@@ -190,13 +212,19 @@ export async function withIdleWorkspace<T>(
         if (reasons.length) return { ran: false, reasons };
         return { ran: true, value: await fn() };
       },
-      { external: true, waitMs: 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation },
+      { external: true, waitMs: wait?.ms ?? 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation, onHeld },
     );
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
     signal?.throwIfAborted();
-    if (workspaceProcessLockError(error)) return { ran: false, reasons: [NATIVE_RUN_HELD] };
+    if (error instanceof HeldByCommand || workspaceProcessLockError(error))
+      return {
+        ran: false,
+        reasons: [
+          holder ? `${describeNativeRunHolder(holder, Date.now())} holds its native-run.lock` : NATIVE_RUN_HELD,
+        ],
+      };
     if (isClaimRefusal(error) || isClaimUnavailable(error)) {
       return {
         ran: false,

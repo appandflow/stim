@@ -65,7 +65,7 @@ import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceStateDirs, workspaceDir } from '../workspace/paths.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
-import { emptyWorkspaceDir, withIdleWorkspace } from '../workspace/in-use.ts';
+import { emptyWorkspaceDir, withIdleWorkspace, type IdleWorkspaceWait } from '../workspace/in-use.ts';
 import {
   inspectProcessIdentity,
   sameProcessRecord,
@@ -430,6 +430,7 @@ type ReclaimOptions = {
   stopStream?: typeof stopDeviceLogStream;
   teardownBrowser?: typeof teardownOwnedBrowser;
   stopRequester?: StopRequester;
+  lockWait?: IdleWorkspaceWait;
 };
 
 export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
@@ -442,6 +443,7 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
     hosted: false,
     supervisor: false,
     managedLocks: false,
+    ...(options.lockWait ? { wait: options.lockWait } : {}),
   });
   if (run.ran) return run.value;
   const kept: SkippedDevice = { name: `workspace ${dir}`, reason: `kept because ${run.reasons.join('; ')}` };
