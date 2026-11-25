@@ -507,7 +507,6 @@ export function rename(id: string, name: string): void {
 
 const HELPER_REMEDIES: Partial<Record<HelperState, string>> = {
   'requires approval': '; approve Stim Host in System Settings > General > Login Items & Extensions',
-  'Stim Host missing': '; run `stim service install --helper` to install Stim Host and register the helper',
   'Stim Host too old': '; run `stim service install --helper` to update Stim Host and register the helper',
 };
 

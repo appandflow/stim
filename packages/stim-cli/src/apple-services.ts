@@ -74,7 +74,7 @@ export async function helperCommand(action: 'register' | 'unregister' | 'status'
       return isTimeoutError(error) ? 'status timed out' : 'status error';
     }
     throw new CliUsageError(
-      `Could not ${action} the helper: ${error instanceof Error ? error.message : error}. ${action === 'register' ? 'Retry' : 'Run `stim service install --helper` to update Stim Host, then retry'}; approve Stim Host in System Settings > General > Login Items & Extensions.`,
+      `Could not ${action} the helper: ${error instanceof Error ? error.message : error}. ${action === 'register' ? 'Retry' : 'Install a helper-capable Developer ID-signed, notarized Stim Host and retry'}; approve Stim Host in System Settings > General > Login Items & Extensions.`,
     );
   }
 }
