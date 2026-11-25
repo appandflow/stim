@@ -102,6 +102,7 @@ struct BuildMachinesView: View {
     let update = model.updates[entry]
     return MachineDetailPage(
       entry: entry, detail: model.detail(for: entry, checkout: checkout), status: status,
+      pairing: connections.first { $0.entry == entry }?.pairing,
       capabilities: buildMachineCapabilities(entry, hosts: model.check(in: checkout)?.hosts),
       working: model.working == entry, progress: model.working == entry ? model.progress : nil, canAsk: checkout != nil,
       hosted: hostedDevices(on: entry, in: store.payload?.environments ?? []),

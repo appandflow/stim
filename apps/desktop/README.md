@@ -2157,7 +2157,8 @@ its applicable named scenarios: ready, loading, empty, error, long text and larg
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
 Settings covers the four configuration scopes, not the App or Connections tabs; **Connections: using this machine** and
-**Connections: this machine uses** show both segments of Connections with fixed connections.
+**Connections: this machine uses** show both segments of Connections with fixed connections; **Connections: machine
+details** shows a machine's Details page with its viewing pairing refused.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,

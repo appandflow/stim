@@ -8,6 +8,7 @@ struct MachineDetailPage<Toggles: View>: View {
   var entry: String
   var detail: MachineDetail
   var status: BuildMachineStatus?
+  var pairing: PairedServers.Entry?
   var capabilities: [String]
   var working: Bool
   var progress: String?
@@ -31,6 +32,9 @@ struct MachineDetailPage<Toggles: View>: View {
       if let situation = detail.situation {
         Section("Status") { MachineSituationView(situation: situation, machine: entry) }
       }
+      if let pairing, pairing.status.tone != .success {
+        Section("Viewing") { viewing(pairing) }
+      }
       if update != nil || install != nil {
         Section("Stim version") {
           VStack(alignment: .leading, spacing: Space.sm) {
@@ -42,7 +46,7 @@ struct MachineDetailPage<Toggles: View>: View {
         }
       }
       if detail.situation == nil {
-        if detail.groups.isEmpty, detail.androidMessage == nil, status != nil {
+        if detail.groups.isEmpty, detail.androidMessage == nil, status != nil, pairing?.status.tone ?? .success == .success {
           Section("Problems and Notes") {
             Text("Nothing to fix.").foregroundStyle(Palette.secondary)
           }
@@ -109,6 +113,19 @@ struct MachineDetailPage<Toggles: View>: View {
       }
     }
     .padding(.vertical, Space.sm)
+  }
+
+  private func viewing(_ pairing: PairedServers.Entry) -> some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      Text(verbatim: pairing.status.title).foregroundStyle(Color(pairing.status.tone))
+      if case .refused = pairing.connection {
+        if let detail = pairing.status.detail, !detail.isEmpty {
+          Text(verbatim: detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if let command = pairing.status.command { CopyableCommand(command: command, runsOn: entry) }
+      }
+    }
   }
 
   private func androidMessage(_ message: String) -> some View {
