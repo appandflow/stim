@@ -1034,12 +1034,12 @@ RULES
                               clones in full.
                               privateBytes is what deleting node_modules,
                               ios/Pods, .dd, android/.cxx or xcodebuild
-                              output would free on APFS, ext4 or
-                              tmpfs: blocks no
-                              copy-on-write clone or hard link outside it
-                              shares; null for other directories and
-                              volumes. A bytes is null when it could not be
-                              measured within 10 seconds; sizes are cached
+                              output would free on APFS, ext4, tmpfs,
+                              btrfs or XFS: blocks no clone or hard link
+                              outside it shares; null for
+                              other directories and volumes. A bytes is
+                              null when it could not be measured within 10
+                              seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
                               node_modules and Pods, for up to six hours
