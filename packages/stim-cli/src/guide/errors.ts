@@ -184,7 +184,7 @@ the code, never on the message.`,
     STIM_COMPILATION_CACHE_CORRUPT: {
       summary: 'an iOS build failed on a damaged shared compilation cache; Stim emptied it, rerun the command',
       body: () => `STIM_COMPILATION_CACHE_CORRUPT  (ios)
-  The build used the shared compilation cache ($STIM_HOME/compilation-cache)
+  The build used the shared compilation cache ($STIM_HOME/compilation-cache.noindex)
   and the compiler reported a damaged object in it. A cache write that a full
   disk or a killed build cut short leaves such an object, and every later build
   that reaches it fails the same way. Stim matches only the compiler's own

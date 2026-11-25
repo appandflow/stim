@@ -125,3 +125,4 @@ govern the workflow.
 - [LLP 0025](./0025-agent-evals.decision.md) covers the on-demand agent eval runner, its scripted `stim` and its graders.
 - [LLP 0026](./0026-printed-remedies.decision.md) covers where the guidance for a refusal lives: the remedy a command prints, and the few procedures `stim guide errors` keeps.
 - [LLP 0027](./0027-workspace-services.decision.md) covers workspace services: how Stim starts, idles, revives and tears them down.
+- [LLP 0028](./0028-stim-home-layout.decision.md) covers folder names in the Stim home: the `*.noindex` churn folders and how an existing home renames them.

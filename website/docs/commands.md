@@ -22,7 +22,7 @@ procedures too long for a remedy.
 
 `start --json`, `ios --json`, `android --json` and `macos --json` report
 `agentDevice: { stateDir }`, an absolute path under
-`$STIM_HOME/workspaces/<name>/agent-device/`. Each `status --json` environment
+`$STIM_HOME/workspaces/<name>/agent-device.noindex/`. Each `status --json` environment
 reports the same field, shared by its slots, without creating the directory.
 Set `AGENT_DEVICE_STATE_DIR` to it when driving a device yourself; see
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
