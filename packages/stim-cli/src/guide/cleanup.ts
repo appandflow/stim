@@ -950,7 +950,8 @@ IN USE
   15 minutes keeps them. The deletion holds
   native-run.lock itself, so no native run can start partway through.
   \`worktree remove\` waits up to 60 seconds, saying so on stderr, for a
-  background pass holding that lock; never for a command run. A lock
+  background pass holding that lock, not for an ios, android, stop or share
+  run. A lock
   that names no workspace blocks nothing, because every build also holds its
   own workspace's native-run.lock; gc lists it with the command that removes
   it. \`worktree remove\` re-checks uncommitted and unpushed work under its
