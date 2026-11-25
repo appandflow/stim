@@ -95,6 +95,7 @@ function permissionProfile(paths: TrialPaths): string {
     [paths.harness]: 'write',
     [paths.bin]: 'read',
     [paths.home]: 'read',
+    [join(paths.base, 'repo', '.git')]: 'read',
     [join(paths.codexHome, 'skills')]: 'read',
     ...Object.fromEntries(readablePaths().map((path) => [path, 'read'])),
     '/tmp': 'deny',
