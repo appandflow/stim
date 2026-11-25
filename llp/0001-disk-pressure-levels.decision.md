@@ -1087,6 +1087,41 @@ The setting name, the definition of
 activity, the 7-day floor on the runtime keep and the mount-point rule were
 chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
+## A dependency tree's size holds until its clone group changes
+
+A `node_modules` or `ios/Pods` measurement is reused while the tree's install
+signature (inode and mtime of its root and install markers) is unchanged: for
+6 hours in any case, then up to a day while its clone group is unchanged, and
+never past a day. The clone group is the same relative path in every checkout
+of the repository, the main checkout and each linked worktree, read from git's
+own files without running git. Its stamp, a hash of each member's path and
+install signature, is taken before the walk and saved in the size cache entry
+beside the signature. The daemon's dependency scan reads the members'
+signatures through its bounded reads; a caller that supplies a bounded
+signature without a stamp records none, which reads as changed.
+
+Reason: a tree's private size changes without the tree changing when the
+checkout it was cloned from reinstalls or is warmed from again, or when a
+sibling clone is removed or reinstalled. Each of those changes a member's
+signature or existence, so an unchanged stamp means nothing Stim can relate
+changed. Removals and reinstalls make a cached private size read too small,
+which under-reports what deleting frees and deletes nothing wrongly. The only
+case that reads too large is the source checkout right after a warm clones
+from it; the dormant stage and the ladder decide on the same trusted size they
+did before, and that exposure is bounded by the same 6 hours as before. The
+day bounds clones made outside Stim that no member records.
+
+Maintainer decision: "can we avoid remesuring when we know smt didnt change
+tho?", 2026-11-25 (#6378).
+
+Maintainer decision: "lets do it and also see if we can improve caching and set
+a bigger max age like maybe 1 day", 2026-11-25 (#6378).
+
+The 6 hour floor for a changed group was chosen by the implementer of #6378,
+not by the maintainer: the daemon scans every 10 minutes, so re-walking on
+every group change would walk a busy repository's trees more often than the
+old 6 hour expiry did.
+
 ## A tree of hard links stays
 
 A `node_modules` or Pods tree whose private size is unknown when it is ranked
@@ -1138,9 +1173,8 @@ every tree pnpm did not install, too few files, or reads that did not answer)
 leaves the tree unknown and the rules above unchanged. The verdict is recorded
 beside the size cache with the install signature and the store, and reused for
 6 hours while the signature holds; a `links` verdict is reused only while its
-store is still a directory (one bounded stat). The 6 hours match how long a
-dependency tree's size stays fresh and keep the cost at a few dozen stats per
-unknown tree per 6 hours. Only a tree with no measurement is sampled; at the
+store is still a directory (one bounded stat). The 6 hours keep the cost at a
+few dozen stats per unknown tree per 6 hours. Only a tree with no measurement is sampled; at the
 7-day rule `stim gc` first tries to measure it, so the sample never replaces a
 measurement.
 

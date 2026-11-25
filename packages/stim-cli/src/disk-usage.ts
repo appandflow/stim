@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import {
   markClaimChildPending,
@@ -18,6 +19,7 @@ import {
   readDiskUsageFailure,
   readDiskUsageFailureSignature,
   readDiskUsagePartial,
+  readDiskUsageCloneGroup,
   type DiskMeasure,
 } from '@stim-cli/core/state';
 import { writeCacheFile } from './cache-file.ts';
@@ -26,13 +28,40 @@ import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts
 import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
 import { lastSizeFailure } from './size-failures.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
+import { gitLocationOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
 
 const DEPENDENCY_MAX_AGE_MS: number = 6 * 60 * 60_000;
+const DEPENDENCY_BACKSTOP_MS: number = 24 * 60 * 60_000;
 const ABSENT = 'absent';
 
 /** Whether `path` is a `node_modules` or `ios/Pods` folder, the trees whose measurement carries an install signature. */
 export function isDependencyTree(path: string): boolean {
   return ARTIFACT_DIRS.dependencies.some((name) => path.endsWith(`${sep}${name.split('/').join(sep)}`));
+}
+
+/** The same dependency tree path in each checkout recorded by the repository's git files. */
+export function dependencyCloneMembers(path: string): string[] {
+  try {
+    const parent = realpathSync.native(dirname(path));
+    const location = gitLocationOnDisk(parent);
+    if (!location) return [];
+    const suffix = relative(location.path, join(parent, basename(path)));
+    const roots = [location.path, ...linkedWorktreesOnDisk(location.commonDir).map((entry) => entry.path)];
+    if (basename(location.commonDir) === '.git') roots.push(dirname(location.commonDir));
+    return [...new Set(roots.map((root) => join(root, suffix)))].toSorted();
+  } catch {
+    return [];
+  }
+}
+
+/** A stable stamp of member paths and their install signatures; null signatures represent absent trees. */
+export function dependencyCloneStamp(members: readonly (readonly [string, string | null])[]): string {
+  const lines = members.map(([path, signature]) => `${path}\0${signature ?? ABSENT}`).toSorted();
+  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
+}
+
+function currentCloneGroup(path: string): string {
+  return dependencyCloneStamp(dependencyCloneMembers(path).map((member) => [member, treeSignature(member)]));
 }
 
 function currentSignature(path: string): string {
@@ -64,12 +93,18 @@ export function freshMeasure(
     valid,
     now = Date.now,
     signature,
-  }: Pick<RefreshOptions, 'maxAgeMs' | 'valid' | 'now' | 'signature'> = {},
+    cloneGroup,
+  }: Pick<RefreshOptions, 'maxAgeMs' | 'valid' | 'now' | 'signature' | 'cloneGroup'> = {},
 ): DiskMeasure | null {
   const measure = trustedMeasure(path, signature);
   if (!measure) return null;
-  const limit = isDependencyTree(path) ? DEPENDENCY_MAX_AGE_MS : maxAgeMs;
-  return now() - Date.parse(measure.measuredAt) < limit && (valid?.(measure) ?? true) ? measure : null;
+  const age = now() - Date.parse(measure.measuredAt);
+  if (!(valid?.(measure) ?? true)) return null;
+  if (!isDependencyTree(path)) return age < maxAgeMs ? measure : null;
+  if (age < DEPENDENCY_MAX_AGE_MS) return measure;
+  if (age >= DEPENDENCY_BACKSTOP_MS) return null;
+  const group = cloneGroup ?? (signature === undefined ? currentCloneGroup(path) : undefined);
+  return group !== undefined && readDiskUsageCloneGroup(path) === group ? measure : null;
 }
 
 function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {
@@ -107,8 +142,8 @@ export interface RefreshOptions {
   timeoutMs: number;
   /**
    * How long the measurement of a folder that is not a dependency tree stays fresh, and how long a failed walk is
-   * left alone when `failures` is set. A dependency tree stays fresh for DEPENDENCY_MAX_AGE_MS while its signature
-   * matches, whatever the caller.
+   * left alone when `failures` is set. Dependency trees are reused while their install is unchanged, for six hours
+   * unconditionally, then while their clone group is unchanged, with a one-day backstop.
    */
   maxAgeMs?: number;
   now?: () => number;
@@ -144,6 +179,8 @@ export interface RefreshOptions {
    * read with synchronous stats, which a stalled mount can block.
    */
   signature?: string;
+  /** The current clone-group stamp, read by the caller through bounded reads. */
+  cloneGroup?: string;
 }
 
 export type RefreshOutcome = 'fresh' | 'measured' | 'failed' | 'busy';
@@ -187,6 +224,7 @@ export async function refreshMeasure(
     walkMs: number | null,
     partial?: true,
     privateUnknown?: 'volume' | 'walk',
+    cloneGroup?: string,
   ): DiskMeasure => {
     const measure: DiskMeasure = {
       bytes,
@@ -197,6 +235,7 @@ export async function refreshMeasure(
     writeCacheFile(diskUsageCacheFile(path), {
       path,
       ...measure,
+      ...(cloneGroup !== undefined ? { cloneGroup } : {}),
       ...(walkMs !== null ? { walkMs } : {}),
       ...(partial ? { partial } : {}),
       ...(privateBytes === null && privateUnknown ? { privateUnknown } : {}),
@@ -205,7 +244,19 @@ export async function refreshMeasure(
   };
   if (options.knownToExist !== true && !existsSync(path)) {
     if (!dependency) return { outcome: 'fresh', measure: null };
-    return { outcome: 'measured', measure: record(0, 0, ABSENT, now(), null) };
+    return {
+      outcome: 'measured',
+      measure: record(
+        0,
+        0,
+        ABSENT,
+        now(),
+        null,
+        undefined,
+        undefined,
+        options.cloneGroup ?? (options.signature === undefined ? currentCloneGroup(path) : undefined),
+      ),
+    };
   }
   const claim = options.claim ? takeWalkClaim() : null;
   if (options.claim && !claim) return { outcome: 'busy', measure: null };
@@ -215,6 +266,9 @@ export async function refreshMeasure(
     if (options.admit && !options.admit()) return { outcome: 'busy', measure: null };
     const startedAt = now();
     const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
+    const cloneGroup = dependency
+      ? (options.cloneGroup ?? (options.signature === undefined ? currentCloneGroup(path) : undefined))
+      : undefined;
     const targets = options.targets?.();
     let size: TreeSize | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
@@ -253,6 +307,7 @@ export async function refreshMeasure(
         Math.max(0, now() - startedAt),
         size.partial,
         size.privateUnknown,
+        cloneGroup,
       ),
       ...(size.partial ? { partial: true as const } : {}),
     };

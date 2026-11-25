@@ -27,7 +27,14 @@ import {
   type ArtifactWorktree,
 } from '../stimd/passes/artifacts.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
-import { freshMeasure, knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import {
+  dependencyCloneMembers,
+  dependencyCloneStamp,
+  freshMeasure,
+  knownPrivateBytes,
+  refreshMeasure,
+  trustedMeasure,
+} from '../disk-usage.ts';
 import { treeSignature } from '../private-size.ts';
 import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
@@ -897,13 +904,24 @@ function dependencyCandidates(worktrees: readonly { path: string; keys: readonly
 }
 
 export async function measureDependencyTrees(operation: StimContext): Promise<void> {
+  const signatures = new Map<string, string | null>();
+  const readSignature = async (path: string) => {
+    if (!signatures.has(path)) signatures.set(path, await dependencyTreeSignature(path, operation.signal));
+    return signatures.get(path) ?? null;
+  };
   for (const path of dependencyCandidates(await artifactWorktreesAsync(operation.signal, operation))) {
-    const signature = await dependencyTreeSignature(path, operation.signal);
+    const signature = await readSignature(path);
     if (signature === null) {
       if (hungRead() !== null) return;
       continue;
     }
+    const members: [string, string | null][] = [];
+    for (const member of dependencyCloneMembers(path)) {
+      members.push([member, await readSignature(member)]);
+      if (hungRead() !== null) return;
+    }
     const { outcome } = await refreshMeasure(path, {
+      cloneGroup: dependencyCloneStamp(members),
       timeoutMs: WALK_TIMEOUT_MS,
       claim: true,
       operation,

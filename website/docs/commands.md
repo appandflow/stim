@@ -2028,7 +2028,8 @@ first: a folder again 5 minutes after its last walk ended while the environment
 is active and an hour after otherwise, or 20 times as long as that walk took
 when that is longer. No watcher on the machine starts a walk sooner than 4
 times as long as the previous one took, so a slow disk is walked less often. It measures
-`node_modules` when its install changes and at least every 6 hours, and
+`node_modules` when its install changes, after 6 hours if the same tree changed
+or disappeared in another checkout of the repository, and after a day in any case, and
 `worktreeBytes` counts the checkout's own `node_modules` from that measurement,
 so it is `null` with `nodeModulesBytes` after a reinstall. A walk that fails
 is retried after the same 5 minutes or hour.
@@ -3297,8 +3298,10 @@ Each entry's
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
 other directories, on macOS off APFS, on Linux off ext2/3/4, tmpfs, btrfs and XFS, on Windows, or when the bundled real-size binary is missing for the platform. gc reuses a
 size for up to an hour while no entry was added to or removed from the
-directory (for `node_modules` and Pods, for up to six hours while their install
-is unchanged, the measurement `stim status` and the daemon share),
+directory (for `node_modules` and Pods, while their install is unchanged,
+re-walking after 6 hours only if the same tree changed or disappeared in another
+checkout of the repository, and after a day in any case; `stim status` and the daemon
+share this measurement),
 measures the rest with one `du` or private-size walk per directory, 4 at a time with a
 10-second limit each, and reports a directory it could not measure in time as
 `null`.
