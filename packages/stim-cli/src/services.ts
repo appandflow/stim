@@ -816,7 +816,7 @@ async function teardownOne(
 
 // @ref LLP 0027#stim-runs-only-what-it-recorded -- a service left running keeps the record it was started with
 function asRunning(record: ServiceRecord): ServiceRecord {
-  const { stoppedBy: _, idleStopFailedAt: __, ...rest } = record;
+  const { stoppedBy: _, idleStopFailedAt: __, teardownFailure: ___, ...rest } = record;
   return { ...rest, state: 'running' };
 }
 

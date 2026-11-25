@@ -2308,6 +2308,7 @@ test.each<[string, (marker: string) => Record<string, unknown>, boolean, boolean
       resetExecutor();
       await removeWorktreeTarget(wt, { force, output: { error: (line) => errs.push(line), fail: () => {} } });
       expect(existsSync(wt)).toBe(!removed);
+      expect(/dropped \(--force\); run by hand in/.test(errs.join('\n'))).toBe(force);
       expect(/Refusing to remove .*exited with status 1/.test(errs.join('\n'))).toBe(!removed);
       expect(
         existsSync(workspaceStateFile(wt)) && readFileSync(workspaceStateFile(wt), 'utf8').includes('teardownFailure'),
