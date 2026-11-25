@@ -5,6 +5,9 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// libuv reads UV_THREADPOOL_SIZE once, when the pool first starts; a stimd that runs in this process needs 16 threads.
+process.env.UV_THREADPOOL_SIZE ||= '16';
+
 const root = process.env.STIM_ENGINE_ROOT || join(homedir(), '.stim', 'engine');
 const read = (file) => {
   try {
