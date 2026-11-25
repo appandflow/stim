@@ -1052,16 +1052,16 @@ override `STIM_DEBUG` (`1` or `0` for one command). While it is on, the CLI
 writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
 end, every child process with its program name, duration and exit status, and
 every request to another machine with its duration and result code. stim-server
-writes request timings only to `server.ndjson`; errors still reach the
-service log. On a build worker, `server.ndjson` also follows each offloaded
+writes request timings and error messages only to `server.ndjson`; errors
+still reach the service log. On a build worker, `server.ndjson` also follows each offloaded
 build: its start and claims, why it was cancelled, the processes in its
 process group just before the first signal (pid, parent, elapsed time and
 executable), each signal, its exit with the worker process's last stderr lines,
 and whether its claims were released. Whether or not `debug.logs` is on, the
 service log gets one line for a cancel and one for a build that ended without
 an artifact. Records never carry arguments, environment values, tokens or
-tickets, apart from whatever an offloaded build's last output line and the
-worker's stderr lines contain; nothing is sent anywhere, and the file
+tickets, apart from whatever a request's error message, an offloaded build's
+last output line and the worker's stderr lines contain; nothing is sent anywhere, and the file
 rotates at about 8 MiB with one previous generation kept.
 
 <StimTabs code="stim settings set debug.logs true --scope machine" />
