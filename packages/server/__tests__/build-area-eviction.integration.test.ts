@@ -1674,6 +1674,11 @@ describe('a client the build approvals do not name', () => {
     { name: 'a build-clients.json a newer Stim wrote', write: () => buildClients('{"version":3,"devices":[]}') },
     { name: 'an entry with no id', write: () => approve(approved(APPROVED), '"opaque"') },
     { name: 'an unreadable entry with its id', write: () => approve({ id: REVOKED, record: { kind: 'passkey' } }) },
+    { name: 'its entry missing capabilities', write: () => approve({ ...approved(REVOKED), capabilities: undefined }) },
+    {
+      name: 'its entry with capabilities "build"',
+      write: () => approve({ ...approved(REVOKED), capabilities: 'build' }),
+    },
     { name: 'a Stim home that is not ready', write: () => approve(), ready: false },
   ])('keeps every folder with $name', async ({ write, ready }) => {
     const path = area(REVOKED, 'subject', 0);
@@ -1682,15 +1687,33 @@ describe('a client the build approvals do not name', () => {
     expect(existsSync(path)).toBe(true);
   });
 
-  test('keeps the folder while an area claim is held, and a later pass removes it', async () => {
+  test.each([
+    { name: 'a sibling file', extra: () => writeFileSync(join(root, 'deadbeef', 'notes.txt'), 'mine') },
+    { name: 'a file in its repos', extra: () => writeFileSync(join(root, 'deadbeef', 'repos', 'notes.txt'), 'mine') },
+  ])('keeps a hex-named folder with a repos child and $name, saying why once', async ({ extra }) => {
+    const path = area('deadbeef', 'subject', 0);
+    extra();
+    approve();
+    const host = start({}, { listed: listedBuildClients });
+    await host.evictAreas();
+    await host.evictAreas();
+    expect(existsSync(join(path, 'src', 'file'))).toBe(true);
+    expect(logs.filter((line) => /retaining the build area of deadbeef, which .*notes\.txt/.test(line))).toHaveLength(
+      1,
+    );
+  });
+
+  test('keeps the folder while an area claim is held, saying why once, and a later pass removes it', async () => {
     const path = area(REVOKED, 'subject', 0);
     const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
     assert(claim);
     approve();
     const host = start({}, { listed: listedBuildClients });
     await host.evictAreas();
+    await host.evictAreas();
     expect(existsSync(path)).toBe(true);
-    expect(logs.join('\n')).toMatch(new RegExp(`retaining the build area of ${REVOKED}; ownership .* is held`));
+    const held = new RegExp(`retaining the build area of ${REVOKED}; ownership .* is held`);
+    expect(logs.filter((line) => held.test(line))).toHaveLength(1);
 
     releaseClaim(claim);
     await host.evictAreas();

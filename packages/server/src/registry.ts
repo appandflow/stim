@@ -490,9 +490,9 @@ export function buildClientsReadable(): boolean {
 }
 
 /**
- * The ids `build-clients.json` names with `build`, an entry this version cannot read counted by its id, or null when
- * the file is missing, unreadable, of another version or holds an entry without an id, so that an id it leaves out is
- * one the worker positively does not approve.
+ * The ids `build-clients.json` names with `build`, counting by its id an entry this version cannot read or whose
+ * capabilities are not a list of names, or null when the file is missing, unreadable, of another version or holds an
+ * entry without an id, so that an id it leaves out is one the worker positively does not approve.
  */
 export function listedBuildClients(): ReadonlySet<string> | null {
   const file = clientsFile('build');
@@ -505,7 +505,9 @@ export function listedBuildClients(): ReadonlySet<string> | null {
     for (const slot of parseContents(file, text, registry).slots) {
       const id = slotId(slot);
       if (id === undefined) return null;
-      if (!slot.device || slot.device.capabilities.includes('build')) ids.add(id);
+      const raw = isJsonObject(slot.value) ? slot.value.capabilities : undefined;
+      const intact = Array.isArray(raw) && raw.every((capability) => typeof capability === 'string');
+      if (!slot.device || !intact || slot.device.capabilities.includes('build')) ids.add(id);
     }
     return ids;
   } catch (error) {

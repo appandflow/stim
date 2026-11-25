@@ -105,6 +105,7 @@ const EVICTED_DIR = 'evicted';
 const HANDOFFS_DIR = 'handoffs';
 const HANDOFF_TOKEN = /^[0-9a-f]{64}$/;
 const CLIENT_ID = /^[0-9a-f]{8}$/;
+const CLIENT_ENTRIES = new Set(['repos', 'blobs', 'cache', HANDOFFS_DIR, EVICTED_DIR]);
 
 export const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
@@ -362,6 +363,7 @@ export class BuildWorkerRoot {
   readonly limits: BuildLimits;
   private readonly served = new Set<string>();
   private readonly removals = new Map<string, Promise<void>>();
+  private readonly removalNotes = new Map<string, string>();
   private closed = false;
   private draining: string | null = null;
   private readonly options: BuildWorkerRootOptions;
@@ -532,23 +534,31 @@ export class BuildWorkerRoot {
     if (!client || client === '.' || client === '..' || basename(client) !== client) return Promise.resolve();
     const pending = this.removals.get(client);
     if (pending) return pending;
-    const removal = this.removeClient(client)
-      .catch((error: unknown) => console.error(`stim-server: retaining the build area of ${client}: ${String(error)}`))
-      .finally(() => this.removals.delete(client));
+    const notes: string[] = [];
+    const note = (line: string) => void notes.push(line);
+    const removal = this.removeClient(client, note)
+      .catch((error: unknown) => note(`stim-server: retaining the build area of ${client}: ${String(error)}`))
+      .finally(() => {
+        this.removals.delete(client);
+        const said = notes.join('\n');
+        if (said && this.removalNotes.get(client) !== said) for (const line of notes) console.error(line);
+        if (said) this.removalNotes.set(client, said);
+        else this.removalNotes.delete(client);
+      });
     this.removals.set(client, removal);
     return removal;
   }
 
-  private async removeClient(client: string): Promise<void> {
+  private async removeClient(client: string, note: (line: string) => void): Promise<void> {
     await this.options.stopJobs(client);
     const clientDir = this.clientDir(client);
     for (const token of handoffTokens(clientDir)) dropHandoff(clientDir, token);
     if (notRealDirectory(clientDir)) {
-      await this.removeDir(client, clientDir);
+      await this.removeDir(client, clientDir, note);
       return;
     }
     if (!(await this.resumeEvicted(client))) {
-      console.error(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
+      note(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
       return;
     }
     let areas: string[];
@@ -557,7 +567,7 @@ export class BuildWorkerRoot {
       areas = notRealDirectory(repos) ? [] : await readdir(repos);
     } catch (error) {
       if (!isMissing(error)) {
-        console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
+        note(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
         return;
       }
       areas = [];
@@ -565,21 +575,19 @@ export class BuildWorkerRoot {
     for (const area of areas.filter((name) => name.endsWith('.claims'))) {
       const root = join(clientDir, 'repos', area);
       if (notRealDirectory(root)) {
-        console.error(`stim-server: not clearing the claims of ${client} through ${root}: it is not a real directory.`);
+        note(`stim-server: not clearing the claims of ${client} through ${root}: it is not a real directory.`);
         continue;
       }
       const clearance = clearFreeClaimSet({ root, label: 'build worker' });
       if (clearance.status !== 'cleared') {
-        console.error(
-          `stim-server: retaining the build area of ${client}; ownership at ${root} is ${clearance.status}.`,
-        );
+        note(`stim-server: retaining the build area of ${client}; ownership at ${root} is ${clearance.status}.`);
         return;
       }
     }
     for (const area of areas.filter((name) => !name.endsWith('.claims'))) {
       const devices = areaDevices(join(clientDir, 'repos', area));
       if (devices) {
-        console.error(`stim-server: retaining the build area of ${client}; ${area}: ${devices}.`);
+        note(`stim-server: retaining the build area of ${client}; ${area}: ${devices}.`);
         return;
       }
     }
@@ -588,14 +596,14 @@ export class BuildWorkerRoot {
       const repos = join(clientDir, 'repos');
       const dirs = areas.flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
       if (ownsWindowsGradleHome(clientDir)) dirs.push(gradleUserHome(clientDir));
-      if (!(await this.removeWindowsDirs(client, dirs))) return;
+      if (!(await this.removeWindowsDirs(client, dirs, note))) return;
     }
-    await this.removeDir(client, clientDir);
+    await this.removeDir(client, clientDir, note);
   }
 
-  private async removeDir(client: string, dir: string): Promise<boolean> {
+  private async removeDir(client: string, dir: string, note: (line: string) => void): Promise<boolean> {
     const failure = await deletionFailure(dir);
-    if (failure) console.error(`stim-server: could not delete the build area of ${client}: ${failure}`);
+    if (failure) note(`stim-server: could not delete the build area of ${client}: ${failure}`);
     return failure === null;
   }
 
@@ -617,9 +625,13 @@ export class BuildWorkerRoot {
     return dirs;
   }
 
-  private async removeWindowsDirs(client: string, dirs: readonly string[]): Promise<boolean> {
+  private async removeWindowsDirs(
+    client: string,
+    dirs: readonly string[],
+    note: (line: string) => void,
+  ): Promise<boolean> {
     for (const dir of dirs) {
-      if (!(await this.removeDir(client, dir))) return false;
+      if (!(await this.removeDir(client, dir, note))) return false;
       await rm(`${dir}.owner`, { force: true }).catch(() => {});
     }
     return true;
@@ -836,13 +848,37 @@ export class BuildWorkerRoot {
     };
     return this.workerClients(true)
       .filter((client) => CLIENT_ID.test(client) && !listed.has(client) && hasRepos(client))
-      .map((client) => {
+      .flatMap((client) => {
+        const unproven = this.unownedEntry(client);
         this.reportOnce(
           `unlisted ${client}`,
-          `stim-server: removing the build area of ${client}: the build approvals do not name it.`,
+          unproven
+            ? `stim-server: retaining the build area of ${client}, which the build approvals do not name: ${unproven}.`
+            : `stim-server: removing the build area of ${client}: the build approvals do not name it.`,
         );
-        return this.remove(client);
+        return unproven ? [] : [this.remove(client)];
       });
+  }
+
+  private unownedEntry(client: string): string | null {
+    const clientDir = this.clientDir(client);
+    const repos = join(clientDir, 'repos');
+    try {
+      for (const entry of readdirSync(clientDir, { withFileTypes: true }))
+        if (!entry.isDirectory() || !CLIENT_ENTRIES.has(entry.name))
+          return `${join(clientDir, entry.name)} is not something stim-server creates there`;
+      for (const entry of readdirSync(repos, { withFileTypes: true })) {
+        const claims = entry.isDirectory() && entry.name.endsWith('.claims');
+        if (
+          !isAreaEntry(entry) &&
+          !(claims && new RegExp(BUILD_REPO_PATTERN).test(entry.name.slice(0, -'.claims'.length)))
+        )
+          return `${join(repos, entry.name)} is not a build area or its claims`;
+      }
+      return null;
+    } catch (error) {
+      return `its folder cannot be read: ${String(error)}`;
+    }
   }
 
   private workerClients(all = false): string[] {
