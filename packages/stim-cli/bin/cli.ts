@@ -140,7 +140,7 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
       const modules = await Promise.all([...commands.values()].map((load) => load()));
       const root = defineOp({
         name: 'stim',
-        description: 'Isolated React Native dev environments per project/worktree',
+        description: 'Run React Native, Expo and native apps for coding agents',
         version: true,
         commands: modules.map((module) => module.default),
       });

@@ -2,9 +2,10 @@
 
 The `stim` npm package installs the `stim` command and exports a typed lifecycle API.
 
-Stim gives coding agents fast, isolated React Native and Expo environments. Each
-project or git worktree gets its own Metro port and owned device. Shared caches
-keep native and JavaScript builds warm across worktrees.
+Stim runs React Native, Expo and native apps for coding agents. Each project or
+git worktree gets its own Metro port and owned device, shared caches keep native
+and JavaScript builds warm across worktrees, and builds and devices can run on
+other machines you approve.
 
 ## Install
 
