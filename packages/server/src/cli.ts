@@ -7,14 +7,7 @@ import { bundledStim } from './environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.ts';
 import type { StatusWorkerRequest } from './status-feed.ts';
 import { readAudit } from './actions.ts';
-import {
-  installService,
-  listenerPids,
-  rewriteUnitToShim,
-  serviceStatus,
-  statusLines,
-  uninstallService,
-} from './service.ts';
+import { installService, listenerPids, serviceStatus, statusLines, uninstallService } from './service.ts';
 import {
   applyServeEnvironment,
   DEFAULT_LABEL,
@@ -132,14 +125,12 @@ export class NetRefusal extends Error {}
 
 /**
  * stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends;
- * `requestUpdate` asks stimd to check for a newer engine; `requestRestart` asks it to exit once it is idle, so the
- * service manager starts it again from the unit it rewrote. `spawnStatusWorker` asks stimd to start the status worker.
+ * `requestUpdate` asks stimd to check for a newer engine. `spawnStatusWorker` asks stimd to start the status worker.
  */
 export async function serve(
   options: NetOptions,
   idle: () => void,
   requestUpdate: (why: string) => void = () => {},
-  requestRestart: (why: string) => void = () => {},
   spawnStatusWorker?: (request: StatusWorkerRequest) => void,
   busy?: (count: number) => void,
 ): Promise<NetThread> {
@@ -213,21 +204,6 @@ export async function serve(
     }
     throw error;
   }
-  const label = serviceManagerOrNull()?.runningLabel(process.env);
-  if (label)
-    void rewriteUnitToShim(label).then(
-      (rewritten) => {
-        if (rewritten) {
-          const reloaded = serviceManagerOrNull()?.loadedCommand !== undefined;
-          console.log(
-            `Rewrote ${label} to start the Stim engine's stimd shim${reloaded ? '; restarting once idle to run it' : ''}.`,
-          );
-          if (reloaded) requestRestart('its service unit now starts the engine shim');
-        }
-        return rewritten;
-      },
-      (error: Error) => console.error(`stim: could not rewrite ${label} to name the stimd shim: ${error.message}`),
-    );
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);

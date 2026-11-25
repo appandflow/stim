@@ -72,13 +72,18 @@ describe('systemd unit naming the engine shim', () => {
 describe('systemd unit written before KillMode=process', () => {
   it('is current as install writes it and stale without the line or with another mode, however it is spaced', () => {
     const text = renderUnit(SPEC);
-    expect(staleSystemdUnit(text)).toBeNull();
-    expect(staleSystemdUnit(text.replace('KillMode=process\n', 'KillMode = process\n'))).toBeNull();
-    expect(staleSystemdUnit(text.replace('KillMode=process\n', ''))).toMatch(
+    const stale = (unit: string) => {
+      const installed = parseUnit(unit);
+      if (!installed) throw new Error('unit did not parse');
+      return staleSystemdUnit(installed, unit, null);
+    };
+    expect(stale(text)).toBeNull();
+    expect(stale(text.replace('KillMode=process\n', 'KillMode = process\n'))).toBeNull();
+    expect(stale(text.replace('KillMode=process\n', ''))).toMatch(
       /sets no KillMode= where `stim service install` writes KillMode=process/,
     );
-    expect(staleSystemdUnit(text.replace('KillMode=process\n', 'KillMode = mixed\n'))).toMatch(/sets KillMode=mixed/);
-    expect(staleSystemdUnit(`${text}\n[X-Other]\nKillMode=process\n`.replace('KillMode=process\n', ''))).toMatch(
+    expect(stale(text.replace('KillMode=process\n', 'KillMode = mixed\n'))).toMatch(/sets KillMode=mixed/);
+    expect(stale(`${text}\n[X-Other]\nKillMode=process\n`.replace('KillMode=process\n', ''))).toMatch(
       /sets no KillMode=/,
     );
   });

@@ -164,7 +164,8 @@ async function readSystemdServices(): Promise<{
           { timeoutMs: PROBE_TIMEOUT_MS, env },
         );
         const override = dropInExecStart(join(dir, name));
-        const stale = installed.managed ? staleSystemdUnit(text) : null;
+        const shim = join(engineRoot(process.env), 'bin', 'stimd');
+        const stale = installed.managed ? staleSystemdUnit(installed, text, existsSync(shim) ? shim : null) : null;
         const loadedKillMode =
           installed.managed && stale === null
             ? await getExecutor().runFileQuietAsync(

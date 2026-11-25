@@ -1552,14 +1552,11 @@ pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
 A macOS or Linux service installed while the Stim engine is installed runs the
 engine's \`bin/stimd\`, so it follows the engine (a Windows task runs the build
-it was installed with, #5602). A Linux or macOS service installed before the
-engine moves onto the shim the first time its server boots with this Stim:
-it rewrites its unit, and on Linux restarts once, when idle, through
-systemd's \`Restart=always\` (about 30 s down; connected phones and Desktop
-reconnect, since only commands and pinned work delay it); on macOS the rewritten
-LaunchAgent takes effect after \`launchctl bootout\` and \`bootstrap\` (#5608); a service that never restarts
-onto this Stim stays on its build until \`stim service install\` or a restart
-of the service. The engine switch then works: \`stim engine update\` there moves it
+it was installed with, #5602). A service installed before the engine keeps
+running the build it names until \`stim service install\` (or \`stim setup\`)
+runs once; once the engine is installed, \`stim doctor\` and \`stim service
+status\` report it as stale with that command.
+The engine switch then works: \`stim engine update\` there moves it
 to the newest release on the engine's channel and \`stim engine rollback\`
 back to the previous build, each switching once running builds and hosted
 native steps have drained; a shim service's job restarts stimd on the new
@@ -1604,10 +1601,11 @@ list, a \`note\` finding only the doctor report:
                          \`stim engine rollback\` when the engine has a
                          previous build); note: it restarted but runs now
   server-service-override   note: a systemd drop-in sets ExecStart=, so the unit
-                         cannot move onto the engine, or KillMode=, so stimd
+                         does not run the engine, or KillMode=, so stimd
                          keeps the successor handover; it names the drop-in
   server-service-stale   note: launchd runs an outdated LaunchAgent definition, or
-                         a systemd unit lacks KillMode=process; run
+                         a systemd unit lacks KillMode=process or names node
+                         while the engine store has the shim; run
                          \`stim service install\` once
   server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so

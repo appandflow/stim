@@ -71,13 +71,3 @@ export function dropInExecStart(path: string): string | null {
   } catch {}
   return null;
 }
-
-/** Why Stim cannot rewrite `ExecStart=` of the unit at `path` with `text`: a drop-in sets it, or the unit's own is not one single line. */
-export function execStartOverride(path: string, text: string): string | null {
-  const dropIn = dropInExecStart(path);
-  if (dropIn) return dropIn;
-  const starts = text.split('\n').filter((line) => /^\s*ExecStart\s*=/.test(line));
-  return starts.length !== 1 || /\\\s*$/.test(starts[0] ?? '')
-    ? `${path} has an ExecStart= that is not one single line`
-    : null;
-}
