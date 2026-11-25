@@ -603,7 +603,7 @@ export async function installJob(
   } catch (error) {
     if (oldPlist !== null) writeFileSync(path, oldPlist, { mode: 0o644 });
     if (routeCreated && serve)
-      await run(tailscale, ['serve', `--https=${serve.port}`, 'off'], tailscaleEnv(process.env));
+      await run(tailscale, ['serve', `--https=${serve.port}`, '--set-path=/', 'off'], tailscaleEnv(process.env));
     if (bootstrapped) {
       try {
         await unload(options.label, options.port);
@@ -1112,10 +1112,14 @@ async function uninstallJob(label: string): Promise<string[]> {
   await unload(label, null);
   await requireUninstallPortReleased(label, installed, routeOff);
   if (routeOff && tailscale) {
-    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
+    const removed = await run(
+      tailscale,
+      ['serve', `--https=${routeOff}`, '--set-path=/', 'off'],
+      tailscaleEnv(process.env),
+    );
     if (!removed.ok) {
       throw new ServiceError(
-        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}. Retry \`stim service uninstall --label ${label}\`, or remove the route with \`tailscale serve --https=${routeOff} off\` and then retry.`,
+        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}. Retry \`stim service uninstall --label ${label}\`, or remove the route with \`tailscale serve --https=${routeOff} --set-path=/ off\` and then retry.`,
       );
     }
     notes.push(`Removed the tailscale serve route on https port ${routeOff}.`);
