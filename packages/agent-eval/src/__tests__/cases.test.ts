@@ -378,6 +378,13 @@ test('website worktree needs warm in a new worktree and no launch in the origina
   expect(grade('website-worktree', [guide, warm, ios])).toBe(true);
   expect(grade('website-worktree', [guide, call(['worktree', 'warm']), call(['ios'])])).toBe(false);
   expect(grade('website-worktree', [guide, warm, ios, call(['ios'])])).toBe(false);
+  const warmedLate = [
+    guide,
+    call(['worktree', 'warm']),
+    call(['ios'], { cwdRelative: '.worktrees/change' }),
+    call(['worktree', 'warm'], { cwdRelative: '.worktrees/change' }),
+  ];
+  expect(grade('website-worktree', warmedLate)).toBe(false);
 });
 
 test('website failure needs logs --errors after the failed launch and before any relaunch', () => {

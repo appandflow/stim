@@ -131,7 +131,7 @@ const separateWorktree: EvalCase = {
     );
     return [
       ...guided(input, { argv: ['worktree', 'warm'], exit: 0, predicate: (each) => each.cwdRelative !== '.' }),
-      exitedBefore(input, { argv: ['worktree', 'warm'] }, IOS_LAUNCH),
+      exitedBefore(input, { argv: ['worktree', 'warm'], predicate: (each) => each.cwdRelative !== '.' }, IOS_LAUNCH),
       {
         name: 'no stim start or ios in the original checkout',
         pass: inPlace.length === 0,
@@ -204,7 +204,7 @@ const failedLaunch: EvalCase = {
       stderr: LAUNCH_FAILED_STDERR,
       exit: 1,
       source: 'synthetic',
-      note: 'Every launch fails; the code and remedy follow the old website prompt fixture, the step lines are written by hand.',
+      note: 'Written by hand: every launch fails with STIM_LAUNCH_FAILED and a remedy naming stim logs --errors.',
     },
     {
       argv: ['logs'],
