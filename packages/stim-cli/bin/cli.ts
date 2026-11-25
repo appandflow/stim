@@ -5,6 +5,7 @@ import { debugLog } from '../src/debug-log.ts';
 import { CliExit } from '../src/cli-operation.ts';
 import { CliUsageError, defineOp, runCli, type Op } from '../src/cli/define-op.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
+import { hungRead } from '../src/workspace/bounded-read.ts';
 
 if (process.argv[2] === '__stimd') {
   await (await import('../src/stimd/main.ts')).runStimdEntry(process.argv.slice(3));
@@ -170,8 +171,15 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     if (json) process.stdout.write = originalWrite;
     await end?.();
   }
+  const hung = hungRead() !== null;
+  if (hung && exitCode === undefined) exitCode = typeof process.exitCode === 'number' ? process.exitCode : 0;
   if (exitCode !== undefined) {
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+    if (hung && process.platform !== 'win32' && process.execve) {
+      // process.exit joins every libuv thread pool thread, so it blocks on a filesystem read that never answers.
+      process.emit('exit', exitCode);
+      process.execve('/bin/sh', ['sh', '-c', `exit ${exitCode}`]);
+    }
     process.exit(exitCode);
   }
 }

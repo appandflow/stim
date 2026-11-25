@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trashRoot } from '@stim-cli/core/state';
 import { runCli } from '../cli/define-op.ts';
-import { CliExit } from '../cli-operation.ts';
 import { doctorOp } from '../commands/doctor.ts';
 import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -76,9 +75,9 @@ describe.skipIf(process.platform === 'win32')('doctor with pending native storag
           doctorOp(() => versions, 'linux'),
           [...(json ? ['--json'] : []), '--platform', 'ios'],
           { version: '1.2.3' },
-        ).catch((error: unknown) => error);
-        expect(result).toBeInstanceOf(CliExit);
-        expect(result).toMatchObject({ exitCode: 7 });
+        );
+        expect(result).toBe(0);
+        expect(process.exitCode).toBe(7);
         expect(hungRead()).toBe(dir);
         const rendered = json ? JSON.parse(logs[0] ?? '{}').project : logs[0];
         expect(rendered).toContain(json ? project : 'Doctor (iOS)');
