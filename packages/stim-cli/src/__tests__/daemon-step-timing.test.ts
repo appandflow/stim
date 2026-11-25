@@ -86,9 +86,16 @@ test('through the shape every daemon log writer builds, the record keeps its sev
   const writer: DaemonLog = (level, event, msg, fields = {}) =>
     written.push({ src: 'stimd', level, event, msg, ...fields });
 
-  await timedStep(writer, 'rung', async () => undefined, {
-    fields: { rung: 5, pressureLevel: 'critical', level: 'critical', src: 'x', event: 'x', msg: 'x', ts: 1 },
-  });
+  await timedStep(
+    writer,
+    'rung',
+    async (tally) => {
+      tally.fields = { durationMs: -1, outcome: 'wrong', level: 'wrong', ts: 1, queueMs: 7 };
+    },
+    {
+      fields: { rung: 5, pressureLevel: 'critical', level: 'critical', src: 'x', event: 'x', msg: 'x', ts: 1 },
+    },
+  );
 
   expect(written).toEqual([
     expect.objectContaining({
@@ -99,8 +106,11 @@ test('through the shape every daemon log writer builds, the record keeps its sev
       rung: 5,
       pressureLevel: 'critical',
       outcome: 'finished',
+      durationMs: expect.any(Number),
+      queueMs: 7,
     }),
   ]);
+  expect(written[0]?.durationMs).not.toBe(-1);
   expect(written[0]).not.toHaveProperty('ts');
   expect(written[0]?.msg).toMatch(/^rung 5 finished in \d+ms$/);
 });

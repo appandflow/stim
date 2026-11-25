@@ -538,7 +538,13 @@ checkout (`idle_stage_candidates`, `stopped_output_candidates`,
 `dormant_dependencies`). A record has `step`, `startedAt`, `durationMs`, `items`
 (the items it visited or returned, when it counts any), and `outcome`
 (`finished`, `threw` or `aborted`); a rung adds `rung` and `pressureLevel`, and a step
-that threw adds `error`. A tick at normal writes one, up to 16 at high and up
+that threw adds `error`. Rung 1 also splits its time, in milliseconds, into
+`marksMs` (reading saved marks), `queueMs` (yielding the disk queue to
+higher-priority work), `authorizeMs`, `measureMs` (disk pressure reads),
+`clearMs` (deleting outputs), `refreshDiscoverMs` and `refreshReadMs` (finding
+and re-reading checkouts), with `targets` and the slowest target and root
+(`slowestTarget`, `slowestTargetMs`, `slowestRoot`, `slowestRootMs`); a part
+that never ran is absent. A tick at normal writes one, up to 16 at high and up
 to 22 at critical. Use them to see which step a slow tick or maintenance run
 spent its time in. The records change nothing a pass does. A step still
 running after 10 minutes also writes a `daemon_step_running` record (`step`,

@@ -3399,6 +3399,57 @@ describe('rung timing records', () => {
     vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100));
   });
 
+  test.each([false, true])('rung 1 records queue and refresh time, including a rejected yield: %s', async (reject) => {
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const { root } = workspace('timed-output', 5 * MINUTE_MS, 'Shutdown');
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    await marks.markWriter(config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    vi.spyOn(checkoutDiscovery, 'discoverCheckouts').mockImplementation(async () => {
+      clock += 23;
+      rmSync(gcMarkFile(root), { force: true });
+      return [];
+    });
+    const read = stages.readCheckout;
+    vi.spyOn(stages, 'readCheckout').mockImplementation(async (...args) => {
+      clock += 47;
+      return read(...args);
+    });
+    await runLadder(
+      {
+        config,
+        act: true,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure('high'),
+        fromRung: 1,
+        lastRung: 1,
+        between: async () => {
+          clock += 31;
+          if (reject) throw new Error('yield failed');
+        },
+      },
+      pressure('high'),
+    );
+    expect(steps()).toMatchObject([
+      {
+        rung: 1,
+        queueMs: 31,
+        outcome: reject ? 'threw' : 'finished',
+        ...(reject ? {} : { refreshDiscoverMs: 23, refreshReadMs: 47, slowestRoot: root, slowestRootMs: 47 }),
+      },
+    ]);
+  });
+
   test('a rung that finishes records its start, duration, actions and outcome', async () => {
     vi.spyOn(simPool, 'readParked').mockReturnValue([]);
 
