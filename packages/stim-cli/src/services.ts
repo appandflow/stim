@@ -517,8 +517,19 @@ async function ready(
   return serviceRunning(record);
 }
 
-async function waitReady(root: string, name: string, record: ServiceRecord, options: RunOptions): Promise<boolean> {
+async function waitReady(
+  root: string,
+  name: string,
+  record: ServiceRecord,
+  options: RunOptions,
+  freshStart = false,
+): Promise<boolean> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  if (freshStart && record.kind === 'process' && !record.ready && !Object.keys(record.ports).length)
+    await cancellableSleep(Math.min(READY_POLL_MS, deadline - Date.now()), {
+      signal: options.signal,
+      what: `service ${name} readiness`,
+    });
   for (;;) {
     options.signal?.throwIfAborted();
     if (
@@ -851,7 +862,7 @@ async function startOne(
         await writeRecord(root, name, pending);
         failure = await runCommand(root, name, 'start', base.start, base, base.cwd, START_TIMEOUT_MS, options);
       }
-      if (!failure) isReady = await waitReady(root, name, record, options);
+      if (!failure) isReady = await waitReady(root, name, record, options, true);
     } catch (error) {
       // @ref LLP 0007#a-null-child-is-never-recovered -- unresolved child cleanup retains its slot
       retained = error instanceof Error && 'reportCleanup' in error;
