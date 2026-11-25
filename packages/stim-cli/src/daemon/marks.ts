@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { dirname, join, resolve } from 'node:path';
-import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { realpathAsync } from '../commands/gc/paths.ts';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import {
   GC_MARK_VERSION,
@@ -18,7 +18,7 @@ import { writeCacheFile } from '../cache-file.ts';
 import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
-import { dormantAfterMs, readCheckout, recordedOnly, type CheckoutReading, type DeviceReading } from './stages.ts';
+import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
 import {
   discoverCheckouts,
   discoveryDisabled,
@@ -29,6 +29,7 @@ import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
 import { discoveredCargoCandidates, discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
+import { listWorkspaceDirs } from '../commands/gc/workspaces.ts';
 
 export interface CargoMarkScope {
   roots: readonly string[];
@@ -230,7 +231,14 @@ async function authorizedMarks(
       else throw error;
     }
   }
-  const recorded = new Set(recordedOnly(config).map(([root]) => canonicalPath(root)));
+  if (marks.every((mark) => registered.has(mark.root))) return marks;
+  const recorded = new Set(
+    listWorkspaceDirs().flatMap(({ projectRoot }) =>
+      projectRoot && isAbsolute(projectRoot) ? [resolve(projectRoot)] : [],
+    ),
+  );
+  for (const root of recorded)
+    if ([...registered].some((key) => key === root || key.startsWith(`${root}${sep}`))) recorded.delete(root);
   const unregistered = marks.filter((mark) => !registered.has(mark.root) && !recorded.has(mark.root));
   if (!unregistered.length) return marks;
   const allowed = new Set(
