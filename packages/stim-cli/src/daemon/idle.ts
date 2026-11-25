@@ -22,7 +22,7 @@ import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { runIdleStop } from '../commands/stop.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { holdsDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
+import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import {
@@ -181,6 +181,25 @@ async function decide(
   const found = await candidate(path, project, input);
   if (!found.runs || 'kept' in found) return { candidate: found, decision: null };
   const now = Date.now();
+  for (const device of found.booted) {
+    const key = deviceSlotKey(device.kind, device.slot);
+    const record = readDeviceIdleShutdowns(readWorkspaceState(path))[key];
+    if (!input.act || !record || record.bootedAgainAt || !(Date.parse(record.at) < input.now)) continue;
+    let stamped = false;
+    await updateWorkspaceStateAsync(path, (state) => {
+      const records = readDeviceIdleShutdowns(state);
+      const current = records[key];
+      if (!current || current.bootedAgainAt || !(Date.parse(current.at) < input.now)) return state;
+      records[key] = { ...current, bootedAgainAt: new Date(now).toISOString() };
+      stamped = true;
+      return { ...state, [DEVICE_IDLE_SHUTDOWN_KEY]: records };
+    });
+    if (stamped) {
+      const msg = `${path}: ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name} was found booted again after it was shut down for being idle at ${record.at}; that boot counts as activity for one idle window`;
+      input.log('info', 'device_booted_after_idle', msg, { workspace: path, device: device.id });
+      writeWorkspaceEvent(path, 'info', 'device_booted_after_idle', msg, { device: device.id });
+    }
+  }
   // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- disk pressure keeps the agent-device window, not the threshold
   const pressured = Boolean(input.pressure) || input.disk !== undefined;
   const evidence = await idleStopEvidence(path, found.booted, {
@@ -191,6 +210,11 @@ async function decide(
     pressured,
     operation: input.operation,
   });
+  const records = pressured ? {} : readDeviceIdleShutdowns(readWorkspaceState(path));
+  for (const device of found.booted) {
+    const at = Date.parse(records[deviceSlotKey(device.kind, device.slot)]?.bootedAgainAt ?? '');
+    if (Number.isFinite(at)) evidence.activity.push({ basis: 'device booted again', at });
+  }
   return {
     candidate: found,
     decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: thresholdName(input), pressured }),

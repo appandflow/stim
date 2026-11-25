@@ -305,7 +305,9 @@ end the job with \`stim stop\`.
   keyboard or mouse input within the last two minutes while Simulator,
   Device Hub or its emulator's window is frontmost. Device Hub does not say
   which simulator it shows, so it counts for every booted simulator the home
-  owns, as Simulator does when its CurrentDeviceUDID cannot be read. Device
+  owns, as Simulator does when its CurrentDeviceUDID cannot be read.
+  Another tool booting a device shut down for being idle counts as activity
+  for one idle window, except under memory or disk pressure. Device
   logs, in-app console logs, dev server output and log file times never count, so an open app that only hot-reloads or logs
   is idle, and a live view that only streams frames does not keep it. It
   stays running while a bundle response is in flight, while a build in the

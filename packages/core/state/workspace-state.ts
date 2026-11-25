@@ -240,6 +240,7 @@ export const DEVICE_IDLE_SHUTDOWN_KEY = 'deviceIdleShutdowns';
 /** An owned simulator or emulator shut down after being idle. */
 export interface DeviceIdleShutdownRecord {
   at: string;
+  bootedAgainAt?: string;
   idleMinutes: number;
   reason?: string;
 }
@@ -256,6 +257,7 @@ export function readDeviceIdleShutdowns(
     if (typeof record?.at === 'string' && typeof record.idleMinutes === 'number') {
       found[key] = {
         at: record.at,
+        ...(typeof record.bootedAgainAt === 'string' ? { bootedAgainAt: record.bootedAgainAt } : {}),
         idleMinutes: record.idleMinutes,
         ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
       };
