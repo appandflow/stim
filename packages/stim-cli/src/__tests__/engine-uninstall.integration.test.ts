@@ -1,12 +1,14 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runCli } from '../cli/define-op.ts';
 import engineOp from '../commands/engine.ts';
 import { writeRecord } from '../engine-store/store.ts';
 import { removeTree, seal } from '../engine-store/tree.ts';
+import { machineCopy } from './fixtures/machine-copy.ts';
 import { readRunningProcesses, runningFromReason } from '../workspace/running-from.ts';
 
 let temp: string;
@@ -57,3 +59,30 @@ test.skipIf(process.platform === 'win32')('uninstall leaves a build kept by a li
     await exited;
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'uninstall through an installed launcher exits 0 and leaves its own build removable',
+  () => {
+    const installed = machineCopy(fileURLToPath(new URL('../..', import.meta.url)), join(temp, 'a'));
+    mkdirSync(root);
+    const linkedRoot = join(temp, 'engine-link');
+    symlinkSync(root, linkedRoot, 'dir');
+    const env = { ...process.env, HOME: temp, STIM_HOME: join(temp, 'home'), STIM_ENGINE_ROOT: linkedRoot };
+    const launcher = join(installed, 'bin', 'stim.mjs');
+    const install = spawnSync(process.execPath, [launcher, 'engine', 'install'], {
+      cwd: temp,
+      env,
+      encoding: 'utf8',
+    });
+    expect(install.status).toBe(0);
+    const uninstall = spawnSync(process.execPath, [launcher, 'engine', 'uninstall'], {
+      cwd: temp,
+      env,
+      encoding: 'utf8',
+    });
+    expect(uninstall.status).toBe(0);
+    expect(existsSync(join(root, 'current.json'))).toBe(false);
+    expect(() => rmSync(root, { recursive: true })).not.toThrow();
+  },
+  120_000,
+);

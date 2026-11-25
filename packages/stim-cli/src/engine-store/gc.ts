@@ -1,5 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inspectProcessStart } from '@stim-cli/core/process-identity';
 import { readRunningProcesses, runningFromReason } from '../workspace/running-from.ts';
 import { keptEntries, readBuildClaims } from './claims.ts';
@@ -19,10 +20,12 @@ const ownerAlive = (name: string): boolean => inspectProcessStart(Number(name.sp
  * directories whose owner is gone or that are an hour old, `.trash` leftovers, and `.npm-cache` files untouched for a
  * week. Each entry goes by rename into `.trash` first, so a half-removed read-only tree never stays in place. Runs
  * under the promotion lock, so no fetch writes `.npm-cache` meanwhile. Where processes cannot be listed (Windows),
- * every tree is kept.
+ * every tree is kept. The build running this module is always kept.
  */
 export function collectStore(root: string, now: number = Date.now()): string[] {
   if (!existsSync(root)) return [];
+  const self = fileURLToPath(import.meta.url);
+  const canonicalRoot = realpathSync(root);
   const records = readRecords(root);
   const { state } = records;
   const kept = keptEntries(records, readBuildClaims(root));
@@ -33,6 +36,7 @@ export function collectStore(root: string, now: number = Date.now()): string[] {
   mkdirSync(trash, { recursive: true });
   const removed: string[] = [];
   for (const name of readdirSync(root)) {
+    if (self.startsWith(join(canonicalRoot, name) + sep)) continue;
     const path = join(root, name);
     const deletable = BUILD_DIR.test(name)
       ? !kept.has(name) && runningFromReason(path, running) === null
