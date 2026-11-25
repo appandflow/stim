@@ -80,28 +80,8 @@ the code, never on the message.`,
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the stim remote add and stim setup remedies.`,
     },
-    STIM_PREBUILD_FAILED: {
-      separator: '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
-      summary: 'expo prebuild could not generate or regenerate the native directory',
-      body: () => `STIM_PREBUILD_FAILED
-  \`expo prebuild\` could not generate the missing native directory, or
-  update a stale one in place. The extracted output is above the code; the
-  transcript is in the global workspace logs/build-<platform>.ndjson file.
-  Stim updates an existing gitignored directory in place, so what an
-  earlier config wrote stays there; when the output points at leftovers of a
-  removed config plugin or an Expo SDK upgrade, delete the directory
-  (\`rm -rf ios\` or \`rm -rf android\`) and run again so Stim generates it
-  fresh. The same code refuses a native directory that the fingerprint leaves
-  out of the cache key while git tracks its files, or when git cannot answer:
-  Stim cannot show those files came from the current app config, and will
-  not run \`expo prebuild\` over tracked files. Stop excluding the
-  directory from the fingerprint (.fingerprintignore), or gitignore and
-  untrack it so Stim regenerates it. When git itself is failing, fix the
-  checkout first. In the source checkout, \`stim doctor --fix\` in a terminal runs
-  the same prebuild, and the pod install after it on iOS, without compiling, and
-  records the fingerprint \`worktree warm\` needs to carry the directory.`,
-    },
     STIM_DEPS_FAILED: {
+      separator: '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
       summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',
       body: () => `STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
@@ -623,17 +603,6 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   The Android counterpart, from \`--device-profile\` or android.deviceProfile.
   Reap the AVD the same way, or pass \`--slot <name>\` to create the requested
   profile beside it.`,
-    },
-    STIM_REMOTE_METRO_UNREACHABLE: {
-      separator: '--- REMOTE-DEVICE CODES (`ios --remote <proxy|eas>` / `android --remote <proxy|eas>`) ---',
-      summary: 'a remote start could not create its managed tunnel or tell the device where Metro is',
-      body: () => `STIM_REMOTE_METRO_UNREACHABLE
-  A remote start could not create its selected managed tunnel, or the device
-  could not be told where Metro is. Set metro.tunnel, or use
-  metro.publicUrl for an existing endpoint. A Re.Pack app (repack-child,
-  \`guide metro\`) refuses with this code on a --remote, tunnel or hosted run,
-  because Re.Pack writes its localhost origin into the bundle's asset and chunk
-  URLs: run it on a local simulator or emulator, or set metro.command.`,
     },
     STIM_SHARE_REFUSED: {
       separator: '--- SHARE CODES (`stim share`) ---',

@@ -8,6 +8,7 @@ import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
   missingPackageManagerRemedy,
+  prebuildFailedRemedy,
   workerFailureReason,
   requireLocalBuild,
   resolveBuildMachine,
@@ -931,4 +932,11 @@ describe('missingPackageManagerRemedy', () => {
     expect(remedy).not.toMatch(/approv|doctor/i);
     expect(missingPackageManagerRemedy('linux-box', 'deps-failed: spawn yarn ENOENT')).toContain('no yarn');
   });
+});
+
+it('a worker prebuild failure names local output recovery instead of build approval', () => {
+  expect(prebuildFailedRemedy('build-mac', workerFailureReason('prebuild-failed', 'config plugin failed'))).toBe(
+    '`expo prebuild` failed on build-mac; rerun with --remote-build local to see its output here, fix what it reports, then run the same command again.',
+  );
+  expect(prebuildFailedRemedy('build-mac', 'deps-failed: spawn pnpm ENOENT')).toBeUndefined();
 });

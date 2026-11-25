@@ -9,7 +9,7 @@
   },
   "topics": {
     "agent": 4200,
-    "errors": 5250,
+    "errors": 5000,
     "api": 24000,
     "metro": 27500,
     "logs": 51500,
