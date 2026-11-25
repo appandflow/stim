@@ -1174,8 +1174,8 @@ leaves the tree unknown and the rules above unchanged. The verdict is recorded
 beside the size cache with the install signature and the store, and reused for
 6 hours while the signature holds; a `links` verdict is reused only while its
 store is still a directory (one bounded stat). The 6 hours keep the cost at a
-few dozen stats per unknown tree per 6 hours. Only a tree with no measurement is sampled; at the
-7-day rule `stim gc` first tries to measure it, so the sample never replaces a
+few dozen stats per unknown tree per 6 hours. Only a tree with no measurement
+is sampled; at the 7-day rule `stim gc` first tries to measure it, so the sample never replaces a
 measurement.
 
 Reason: with pnpm on a volume without clones, a tree's files are hard links

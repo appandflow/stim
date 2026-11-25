@@ -1,3 +1,6 @@
+/** Default timeout for a bounded filesystem read of a checkout layout. */
+export const READ_TIMEOUT_MS = 3000;
+
 /**
  * The one filesystem read, of the home scan, a checkout's source scan or a discovery listing, that timed out and has
  * not settled. A timed-out native read cannot be cancelled, so while one is pending no further read of any kind starts: a hung mount holds

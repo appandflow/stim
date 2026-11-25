@@ -106,10 +106,7 @@ function sizeOptions(dir: string) {
 function dirSize(measure: DiskMeasure | null, dir: string, privateSized: ReadonlySet<string>): DirSize | null {
   if (!measure) return null;
   const counted = isDependencyTree(dir) || privateSized.has(dir);
-  return {
-    bytes: measure.bytes,
-    privateBytes: counted ? (measure.privateBytes ?? null) : null,
-  };
+  return { bytes: measure.bytes, privateBytes: counted ? (measure.privateBytes ?? null) : null };
 }
 
 interface PendingWorktree extends BuildStateDirs {
@@ -121,8 +118,9 @@ interface PendingWorktree extends BuildStateDirs {
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
  * sweep through `refreshMeasure`: from the disk-usage cache while an entry is under an hour old and no entry was added
- * to or removed from the directory since (node_modules and Pods: while their install is unchanged, re-walking after
- * six hours only if the same tree changed or disappeared in another checkout, and after a day in any case). Stale directories are walked once each, at most 4 at once, one at a time while the
+ * to or removed from the directory since (node_modules and Pods: while their install signature is unchanged, after six
+ * hours only while no checkout of the repository changed its copy, and never after a day). Stale directories are
+ * walked once each, at most 4 at once, one at a time while the
  * operation declares its children on a claim, with 10 seconds each, so a
  * slow tree delays only itself; a directory that could not be measured in time is reported unmeasured (null). Without
  * `measure`, stale directories are reported unmeasured without a walk. Also lists
@@ -202,11 +200,7 @@ function hasLiveGitDir(path: string): boolean {
 
 async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWorktreeDir[]> {
   const repositories = new Map<string, string[]>();
-  const options = {
-    env: operation?.env,
-    signal: operation?.signal,
-    declareFor: operation,
-  };
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const roots = await candidateRootsAsync(operation);
   const resolved: Awaited<ReturnType<typeof resolveSourceCheckoutAsync>>[] = [];
   await eachLimited([...roots.entries()], readConcurrency(operation), async ([index, root]) => {

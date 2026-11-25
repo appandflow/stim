@@ -28,7 +28,7 @@ import {
 } from '../stimd/passes/artifacts.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import {
-  dependencyCloneMembers,
+  dependencyCloneMembersAsync,
   dependencyCloneStamp,
   freshMeasure,
   knownPrivateBytes,
@@ -915,8 +915,10 @@ export async function measureDependencyTrees(operation: StimContext): Promise<vo
       if (hungRead() !== null) return;
       continue;
     }
+    const paths = await dependencyCloneMembersAsync(path, operation.signal);
+    if (paths === null) return;
     const members: [string, string | null][] = [];
-    for (const member of dependencyCloneMembers(path)) {
+    for (const member of paths) {
       members.push([member, await readSignature(member)]);
       if (hungRead() !== null) return;
     }

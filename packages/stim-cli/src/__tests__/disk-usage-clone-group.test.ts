@@ -2,9 +2,14 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { refreshMeasure } from '../disk-usage.ts';
+import {
+  dependencyCloneMembers,
+  dependencyCloneMembersAsync,
+  dependencyCloneStamp,
+  refreshMeasure,
+} from '../disk-usage.ts';
 import { getExecutor } from '../exec.ts';
-import { measureTree } from '../private-size.ts';
+import { measureTree, treeSignature } from '../private-size.ts';
 
 vi.mock('../private-size.ts', async (original) => ({
   ...(await original<typeof import('../private-size.ts')>()),
@@ -68,4 +73,41 @@ it.each([
   if (change === 'removed') rmSync(join(roots[2], 'node_modules'), { recursive: true });
   await refreshMeasure(tree, { timeoutMs: 1000, now: () => start + hours * 60 * 60_000 });
   expect(measureTree).toHaveBeenCalledTimes(walked ? 1 : 0);
+});
+
+it('includes the source checkout on a bare repository HEAD branch', async () => {
+  const bare = join(base, 'bare.git');
+  const source = join(base, 'source');
+  const feature = join(base, 'feature');
+  const git = (args: string[]) => getExecutor().runFile('git', args, { cwd: base, timeoutMs: 5000 });
+  git(['init', '-q', '--bare', '-b', 'main', bare]);
+  git(['-C', bare, 'fetch', '-q', roots[0], 'main:main']);
+  git(['-C', bare, 'worktree', 'add', '-q', source, 'main']);
+  git(['-C', bare, 'worktree', 'add', '-q', '-b', 'feature', feature, 'main']);
+  for (const root of [source, feature]) {
+    mkdirSync(join(root, 'node_modules'));
+    writeFileSync(join(root, 'node_modules', '.modules.yaml'), 'initial\n');
+  }
+  const tree = join(feature, 'node_modules');
+  await refreshMeasure(tree, { timeoutMs: 1000, now: () => start });
+  vi.mocked(measureTree).mockClear();
+  reinstall(source);
+  await refreshMeasure(tree, { timeoutMs: 1000, now: () => start + 7 * 60 * 60_000 });
+  expect(measureTree).toHaveBeenCalledOnce();
+});
+
+it('reuses a daemon stamp when a sync caller checks the same clone group', async () => {
+  const tree = join(roots[1], 'node_modules');
+  const members = await dependencyCloneMembersAsync(tree, new AbortController().signal);
+  expect(members).toEqual(dependencyCloneMembers(tree));
+  if (members === null) throw new Error('member reads did not answer');
+  await refreshMeasure(tree, {
+    timeoutMs: 1000,
+    now: () => start,
+    signature: treeSignature(tree) ?? 'absent',
+    cloneGroup: dependencyCloneStamp(members.map((member) => [member, treeSignature(member)])),
+  });
+  vi.mocked(measureTree).mockClear();
+  await refreshMeasure(tree, { timeoutMs: 1000, now: () => start + 7 * 60 * 60_000 });
+  expect(measureTree).not.toHaveBeenCalled();
 });

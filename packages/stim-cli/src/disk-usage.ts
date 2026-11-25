@@ -1,7 +1,8 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, relative, sep } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import {
   markClaimChildPending,
@@ -28,7 +29,8 @@ import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts
 import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
 import { lastSizeFailure } from './size-failures.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
-import { gitLocationOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
+import { gitLocationOnDisk } from './workspace/worktree.ts';
+import { answered, hungRead, READ_TIMEOUT_MS, Unanswered } from './workspace/bounded-read.ts';
 
 const DEPENDENCY_MAX_AGE_MS: number = 6 * 60 * 60_000;
 const DEPENDENCY_BACKSTOP_MS: number = 24 * 60 * 60_000;
@@ -39,6 +41,10 @@ export function isDependencyTree(path: string): boolean {
   return ARTIFACT_DIRS.dependencies.some((name) => path.endsWith(`${sep}${name.split('/').join(sep)}`));
 }
 
+function cloneMembers(own: string, suffix: string, roots: readonly string[]): string[] {
+  return [...new Set([own, ...roots].map((root) => join(root, suffix)))].toSorted();
+}
+
 /** The same dependency tree path in each checkout recorded by the repository's git files. */
 export function dependencyCloneMembers(path: string): string[] {
   try {
@@ -46,11 +52,77 @@ export function dependencyCloneMembers(path: string): string[] {
     const location = gitLocationOnDisk(parent);
     if (!location) return [];
     const suffix = relative(location.path, join(parent, basename(path)));
-    const roots = [location.path, ...linkedWorktreesOnDisk(location.commonDir).map((entry) => entry.path)];
+    const roots: string[] = [];
+    const admin = join(location.commonDir, 'worktrees');
+    let ids: string[] = [];
+    try {
+      ids = readdirSync(admin);
+    } catch {}
+    for (const id of ids) {
+      try {
+        roots.push(dirname(resolve(admin, id, readFileSync(join(admin, id, 'gitdir'), 'utf-8').trim())));
+      } catch {}
+    }
     if (basename(location.commonDir) === '.git') roots.push(dirname(location.commonDir));
-    return [...new Set(roots.map((root) => join(root, suffix)))].toSorted();
+    return cloneMembers(location.path, suffix, roots);
   } catch {
     return [];
+  }
+}
+
+/** The clone members through bounded filesystem reads; null when a read did not answer. Aborts propagate. */
+export async function dependencyCloneMembersAsync(path: string, signal: AbortSignal): Promise<string[] | null> {
+  const read = async <T>(label: string, start: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await answered(label, start, READ_TIMEOUT_MS, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof Unanswered) throw error;
+      return null;
+    }
+  };
+  try {
+    signal.throwIfAborted();
+    if (hungRead() !== null) return null;
+    const parent = await read(dirname(path), () => realpath(dirname(path)));
+    if (parent === null) return [];
+    for (let own = parent; ; own = dirname(own)) {
+      const dotGit = join(own, '.git');
+      const info = await read(dotGit, () => stat(dotGit));
+      if (info) {
+        let common: string | null;
+        if (info.isDirectory()) common = await read(dotGit, () => realpath(dotGit));
+        else {
+          const content = await read(dotGit, () => readFile(dotGit, 'utf-8'));
+          const gitdir = content && /^gitdir: (.+)$/m.exec(content)?.[1]?.trim();
+          if (!gitdir) return [];
+          const linked = resolve(own, gitdir);
+          const commondir = join(linked, 'commondir');
+          const commonInfo = await read(commondir, () => stat(commondir));
+          const value = commonInfo ? await read(commondir, () => readFile(commondir, 'utf-8')) : null;
+          if (commonInfo && value === null) return [];
+          const target = value !== null ? resolve(linked, value.trim()) : linked;
+          common = await read(target, () => realpath(target));
+        }
+        if (common === null) return [];
+        const roots: string[] = [];
+        if (basename(common) === '.git') roots.push(dirname(common));
+        const admin = join(common, 'worktrees');
+        const ids = await read(admin, () => readdir(admin));
+        for (const id of ids ?? []) {
+          const file = join(admin, id, 'gitdir');
+          const content = await read(file, () => readFile(file, 'utf-8'));
+          if (content !== null) roots.push(dirname(resolve(admin, id, content.trim())));
+        }
+        if (hungRead() !== null) return null;
+        return cloneMembers(own, relative(own, join(parent, basename(path))), roots);
+      }
+      if (dirname(own) === own) return [];
+    }
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof Unanswered) return null;
+    throw error;
   }
 }
 
@@ -103,8 +175,10 @@ export function freshMeasure(
   if (!isDependencyTree(path)) return age < maxAgeMs ? measure : null;
   if (age < DEPENDENCY_MAX_AGE_MS) return measure;
   if (age >= DEPENDENCY_BACKSTOP_MS) return null;
+  const recorded = readDiskUsageCloneGroup(path);
+  if (recorded === null) return null;
   const group = cloneGroup ?? (signature === undefined ? currentCloneGroup(path) : undefined);
-  return group !== undefined && readDiskUsageCloneGroup(path) === group ? measure : null;
+  return recorded === group ? measure : null;
 }
 
 function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {

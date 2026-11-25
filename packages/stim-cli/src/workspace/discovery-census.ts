@@ -15,7 +15,7 @@ import {
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
 import { INSTALL_MARKERS, installSignature } from '../private-size.ts';
-import { answered, hungRead, Unanswered } from './bounded-read.ts';
+import { answered, hungRead, READ_TIMEOUT_MS, Unanswered } from './bounded-read.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from './config.ts';
 import { DISCOVER_ROOTS_KEY, REFRESH_MS, rootsOf } from './discovery-report.ts';
@@ -32,8 +32,6 @@ import {
 const HOUR_MS = 60 * 60_000;
 /** Per build directory: the walk of the one disk-usage walk the machine allows at a time. */
 const WALK_TIMEOUT_MS = 10_000;
-/** Per filesystem read of a checkout's layout. */
-const READ_TIMEOUT_MS = 3000;
 const TAG_PREFIX_BYTES = 64;
 /** The most checkouts one run measures, and the longest it starts new reads or walks for; the rest wait for the next run. */
 const MAX_CHECKOUTS = 25;
