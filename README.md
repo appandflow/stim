@@ -2,17 +2,29 @@
 
 # Stim
 
-Fast, isolated local React Native environments for coding agents.
+Orchestrate fast builds and devices for coding agents.
 
-Stim gives each project or git worktree its own Metro port and owned simulator
-or emulator. It shares native artifacts, Xcode compilation data, Gradle output,
-and Metro transforms across worktrees. Agents can work in parallel without
-sharing live resources, then clean up every resource Stim created.
+Stim builds, launches and cleans up React Native, Expo and native apps for every
+agent, locally or across your machines, and shows you what each one
+is running.
 
-Stim supports React Native Community CLI and Expo projects. Builds run locally
-by default; `--eas-profile` uses completed EAS development builds.
-Apps can launch on owned simulators and emulators, connected physical devices,
-or configured remote devices.
+- **Worktree-based workflow.** One git worktree per task. `stim worktree warm`
+  copies in its dependencies, and Stim gives it its own Metro port and device,
+  so parallel agents never collide.
+- **Builds you only pay for once.** React Native and Expo builds are cached and
+  shared across worktrees, so a new one rarely compiles from scratch. Xcode and
+  Gradle share their compiler caches too.
+- **Every device, every machine.** Simulators, emulators, connected phones,
+  other Macs, EAS and CI. Send builds to another machine when this one is busy.
+- **See what every agent sees.** [Stim Desktop](https://stim.appandflow.com/docs/desktop)
+  shows every workspace, device, build and log. Take control of a device, or
+  [share a link](https://stim.appandflow.com/docs/share) to it.
+- **Watches the whole machine.** Concurrency limits make builds, devices and
+  test runs wait their turn instead of overloading the machine. When disk or
+  memory runs low, Stim reclaims it.
+
+Stim supports Expo, React Native Community CLI and Re.Pack projects, native
+Xcode and Gradle apps, Exact apps, and web pages in an owned Chrome.
 
 ## Install
 

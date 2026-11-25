@@ -1,7 +1,7 @@
 {
   "name": "stim",
   "version": "2.0.0-rc.6",
-  "description": "Stim: fast, isolated React Native environments for coding agents",
+  "description": "Stim: run React Native, Expo and native apps for coding agents, in parallel, on every device and machine you have",
   "keywords": [
     "agent",
     "emulator",
