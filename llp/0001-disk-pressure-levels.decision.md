@@ -1018,8 +1018,10 @@ judged idle by the full evidence, as a discovered checkout is, since most
 commands run in an unregistered root do not record their use. A registered app
 inside a worktree covers that worktree instead, so a recorded worktree root
 never takes the trees of an app in use. Saved output marks of such a root are
-authorized like a registered root's, so the daemon removes its outputs as
-`stim gc` does.
+authorized like a registered root's, so the daemon's dormant pass removes its
+outputs as `stim gc` does. The stimd output sweep of the pressure ladder still
+rechecks each mark against the registry or targeted discovery and keeps such a
+root's outputs.
 
 Reason: `stim worktree warm` at a repository root records use of the root but
 registers only the app it finds, and older Stim versions dropped the app's
