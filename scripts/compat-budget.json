@@ -36,7 +36,7 @@
       "mechanism": "Stim Desktop's native reads of engine files check their format"
     },
     "C9": {
-      "loc": 50,
+      "loc": 59,
       "end": "permanent",
       "mechanism": "the phone's API integer in hello, with update remedies on each side"
     },
@@ -96,9 +96,9 @@
       "mechanism": "a prebuild record that is a bare hash string, as Stim 1.40 wrote it, counts as an earlier Stim's record"
     },
     "C32": {
-      "loc": 143,
+      "loc": 59,
       "end": "2.1.0",
-      "mechanism": "stimd stops a pre-2.0 stim-daemon that holds the daemon claim, by its verified process identity, and the CLI refuses a holder it will not stop"
+      "mechanism": "the CLI and stimd refuse while a pre-2.0 stim-daemon holds the daemon claim, naming its pid and the stop command"
     },
     "C33": {
       "loc": 19,

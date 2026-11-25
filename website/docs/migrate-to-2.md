@@ -21,7 +21,7 @@ Commands use `stim`. Use `npx stim` if you run without a global installation. Fo
 
 The per-home `stimd` runs workspace services such as Metro, managed tunnels, and device logs. `daemon.mode` controls automatic maintenance. Even in `off` mode, a command that needs one of those workspace services can start `stimd`.
 
-A 1.40–1.42 maintenance daemon can keep its claim after all workspaces stop. The 2.0 daemon takes over automatically when it can verify that the old maintenance daemon owns the claim. If the claim remains held, follow the refusal from `stim start` or `stim serve`. Check the reported PID before using the suggested `kill <pid>` or, on Windows, `taskkill /PID <pid> /F`. Retry once the holder has stopped. Metro supervisors, log collectors, and devices already running are separate processes and can outlive the old daemon. `stim start` can adopt a verified dev server. If it reports a port held by another process, stop the old workspace first.
+A 1.40–1.42 maintenance daemon can keep its claim after all workspaces stop, and the 2.0 daemon does not stop it. While it holds the claim, `stim start` and `stim serve` refuse with its PID and the command that stops it. Check the reported PID before using the suggested `kill <pid>` or, on Windows, `taskkill /PID <pid> /F`. Retry once the holder has stopped. Metro supervisors, log collectors, and devices already running are separate processes and can outlive the old daemon. `stim start` can adopt a verified dev server. If it reports a port held by another process, stop the old workspace first.
 
 An npm installation can run directly. If you want a managed machine engine, use `stim engine install` once from the upgraded CLI. `stim engine status` shows the active build and channel. On an existing managed engine, `stim engine update` follows its current channel and `stim engine rollback` selects its previous build. See [engine and service updates](./settings.md#machine-settings).
 
@@ -31,7 +31,7 @@ If `stim service install` refuses because a Stim daemon serves the service's por
 
 If `stim service uninstall` reports that the service's daemon is still listening after an engine handoff, the service definition and any route it owns are kept. Let that daemon finish its work, stop the reported daemon, and retry `stim service uninstall --label <label>`. [Ubuntu uninstall check](https://github.com/appandflow/stim/actions/runs/43663535775/job/132657852299)
 
-The live 1.40-to-2.0 upgrade checks kept the existing Metro process and verified the same bundle on macOS, Linux, and Windows. macOS and Linux exercised legacy daemon takeover. Windows started its first resident daemon while the 1.40 Metro was still running. [Upgrade results](https://github.com/appandflow/stim/issues/5590#issuecomment-6888597398)
+The live 1.40-to-2.0 upgrade checks kept the existing Metro process and verified the same bundle on macOS, Linux, and Windows. Windows started its first resident daemon while the 1.40 Metro was still running. [Upgrade results](https://github.com/appandflow/stim/issues/5590#issuecomment-6888597398)
 
 Update the phone app alongside Desktop if you use it. Upgrades with paired clients and mixed-version app and engine combinations are still being verified. [App and engine compatibility checks](https://github.com/appandflow/stim/issues/5593)
 
@@ -220,18 +220,18 @@ The first five refuse `start`, `ios`, `android`, `web`, `macos`, `revive` and `g
 
 ### 3. Changed defaults
 
-**Ask first** whether to keep the 1.40 values, and apply the answer before step 4: the first `stim start` that takes the old daemon over runs cleanup under the values then in force. 2.0 cleans up sooner by default: `idle.dormantDays` 1 (was 3), `maintenance.olderThanDays` 3 (was 7), `disk.minFreeGb` 40 (was 20), `disk.criticalFreeGb` 20 (was 6), and `ios.simslim` `on` (was `off`). To keep a 1.40 value, run `stim settings set <key> <value> --scope machine`.
+**Ask first** whether to keep the 1.40 values, and apply the answer before step 4: the first `stim start` after the old daemon stops runs cleanup under the values then in force. 2.0 cleans up sooner by default: `idle.dormantDays` 1 (was 3), `maintenance.olderThanDays` 3 (was 7), `disk.minFreeGb` 40 (was 20), `disk.criticalFreeGb` 20 (was 6), and `ios.simslim` `on` (was `off`). To keep a 1.40 value, run `stim settings set <key> <value> --scope machine`.
 
 ### 4. Old processes
 
-Do this after steps 1 to 3: `stim start` refuses while a refusing setting or export is left, and the takeover runs cleanup under the defaults step 3 settled.
+Do this after steps 1 to 3: `stim start` refuses while a refusing setting or export is left, and the first 2.0 daemon runs cleanup under the defaults step 3 settled.
 
 **Check:** `stim status`. It lists the live workspaces of this Stim home, and the line `Daemon: pid <n> from an older stim holds the daemon claim` means a 1.x daemon still runs.
 
 **Migrate (ask first):** a shared home can hold other people's or other agents' active work. List the live workspaces and the old daemon to the user, and wait for an answer before you stop anything.
 
 - With the user's go, run `stim stop` in each workspace they name that a 1.x Stim started before the upgrade.
-- When the daemon line says the next command that starts stimd stops it, the next `stim start` takes the old daemon over; run it only after the user agrees. Otherwise, with the user's go, run the stop command the line prints (`kill <pid>`, or `taskkill /PID <pid> /F` on Windows).
+- With the user's go, run the stop command the daemon line prints (`kill <pid>`, or `taskkill /PID <pid> /F` on Windows).
 
 ### 5. Project files and scripts
 
