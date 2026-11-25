@@ -91,7 +91,11 @@ export function Rename({ id, on }: { id: string; on?: string }) {
           </Trans>
         )}
       </Text>
-      <Button title={t`Save`} onPress={save} disabled={machineMode && (!connected || saving || unsupported)} />
+      <Button
+        title={t`Save`}
+        onPress={save}
+        disabled={machineMode && (!connected || saving || unsupported || !name.trim())}
+      />
     </ScrollView>
   );
 }

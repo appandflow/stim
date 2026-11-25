@@ -184,8 +184,8 @@ export class DemoMachine {
       .toReversed();
   }
 
-  connect(peer: Peer, device: Device): DemoConnection {
-    return new DemoConnection(this, peer, device);
+  connect(peer: Peer, device: Device, onDeviceRename?: (name: string) => void): DemoConnection {
+    return new DemoConnection(this, peer, device, onDeviceRename);
   }
 
   /** The pairing code for the review notes, without its `pairingToken`. */
@@ -222,9 +222,11 @@ export class DemoMachine {
     }
     const device = { id: createHash('sha256').update(accepted.clientKey).digest('hex').slice(0, 8), name: record.name };
     const { socket } = accepted;
+    const paired = record;
     const connection = this.connect(
       { send: (text) => socket.send(text), close: () => socket.close(1008, 'no hello') },
       device,
+      (name) => this.auth.devices.set(key, { ...paired, name }),
     );
     socket.on('message', (data: Uint8Array, binary: boolean) => {
       if (!binary) void connection.receive(utf8.decode(data));
@@ -271,7 +273,7 @@ export class DemoConnection {
   private readonly peer: Peer;
   private readonly handlers: ReturnType<typeof createFakeHandlers>;
 
-  constructor(machine: DemoMachine, peer: Peer, device: Device) {
+  constructor(machine: DemoMachine, peer: Peer, device: Device, onDeviceRename?: (name: string) => void) {
     this.machine = machine;
     this.peer = peer;
     this.handlers = createFakeHandlers(
@@ -285,6 +287,7 @@ export class DemoConnection {
         notifications: machine.notifications,
         notificationLog: 'demo',
         readOnly: false,
+        onDeviceRename,
         get recordingEnabled() {
           return machine.recordingEnabled;
         },
