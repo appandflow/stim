@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import { readDiskUsage, readGcMark, readGcMarks, type DaemonMode } from '@stim-cli/core/state';
+import { readDiskUsage, readDiskUsagePartial, readGcMark, readGcMarks, type DaemonMode } from '@stim-cli/core/state';
 import { existsSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
@@ -69,7 +69,7 @@ function summarize(entries: ListingEntry[]): Summary {
 function sizes(root: string) {
   const measure = readDiskUsage(root);
   return {
-    realBytes: measure?.privateBytes ?? null,
+    realBytes: readDiskUsagePartial(root) ? null : (measure?.privateBytes ?? null),
     apparentBytes: measure?.bytes ?? null,
     measuredAt: measure?.measuredAt ?? null,
   };
@@ -137,7 +137,7 @@ export async function worktreeListPayload(
   const result = listed.map(({ repository, entries }) => {
     const worktrees: ListingEntry[] = entries.map((entry) => {
       const path = canonicalPath(entry.path);
-      const observation = readGcMark(path)?.worktree;
+      const observation = (readGcMark(entry.path) ?? readGcMark(path))?.worktree;
       const idle = idleDays(
         [
           observation?.lastUsedAt ? Date.parse(observation.lastUsedAt) : null,
@@ -181,7 +181,6 @@ export async function worktreeListPayload(
   };
 }
 
-/** Describes the age of saved maintenance worktree verdicts and how to obtain current verdicts when absent. */
 function worktreeCheckAgeLine(
   checkedAt: string | null,
   oldestCheckedAt: string | null,
@@ -255,7 +254,10 @@ export const listOp: Op = defineOp({
           repo.oldestCheckedAt = repo.checkedAt;
           for (const entry of repo.worktrees) {
             const verdict = sweep.worktrees.find((candidate) => canonicalPath(candidate.path) === entry.path);
-            if (!verdict) continue;
+            if (!verdict) {
+              Object.assign(entry, { willRemove: null, reason: null, detail: null, checkedAt: null });
+              continue;
+            }
             entry.willRemove = !verdict.skipped;
             entry.reason = verdict.skipCode;
             entry.detail = verdict.skipped?.replace(/^kept: /, '') ?? worktreeRemovalReason(verdict, sweep);

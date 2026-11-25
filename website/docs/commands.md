@@ -2570,7 +2570,7 @@ Files a sparse checkout leaves out are not on disk and do not count.
 
 ## `worktree list`
 
-```bash
+```text
 stim worktree list
 stim worktree list --all --json
 ```
@@ -2590,11 +2590,11 @@ no observations. For a current repository check, both are now. Per-worktree
 `checkedAt` and `measuredAt` remain the verdict and measurement times.
 Neither form deletes anything. A worktree with no measure, or one over an hour
 old, is walked again, within a two-minute budget for the whole command; what the
-budget leaves unmeasured prints `not measured`. JSON includes measurement and check dates.
+budget leaves unwalked keeps its older measure, with its date in `measuredAt`, or prints `not measured` when it has none. JSON includes measurement and check dates.
 Real size is the private bytes of the whole worktree; apparent size is its
 allocated bytes. Shared clone and hard-link bytes are excluded from real size
-when the volume can count them (APFS on macOS, link counts on Linux); otherwise
-real size is unknown. Neither size includes Stim workspace data outside the checkout.
+when the volume can count them (APFS on macOS, link counts on Linux); otherwise,
+or when the walk could not read every file, real size is unknown. Neither size includes Stim workspace data outside the checkout.
 
 ## `gc`
 

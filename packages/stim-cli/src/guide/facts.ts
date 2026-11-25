@@ -176,7 +176,7 @@ leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary:
-        'every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules',
+        'every field of the start, ios, android, macos, web, reload, revive and worktree list payloads, the error contract, the device rules',
       body: () => `  worktree list --json is a separate payload:
     { scope: "repository" | "machine", daemonMode: "on" | "report" | "off",
       repositories: [{ repository, checkedAt, oldestCheckedAt,

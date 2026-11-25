@@ -124,6 +124,17 @@ test('JSON is one payload and splits kept totals by gc reason', async () => {
       'large',
     ].toSorted(),
   );
+  save(diskUsageCacheFile(roots[1]), {
+    path: roots[1],
+    bytes: 4 * GIB,
+    privateBytes: 2 * GIB,
+    partial: true,
+    measuredAt: new Date().toISOString(),
+  });
+  const partial = JSON.parse((await run({ json: true }))[0] ?? '');
+  expect(partial.repositories[0].worktrees).toContainEqual(
+    expect.objectContaining({ path: roots[1], realBytes: null, apparentBytes: 4 * GIB, large: false }),
+  );
 });
 
 test('machine listing uses saved observations and leaves unobserved worktrees unchecked', async () => {
