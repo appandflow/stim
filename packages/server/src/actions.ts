@@ -69,6 +69,8 @@ export function actionOutcome(
 export interface AuditRecord {
   at: string;
   device: { id: string; name: string };
+  /** The new name a device.rename gave the device. */
+  name?: string;
   action: string | null;
   workspace: string | null;
   platform?: string;
