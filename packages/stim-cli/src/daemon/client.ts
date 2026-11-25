@@ -770,6 +770,15 @@ export async function stopMetroTree(
       reason: `stimd did not answer; ${after.daemonClaim} still holds this home's stimd`,
       remedy: `Verify no stimd of this home runs, then run ${claimRemoveCommand(after.daemonClaim)}; dev server pid ${pid} still runs.`,
     };
+  const hold = launchError ? null : currentCrashHold();
+  if (hold) {
+    const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
+    return {
+      stopped: false,
+      reason: 'stimd is held after repeated abnormal exits, so no stimd could stop the dev server',
+      remedy: `${crashHoldRemedy(hold, false)} Then run \`stim stop\` again; dev server pid ${pid} still runs.`,
+    };
+  }
   return unresolved(launchError ? `no stimd could adopt the dev server: ${launchError}` : 'stimd did not answer');
 }
 
