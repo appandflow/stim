@@ -1450,8 +1450,8 @@ stim test --list --json
   started inside it while that claim is held takes no slot and runs in the
   caller's process group, so the outer run stops anything it leaves behind. It
   still passes its own worker count, so the
-  `concurrency.maxTests x concurrency.testWorkers` bound does not include
-  nested runs. Stim does not check that the inner run really descends from the
+  `concurrency.maxTests x concurrency.testWorkers` bound on the runs Stim
+  sizes does not include nested runs. Stim does not check that the inner run really descends from the
   outer one: a process that inherited the value runs without a slot until the
   outer run ends. A nested `stim test` started with a cleared environment, as
   with `env -i`, has no `STIM_TEST_RUN` and queues for a slot its own outer
