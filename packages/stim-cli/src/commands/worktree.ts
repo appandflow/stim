@@ -40,7 +40,6 @@ import { prepareInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
-import { dropBuildAreas, recordedBuildAreas } from '../offload/build-areas.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { teardownServices } from '../services.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
@@ -62,7 +61,14 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
-import { gcMarkFile, readGcMark, trace, type BuildAreaRecord } from '@stim-cli/core/state';
+import {
+  gcMarkFile,
+  readBuildAreas,
+  readGcMark,
+  readWorkspaceState,
+  trace,
+  type BuildAreaRecord,
+} from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readRemoteSession } from '../stimd/metro/state.ts';
@@ -1139,7 +1145,7 @@ async function reclaimEnvironment(
       withReclaimLocks(
         root,
         async (lockedKeys) => {
-          const recorded = recordedBuildAreas(lockedKeys);
+          const recorded = lockedKeys.flatMap((key) => readBuildAreas(readWorkspaceState(key)));
           const result = await reclaimAll(root, lockedKeys, {
             preserveRootProject,
             removedBy: 'worktree-remove',
@@ -1197,6 +1203,8 @@ async function dropRemovedBuildAreas(
   output: RemovalOutput,
   operation?: StimContext,
 ): Promise<void> {
+  if (!areas.length) return;
+  const { dropBuildAreas } = await import('../offload/build-areas.ts');
   for (const drop of await dropBuildAreas(areas, operation?.signal)) {
     if ('dropped' in drop) output.error(chalk.dim(phaseLine('worker', `dropped its build area on ${drop.machine}`)));
     else if ('kept' in drop)
@@ -1838,7 +1846,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
-          const recorded = recordedBuildAreas(lockedKeys);
+          const recorded = lockedKeys.flatMap((key) => readBuildAreas(readWorkspaceState(key)));
           const result = await reclaimAll(path, lockedKeys, {
             preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
