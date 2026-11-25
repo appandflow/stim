@@ -2,14 +2,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import {
-  dependencyCloneMembers,
-  dependencyCloneMembersAsync,
-  dependencyCloneStamp,
-  refreshMeasure,
-} from '../disk-usage.ts';
+import { freshMeasure, refreshMeasure } from '../disk-usage.ts';
 import { getExecutor } from '../exec.ts';
-import { measureTree, treeSignature } from '../private-size.ts';
+import { measureTree } from '../private-size.ts';
 
 vi.mock('../private-size.ts', async (original) => ({
   ...(await original<typeof import('../private-size.ts')>()),
@@ -96,18 +91,12 @@ it('includes the source checkout on a bare repository HEAD branch', async () => 
   expect(measureTree).toHaveBeenCalledOnce();
 });
 
-it('reuses a daemon stamp when a sync caller checks the same clone group', async () => {
+it('requires a supplied stamp for a sync freshness check but refresh resolves it without walking', async () => {
   const tree = join(roots[1], 'node_modules');
-  const members = await dependencyCloneMembersAsync(tree, new AbortController().signal);
-  expect(members).toEqual(dependencyCloneMembers(tree));
-  if (members === null) throw new Error('member reads did not answer');
-  await refreshMeasure(tree, {
-    timeoutMs: 1000,
-    now: () => start,
-    signature: treeSignature(tree) ?? 'absent',
-    cloneGroup: dependencyCloneStamp(members.map((member) => [member, treeSignature(member)])),
-  });
+  await refreshMeasure(tree, { timeoutMs: 1000, now: () => start });
   vi.mocked(measureTree).mockClear();
-  await refreshMeasure(tree, { timeoutMs: 1000, now: () => start + 7 * 60 * 60_000 });
+  const now = () => start + 7 * 60 * 60_000;
+  expect(freshMeasure(tree, { now })).toBeNull();
+  await refreshMeasure(tree, { timeoutMs: 1000, now });
   expect(measureTree).not.toHaveBeenCalled();
 });

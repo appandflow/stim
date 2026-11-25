@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -26,10 +26,9 @@ import {
 import { writeCacheFile } from './cache-file.ts';
 import { debugLog } from './debug-log.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts';
-import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
+import { INSTALL_MARKERS, installSignature, measureTree, treeSignature, type TreeSize } from './private-size.ts';
 import { lastSizeFailure } from './size-failures.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
-import { gitLocationOnDisk } from './workspace/worktree.ts';
 import { answered, hungRead, READ_TIMEOUT_MS, Unanswered } from './workspace/bounded-read.ts';
 
 const DEPENDENCY_MAX_AGE_MS: number = 6 * 60 * 60_000;
@@ -45,44 +44,19 @@ function cloneMembers(own: string, suffix: string, roots: readonly string[]): st
   return [...new Set([own, ...roots].map((root) => join(root, suffix)))].toSorted();
 }
 
-/** The same dependency tree path in each checkout recorded by the repository's git files. */
-export function dependencyCloneMembers(path: string): string[] {
-  try {
-    const parent = realpathSync.native(dirname(path));
-    const location = gitLocationOnDisk(parent);
-    if (!location) return [];
-    const suffix = relative(location.path, join(parent, basename(path)));
-    const roots: string[] = [];
-    const admin = join(location.commonDir, 'worktrees');
-    let ids: string[] = [];
-    try {
-      ids = readdirSync(admin);
-    } catch {}
-    for (const id of ids) {
-      try {
-        roots.push(dirname(resolve(admin, id, readFileSync(join(admin, id, 'gitdir'), 'utf-8').trim())));
-      } catch {}
-    }
-    if (basename(location.commonDir) === '.git') roots.push(dirname(location.commonDir));
-    return cloneMembers(location.path, suffix, roots);
-  } catch {
-    return [];
-  }
-}
-
 /** The clone members through bounded filesystem reads; null when a read did not answer. Aborts propagate. */
-export async function dependencyCloneMembersAsync(path: string, signal: AbortSignal): Promise<string[] | null> {
+export async function dependencyCloneMembersAsync(path: string, signal?: AbortSignal): Promise<string[] | null> {
   const read = async <T>(label: string, start: () => Promise<T>): Promise<T | null> => {
     try {
       return await answered(label, start, READ_TIMEOUT_MS, signal);
     } catch (error) {
-      signal.throwIfAborted();
+      signal?.throwIfAborted();
       if (error instanceof Unanswered) throw error;
       return null;
     }
   };
   try {
-    signal.throwIfAborted();
+    signal?.throwIfAborted();
     if (hungRead() !== null) return null;
     const parent = await read(dirname(path), () => realpath(dirname(path)));
     if (parent === null) return [];
@@ -120,7 +94,7 @@ export async function dependencyCloneMembersAsync(path: string, signal: AbortSig
       if (dirname(own) === own) return [];
     }
   } catch (error) {
-    signal.throwIfAborted();
+    signal?.throwIfAborted();
     if (error instanceof Unanswered) return null;
     throw error;
   }
@@ -132,8 +106,45 @@ export function dependencyCloneStamp(members: readonly (readonly [string, string
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
-function currentCloneGroup(path: string): string {
-  return dependencyCloneStamp(dependencyCloneMembers(path).map((member) => [member, treeSignature(member)]));
+/** The current clone-group stamp through bounded reads, or null when a read did not answer. */
+export async function dependencyCloneGroup(
+  path: string,
+  signal?: AbortSignal,
+  readSignature?: (path: string) => Promise<string | null>,
+): Promise<string | null> {
+  const stamp = async (file: string): Promise<string | null> => {
+    try {
+      const info = await answered(file, () => lstat(file), READ_TIMEOUT_MS, signal);
+      return `${info.ino}:${info.mtimeMs}`;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof Unanswered) throw error;
+      return null;
+    }
+  };
+  const signature =
+    readSignature ??
+    (async (member: string) => {
+      const root = await stamp(member);
+      if (root === null) return null;
+      const markers: (string | null)[] = [];
+      for (const name of INSTALL_MARKERS) markers.push(await stamp(join(member, name)));
+      return installSignature(root, markers);
+    });
+  try {
+    const paths = await dependencyCloneMembersAsync(path, signal);
+    if (paths === null) return null;
+    const members: [string, string | null][] = [];
+    for (const member of paths) {
+      members.push([member, await signature(member)]);
+      if (hungRead() !== null) return null;
+    }
+    return dependencyCloneStamp(members);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof Unanswered) return null;
+    throw error;
+  }
 }
 
 function currentSignature(path: string): string {
@@ -157,7 +168,7 @@ export function knownPrivateBytes(path: string): number | null {
   return trustedMeasure(path)?.privateBytes ?? null;
 }
 
-/** The trusted measurement of `path` when it is fresh enough for a caller with `maxAgeMs` and `valid`, else null. */
+/** A fresh trusted measurement, requiring a supplied matching clone-group stamp for dependencies past six hours. */
 export function freshMeasure(
   path: string,
   {
@@ -177,8 +188,7 @@ export function freshMeasure(
   if (age >= DEPENDENCY_BACKSTOP_MS) return null;
   const recorded = readDiskUsageCloneGroup(path);
   if (recorded === null) return null;
-  const group = cloneGroup ?? (signature === undefined ? currentCloneGroup(path) : undefined);
-  return recorded === group ? measure : null;
+  return cloneGroup !== undefined && recorded === cloneGroup ? measure : null;
 }
 
 function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {
@@ -253,7 +263,7 @@ export interface RefreshOptions {
    * read with synchronous stats, which a stalled mount can block.
    */
   signature?: string;
-  /** The current clone-group stamp, read by the caller through bounded reads. */
+  /** A supplied current stamp; otherwise refresh reads it asynchronously unless `signature` is supplied alone. */
   cloneGroup?: string;
 }
 
@@ -280,16 +290,31 @@ export async function refreshMeasure(
     if (failedAt === null || now() - Date.parse(failedAt) >= maxAgeMs) return false;
     return !dependency || readDiskUsageFailureSignature(path) === (options.signature ?? treeSignature(path));
   };
-  const skip = () => freshMeasure(path, options) !== null || failedRecently();
+  let cloneGroup = options.cloneGroup;
+  let groupRead = false;
+  const resolveGroup = async () => {
+    if (!dependency || cloneGroup !== undefined || options.signature !== undefined || groupRead) return;
+    groupRead = true;
+    cloneGroup = (await dependencyCloneGroup(path, operation?.signal)) ?? undefined;
+  };
+  const skip = async () => {
+    if (dependency && cloneGroup === undefined && options.signature === undefined) {
+      const cached = trustedMeasure(path);
+      const age = cached ? now() - Date.parse(cached.measuredAt) : -1;
+      if (age >= DEPENDENCY_MAX_AGE_MS && age < DEPENDENCY_BACKSTOP_MS && readDiskUsageCloneGroup(path) !== null)
+        await resolveGroup();
+    }
+    return freshMeasure(path, { ...options, cloneGroup }) !== null || failedRecently();
+  };
   const fresh = () => {
-    const measure = freshMeasure(path, options);
+    const measure = freshMeasure(path, { ...options, cloneGroup });
     return {
       outcome: 'fresh' as const,
       measure,
       ...(measure && readDiskUsagePartial(path) ? { partial: true as const } : {}),
     };
   };
-  if (skip()) return fresh();
+  if (await skip()) return fresh();
   const record = (
     bytes: number,
     privateBytes: number | null,
@@ -298,7 +323,6 @@ export async function refreshMeasure(
     walkMs: number | null,
     partial?: true,
     privateUnknown?: 'volume' | 'walk',
-    cloneGroup?: string,
   ): DiskMeasure => {
     const measure: DiskMeasure = {
       bytes,
@@ -318,31 +342,21 @@ export async function refreshMeasure(
   };
   if (options.knownToExist !== true && !existsSync(path)) {
     if (!dependency) return { outcome: 'fresh', measure: null };
+    await resolveGroup();
     return {
       outcome: 'measured',
-      measure: record(
-        0,
-        0,
-        ABSENT,
-        now(),
-        null,
-        undefined,
-        undefined,
-        options.cloneGroup ?? (options.signature === undefined ? currentCloneGroup(path) : undefined),
-      ),
+      measure: record(0, 0, ABSENT, now(), null),
     };
   }
   const claim = options.claim ? takeWalkClaim() : null;
   if (options.claim && !claim) return { outcome: 'busy', measure: null };
   let cleanupUnverified = false;
   try {
-    if (claim && skip()) return fresh();
+    if (claim && (await skip())) return fresh();
     if (options.admit && !options.admit()) return { outcome: 'busy', measure: null };
     const startedAt = now();
     const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
-    const cloneGroup = dependency
-      ? (options.cloneGroup ?? (options.signature === undefined ? currentCloneGroup(path) : undefined))
-      : undefined;
+    await resolveGroup();
     const targets = options.targets?.();
     let size: TreeSize | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
@@ -381,7 +395,6 @@ export async function refreshMeasure(
         Math.max(0, now() - startedAt),
         size.partial,
         size.privateUnknown,
-        cloneGroup,
       ),
       ...(size.partial ? { partial: true as const } : {}),
     };
