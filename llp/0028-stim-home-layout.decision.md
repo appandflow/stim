@@ -108,8 +108,9 @@ agent-device for that run.
 The rename is one-way. An engine from before it, reached with `stim engine
 rollback` or an older install on the same home, knows only the old names:
 
-- it creates and fills `metro-cache`, `compilation-cache` and `ccache` again,
-  so its builds and dev servers start cold;
+- it creates and fills `metro-cache` and `ccache` again, so its dev servers and
+  Gradle builds start cold; it reaches the renamed compilation cache warm through
+  the `compilation-cache` link, sharing one claim set with the newer engine;
 - its gc and maintenance neither measure nor trim the `*.noindex` folders;
 - its `worktree remove` and reclaim look for a daemon only in
   `agent-device/daemon.json`, so they can empty a workspace while a daemon

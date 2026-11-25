@@ -83,7 +83,7 @@ test('an existing home moves each old folder once, with its contents and its cac
   expect(migrateNoindexFolders()).toEqual([]);
   for (const folder of folders) {
     expect(existsSync(folder)).toBe(folder === join(home, 'compilation-cache'));
-    const renamed = folder.replace(/(compilation-cache|ccache|metro-cache|agent-device)(?=\/|$)/, '$1.noindex');
+    const renamed = folder.replace(/(compilation-cache|ccache|metro-cache|agent-device)(?=[\\/]|$)/, '$1.noindex');
     expect(readFileSync(join(renamed, 'entry'), 'utf8')).toBe(folder);
   }
   expect(sharedCompilationCache()).toBe(join(home, 'compilation-cache.noindex'));

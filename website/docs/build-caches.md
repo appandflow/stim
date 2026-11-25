@@ -553,8 +553,9 @@ path keeps sharing Stim's cache. Spotlight does not follow the link, and `gc`
 counts the cache once.
 
 The rename is one-way. After `stim engine rollback` to a release from before
-it, the older engine sees only the old names: its builds and dev servers start
-with cold caches, its `gc` does not measure the `.noindex` folders, and its
+it, the older engine sees only the old names: its dev servers and Gradle builds
+start with cold caches (Xcode builds reach the compilation cache through the
+`compilation-cache` link), its `gc` does not measure the `.noindex` folders, and its
 `worktree remove` can empty a workspace while an agent-device daemon still runs
 in `agent-device.noindex`. Stop agent-device sessions before rolling back past
 this release.
