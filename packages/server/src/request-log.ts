@@ -14,7 +14,8 @@ export interface RequestTracker {
   /** The connection's client, once hello names it: the paired device id and the CLI run id, never a token. */
   identify(client: { id: string | null; runId: string | null }): void;
   begin(id: Id, method: string): void;
-  step(id: Id, name: string, ms: number): void;
+  /** A step's duration in ms, or a fixed label such as a report target: never an unvalidated parameter value. */
+  step(id: Id, name: string, value: number | string): void;
   /** Sees every message the server sends on the connection; a reply to a tracked request ends it. */
   reply(message: unknown): void;
 }
@@ -41,9 +42,9 @@ const text = (fields: Record<string, unknown>): string =>
  * Request timing for stim-server. An error reply always goes to the service log (stderr), once a minute per
  * client, method, code and refusal reason. With debug logging on, every request and host event goes only to
  * `logs/debug/server.ndjson` with its duration, slow steps and any error message, bounded to MAX_REASON characters.
- * Service lines start with the time and carry the method, the client's device id, the CLI run id, durations and the
- * error code, plus the refusal message of a `build-busy` or `build-refused` reply: never params, other messages,
- * tokens or tickets.
+ * Service lines start with the time and carry the method, the client's device id, the CLI run id, durations, the
+ * report target of `desktop.reports.get` and the error code, plus the refusal message of a `build-busy` or
+ * `build-refused` reply: never params, other messages, tokens or tickets.
  */
 export function createRequestLog({
   service = (line: string) => console.error(line),
@@ -64,7 +65,7 @@ export function createRequestLog({
   return {
     track() {
       let client: { id: string | null; runId: string | null } = { id: null, runId: null };
-      const inflight = new Map<Id, { method: string; start: number; steps: Record<string, number> }>();
+      const inflight = new Map<Id, { method: string; start: number; steps: Record<string, number | string> }>();
       return {
         identify(next) {
           client = next;
@@ -74,9 +75,9 @@ export function createRequestLog({
           if (inflight.size >= MAX_REMEMBERED) inflight.delete(inflight.keys().next().value!);
           inflight.set(id, { method: METHOD.test(method) ? method : 'unknown', start: now(), steps: {} });
         },
-        step(id, name, ms) {
+        step(id, name, value) {
           const entry = inflight.get(id);
-          if (entry) entry.steps[name] = Math.round(ms);
+          if (entry) entry.steps[name] = typeof value === 'number' ? Math.round(value) : value;
         },
         reply(message) {
           if (!message || typeof message !== 'object' || !('id' in message)) return;
