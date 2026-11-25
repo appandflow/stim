@@ -903,10 +903,9 @@ A tunnel an older Stim started is reused or stopped by its recorded process iden
 
 After an upgrade, a daemon from Stim 1.40 to 1.42 can still hold this Stim home,
 because it runs until every workspace has been idle for `idle.dormantDays`. stimd
-stops it by its process identity when it starts, and your dev servers and devices
-keep running. If the holder cannot be verified as that daemon, or does not stop,
-`stim start` and the other commands that need Metro or a managed tunnel report its
-PID and the command that stops it.
+does not stop it: `stim start` and the other commands that need stimd report its
+PID and the command that stops it. Your dev servers and devices keep running when
+you stop it.
 
 ## Metro for hosted iOS
 

@@ -1005,7 +1005,7 @@ export async function ensureStimd(
       return true;
     }
     // compat C32 until 2.1.0
-    if (command === 'stim start') {
+    if (command?.startsWith('stim ')) {
       const legacy = legacyDaemonRefusal();
       if (legacy) throw Object.assign(new Error(legacy.message), legacy);
     }
