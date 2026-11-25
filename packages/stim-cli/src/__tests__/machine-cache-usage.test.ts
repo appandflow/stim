@@ -12,12 +12,9 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { runReport } from '../report-runtime.ts';
 import { testContext } from './_context.ts';
 
-const PRIVATE_SIZE_HELPER = '/fake/stim-privsize';
+const REAL_SIZE = '/fake/real-size';
 
-vi.mock('../clonefile.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../clonefile.ts')>()),
-  privateSizeHelper: async () => PRIVATE_SIZE_HELPER,
-}));
+vi.mock('real-size', () => ({ binaryPath: () => REAL_SIZE }));
 
 const UNUSED_RUNTIME = '88E8478B-6BAD-4120-A046-0F9F9221E17A';
 const USED_RUNTIME = '244912DF-0671-4197-9C70-85AF161BF600';
@@ -119,8 +116,11 @@ beforeEach(() => {
       }
       calls.push([file, ...args]);
       if (file === 'du') return `2048\t${args.at(-1)}\n`;
-      if (file === PRIVATE_SIZE_HELPER || (file === 'nice' && args[2] === PRIVATE_SIZE_HELPER))
-        return '4194304 1048576 0\n';
+      if (file === REAL_SIZE || (file === 'nice' && args[2] === REAL_SIZE))
+        return JSON.stringify({
+          paths: [{ path: 'x', allocated: 4194304, private: 1048576, files: 0, exact: true }],
+          total: { allocated: 4194304, private: 1048576, files: 0, exact: true },
+        });
       const result = tools[[file, ...args].join(' ')];
       if (result === undefined || result instanceof Error) throw result ?? new Error('unexpected');
       return result;

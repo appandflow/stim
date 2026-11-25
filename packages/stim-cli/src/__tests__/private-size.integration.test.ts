@@ -13,7 +13,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { measureTree, privateSizeKnowable } from '../private-size.ts';
+import { realSize, RealSizeError } from 'real-size';
+import { measureTree } from '../private-size.ts';
 
 let scratch: string;
 
@@ -29,7 +30,7 @@ afterEach(() => {
 
 const allocated = (file: string) => statSync(file).blocks * 512;
 
-describe.skipIf(process.platform !== 'darwin')('measureTree with the stim-privsize helper', () => {
+describe.skipIf(process.platform !== 'darwin')('measureTree with real-size', () => {
   test('counts a clone and a link from outside as shared, and a copy once however many links it has inside', async () => {
     const source = join(scratch, 'source');
     const tree = join(scratch, 'tree');
@@ -57,10 +58,13 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
   let root: string;
 
   beforeEach(async () => {
-    root =
-      (await privateSizeKnowable(scratch)) === 'yes'
-        ? scratch
-        : realpathSync(mkdtempSync(join(process.cwd(), '.stim-private-size-')));
+    root = scratch;
+    try {
+      await realSize(scratch);
+    } catch (error) {
+      if (!(error instanceof RealSizeError) || error.code !== 'unsupported') throw error;
+      root = realpathSync(mkdtempSync(join(process.cwd(), '.stim-private-size-')));
+    }
   });
 
   afterEach(() => {
@@ -77,7 +81,7 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
     linkSync(join(store, 'package.js'), join(tree, '.pnpm', 'package.js'));
     linkSync(join(tree, 'own'), join(tree, '.pnpm', 'own-link'));
     symlinkSync(store, join(tree, 'outside'));
-    expect(await privateSizeKnowable(tree)).toBe('yes');
+    await realSize(tree);
 
     const size = await measureTree(tree, { timeoutMs: 60_000 });
 
@@ -86,7 +90,7 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
   }, 120_000);
 
   test.skipIf(process.getuid?.() === 0)(
-    'keeps the count of what it could read past a directory it cannot, as a lower bound',
+    'reports partial allocated bytes with private bytes unknown for an unreadable directory',
     async () => {
       const tree = join(root, 'tree');
       mkdirSync(join(tree, 'sealed'), { recursive: true });
@@ -96,8 +100,8 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
       try {
         const size = await measureTree(tree, { timeoutMs: 60_000 });
 
-        const own = allocated(join(tree, 'own'));
-        expect(size).toEqual({ bytes: own, privateBytes: own, partial: true });
+        expect(size).toMatchObject({ privateBytes: null, partial: true, privateUnknown: 'walk' });
+        expect(size?.bytes).toBeGreaterThanOrEqual(allocated(join(tree, 'own')));
       } finally {
         chmodSync(join(tree, 'sealed'), 0o755);
       }

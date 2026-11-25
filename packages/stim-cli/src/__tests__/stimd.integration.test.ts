@@ -33,7 +33,6 @@ import {
   stimBuildId,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import * as clonefile from '../clonefile.ts';
 import {
   claimRemoveCommand,
   markClaimChildPending,
@@ -1633,7 +1632,6 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     const tree = join(realpathSync(linked), 'node_modules');
     mkdirSync(tree);
     normalMeasurement();
-    const helper = vi.spyOn(clonefile, 'privateSizeHelper').mockResolvedValue(null);
     const maintenance = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
     const build = vi
       .spyOn(spawnEntry, 'stimBuild')
@@ -1657,7 +1655,6 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     });
     onTestFinished(() => {
       resetExecutor();
-      helper.mockRestore();
       maintenance.mockRestore();
       build.mockRestore();
     });

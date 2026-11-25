@@ -495,6 +495,9 @@ importers:
       cross-spawn:
         specifier: ^7.0.6
         version: 7.0.6
+      real-size:
+        specifier: 0.1.0
+        version: 0.1.0
       unique-pid:
         specifier: 0.1.1
         version: 0.1.1
@@ -10539,6 +10542,12 @@ packages:
   readdirp@3.6.0:
     resolution: {integrity: sha512-hOS089on8RduqdbhvQ5Z37A0ESjsqz6qnRcffsMU3495FuTdqSm+7bhJ29JvIOsBDEEnan5DPu9t3To9VRlMzA==}
     engines: {node: '>=8.10.0'}
+
+  real-size@0.1.0:
+    resolution: {integrity: sha512-tR4UpngVq3GpgXkpJQG81DSYw5nQ1QYYoT9gf8TR7Xq3DC9V1/Ahai/H/PyBNxZTKmGQ3HCx3/K3ZL4HSS6a3w==}
+    engines: {node: ^20.19.4 || >=22.12.0}
+    os: [darwin, linux, win32]
+    hasBin: true
 
   recma-build-jsx@1.0.0:
     resolution: {integrity: sha512-8GtdyqaBcDfva+GUKDr3nev3VpKAhup1+RvkMvUxURHpW7QyIvk9F5wz7Vzo06CEMSilw6uArgRqhpiUcWp8ew==}
@@ -24402,6 +24411,8 @@ snapshots:
   readdirp@3.6.0:
     dependencies:
       picomatch: 2.3.2
+
+  real-size@0.1.0: {}
 
   recma-build-jsx@1.0.0:
     dependencies:

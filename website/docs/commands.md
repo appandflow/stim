@@ -2019,8 +2019,8 @@ its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
 derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
 full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` on
-macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and
-tmpfs (the volumes where a hard link is the only sharing), and on Windows. Both `node_modules` figures are `null`
+macOS off APFS, on Linux off ext2/3/4, tmpfs, btrfs and XFS, on Windows, or
+when the bundled real-size binary is missing for the platform. Both `node_modules` figures are `null`
 again after a reinstall or a fresh clone until the tree is measured, and they
 are the measurement `stim gc` and the daemon's cleanup use. The watcher
 measures off its refresh path, one folder at a time, least recently measured
@@ -2604,7 +2604,7 @@ old, is walked again, within a two-minute budget for the whole command; what the
 budget leaves unwalked keeps its older measure, with its date in `measuredAt`, or prints `not measured` when it has none. JSON includes measurement and check dates.
 Real size is the private bytes of the whole worktree; apparent size is its
 allocated bytes. Shared clone and hard-link bytes are excluded from real size
-when the volume can count them (APFS on macOS, link counts on Linux); otherwise,
+when the volume can count them (APFS on macOS; ext2/3/4, tmpfs, btrfs and XFS on Linux); otherwise,
 or when the walk could not read every file, real size is unknown. Neither size includes Stim workspace data outside the checkout.
 
 ## `gc`
@@ -3291,7 +3291,7 @@ laid out as DerivedData under a name other than `.dd`, such as a rn-tester
 Each entry's
 `privateBytes` is what deleting `node_modules`, `ios/Pods`, `.dd`, `android/.cxx` or that output would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
-other directories, on macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and tmpfs, and on Windows. gc reuses a
+other directories, on macOS off APFS, on Linux off ext2/3/4, tmpfs, btrfs and XFS, on Windows, or when the bundled real-size binary is missing for the platform. gc reuses a
 size for up to an hour while no entry was added to or removed from the
 directory (for `node_modules` and Pods, for up to six hours while their install
 is unchanged, the measurement `stim status` and the daemon share),

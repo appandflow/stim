@@ -189,7 +189,7 @@ leased until <time>" for each one.`,
     Repository checkedAt/oldestCheckedAt are the newest/oldest observation times
     (--all), or now (current check); null when never checked. --all uses saved
     observations; unchecked worktrees have willRemove null.
-    Real size is whole-worktree private bytes (APFS or Linux link counts),
+    Real size is whole-worktree private bytes (APFS, ext4, btrfs or XFS),
     unknown when unavailable; apparent size is allocated bytes. Neither includes
     Stim workspace data outside the checkout.
 
@@ -1034,12 +1034,12 @@ RULES
                               clones in full.
                               privateBytes is what deleting node_modules,
                               ios/Pods, .dd, android/.cxx or xcodebuild
-                              output would free on APFS, ext4 or
-                              tmpfs: blocks no
-                              copy-on-write clone or hard link outside it
-                              shares; null for other directories and
-                              volumes. A bytes is null when it could not be
-                              measured within 10 seconds; sizes are cached
+                              output would free on APFS, ext4, tmpfs,
+                              btrfs or XFS: blocks no clone or hard link
+                              outside it shares; null for
+                              other directories and volumes. A bytes is
+                              null when it could not be measured within 10
+                              seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
                               node_modules and Pods, for up to six hours
@@ -1908,10 +1908,10 @@ RULES
                       null until measured, and again after a reinstall or
                       a fresh clone until the next measurement
     nodeModulesPrivateBytes
-                      what deleting that node_modules would free on APFS:
+                      what deleting that node_modules would free:
                       blocks no copy-on-write clone (worktree warm clones
-                      it) or hard link outside it shares; null off APFS,
-                      ext4 and tmpfs, without the Command Line Tools, or like
+                      it) or hard link outside it shares; null off APFS
+                      and Linux ext2/3/4, tmpfs, btrfs and XFS, or like
                       nodeModulesBytes until measured. gc's node_modules
                       privateBytes and the daemon's cleanup read the same
                       measurement

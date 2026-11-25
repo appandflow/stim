@@ -1,3 +1,4 @@
+import { realSize, RealSizeError } from 'real-size';
 import {
   currentSourceDependencies,
   diskUsageCacheFile,
@@ -29,7 +30,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { writeCacheFile } from '../cache-file.ts';
-import { privateSizeKnowable, treeSignature } from '../private-size.ts';
+import { treeSignature } from '../private-size.ts';
 import { hardLinkSample, type LinkSampleIo } from '../link-sample.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -712,7 +713,13 @@ test.skipIf(process.platform === 'win32')(
     ageCheckout(source, daysAgo(8));
     rmSync(diskUsageCacheFile(modules), { force: true });
     ageTree(source, daysAgo(8));
-    if ((await privateSizeKnowable(modules)) !== 'yes') skip('the test volume cannot report shared blocks');
+    try {
+      await realSize(modules);
+    } catch (error) {
+      if (error instanceof RealSizeError && error.code === 'unsupported')
+        skip('the test volume cannot report shared blocks');
+      else throw error;
+    }
 
     const { payload } = await gcJson('normal');
 

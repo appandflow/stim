@@ -19,24 +19,12 @@ export function clonefileHelper(operation: StimContext): Promise<string | null> 
   return compiledCHelper('stim-clonefile', operation);
 }
 
-/**
- * The `stim-privsize` helper, compiled on first use, or null off macOS, without the Command Line Tools, or when the
- * compile fails or does not finish within `timeoutMs`.
- */
-export function privateSizeHelper(operation?: StimContext, timeoutMs?: number): Promise<string | null> {
-  return compiledCHelper('stim-privsize', operation, timeoutMs);
-}
-
-async function compiledCHelper(
-  name: string,
-  operation: StimContext | undefined,
-  timeoutMs: number = PROBE_TIMEOUT_MS + COMPILE_TIMEOUT_MS,
-): Promise<string | null> {
+async function compiledCHelper(name: string, operation: StimContext | undefined): Promise<string | null> {
   if (process.platform !== 'darwin') return null;
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + PROBE_TIMEOUT_MS + COMPILE_TIMEOUT_MS;
   const exec = getExecutor();
   const developer = await runOperationFileQuiet(operation, exec, 'xcode-select', ['-p'], {
-    timeoutMs: Math.min(PROBE_TIMEOUT_MS, timeoutMs),
+    timeoutMs: PROBE_TIMEOUT_MS,
     cwd: operation?.cwd,
   });
   if (!developer) return null;
