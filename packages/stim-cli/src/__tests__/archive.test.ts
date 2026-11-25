@@ -365,6 +365,51 @@ test.each([
   },
 );
 
+test('with agent-action archiving off, a linked sessions folder is neither read nor archived and the logs still are', async () => {
+  process.env.STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS = '0';
+  const dir = live();
+  const outside = join(home, 'outside');
+  mkdirSync(join(outside, 'theirs'), { recursive: true });
+  writeFileSync(join(outside, 'theirs', 'keep'), 'not Stim');
+  mkdirSync(join(dir, 'agent-device.noindex'));
+  symlinkSync(
+    outside,
+    join(dir, 'agent-device.noindex', 'sessions'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  await reclaimProject(root, { archive: { removedBy: 'gc' } });
+
+  const [archive] = readArchives();
+  expect(archive).toBeDefined();
+  const archived = archiveDir(archive?.id ?? '');
+  expect(readFileSync(join(archived, 'logs', 'metro.ndjson'), 'utf8')).toBe('saved logs');
+  expect(existsSync(join(archived, 'agent-device'))).toBe(false);
+  expect(readFileSync(join(outside, 'theirs', 'keep'), 'utf8')).toBe('not Stim');
+});
+
+test.each(['agent-device.noindex', 'agent-device'])(
+  'an agent-device state folder %s that is a link fails the archive and leaves its target alone',
+  async (linked) => {
+    const dir = live();
+    const outside = join(home, 'outside');
+    mkdirSync(join(outside, 'sessions', 'theirs'), { recursive: true });
+    writeFileSync(join(outside, 'sessions', 'theirs', 'keep'), 'not Stim');
+    symlinkSync(outside, join(dir, linked), process.platform === 'win32' ? 'junction' : 'dir');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await reclaimProject(root, { archive: { removedBy: 'gc' } });
+
+    expect(readArchives()).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
+    expect(readFileSync(join(outside, 'sessions', 'theirs', 'keep'), 'utf8')).toBe('not Stim');
+    expect(err.mock.calls.map(([line]) => line)).toEqual([
+      expect.stringMatching(/^could not archive: refusing symlink /),
+    ]);
+  },
+);
+
 test('symlink workspace storage is not moved into an archive', async () => {
   const dir = workspaceDir(root);
   mkdirSync(join(dir, '..'), { recursive: true });

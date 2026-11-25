@@ -83,9 +83,11 @@ state reads both names: device activity, the agent-action reader and its
 follower, agent-device usage, the idle stop's session times, owned-session
 close, the daemon stop and archive of workspace removal (which merges both
 `sessions` folders into the archive's `agent-device/sessions`, numbering a
-session name found in both instead of overwriting it), and gc's leftover
-check. `stim agent-device` reads only the directory it hands agent-device for
-that run.
+session name found in both instead of overwriting it; a link at either state
+folder or either `sessions` folder refuses the archive before anything moves
+through it, and nothing is read while `archive.agentActions.maxAgeDays` is 0),
+and gc's leftover check. `stim agent-device` reads only the directory it hands
+agent-device for that run.
 
 ## Rolling back past this layout
 

@@ -57,11 +57,13 @@ const KIND_PATH: Record<Kind, string> = {
   agentActions: 'agent-device/sessions',
 };
 
-/** Whether `path` exists; a symbolic link there refuses the archive, so nothing is moved through it. */
-async function presentNotLinked(path: string): Promise<boolean> {
-  const entry = await lstat(path).catch(() => null);
-  if (entry?.isSymbolicLink()) throw new Error(`refusing symlink ${path}`);
-  return entry !== null;
+async function lstatOrNull(path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 function archiveSettings(env: NodeJS.ProcessEnv = process.env) {
@@ -400,31 +402,32 @@ async function writeArchive(
           const data = readJsonObject(join(dir, name));
           if (data) await writeFile(join(staging!, name), `${JSON.stringify(stripPids(data))}\n`, { mode: 0o600 });
         }
-        const sessionSources = async () => {
-          const sources: string[] = [];
-          for (const stateDir of agentDeviceStateDirsIn(dir)) {
-            const sessions = join(stateDir, 'sessions');
-            if ((await presentNotLinked(stateDir)) && (await presentNotLinked(sessions))) sources.push(sessions);
-          }
-          return sources;
-        };
         const move = async (kind: Kind) => {
-          const sources =
-            kind === 'agentActions'
-              ? await sessionSources()
-              : [join(dir, KIND_PATH[kind])].filter((from) => existsSync(from));
-          const [first, ...rest] = sources;
-          if (!limits[`${kind}.maxAgeDays`] || first === undefined) return;
+          if (!limits[`${kind}.maxAgeDays`]) return;
+          const stateDirs = kind === 'agentActions' ? agentDeviceStateDirsIn(dir) : [];
+          for (const stateDir of stateDirs)
+            if ((await lstatOrNull(stateDir))?.isSymbolicLink()) throw new Error(`refusing symlink ${stateDir}`);
+          const sources = stateDirs.length
+            ? stateDirs.map((stateDir) => join(stateDir, 'sessions'))
+            : [join(dir, KIND_PATH[kind])];
           const to = join(staging!, KIND_PATH[kind]);
-          await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
-          await moveHistory(first, to);
-          for (const from of rest)
-            for (const name of await readdir(from)) {
+          for (const [index, from] of sources.entries()) {
+            if (!(await lstatOrNull(from))) continue;
+            await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
+            const part = `${to}.part-${index}`;
+            await moveHistory(from, part);
+            await secureTree(part);
+            if (!existsSync(to)) {
+              await rename(part, to);
+              continue;
+            }
+            for (const name of await readdir(part)) {
               let target = name;
               for (let n = 2; existsSync(join(to, target)); n++) target = `${name}-${n}`;
-              await moveHistory(join(from, name), join(to, target));
+              await rename(join(part, name), join(to, target));
             }
-          await secureTree(to);
+            await rmdir(part);
+          }
         };
         await move('logs');
         await move('agentActions');
