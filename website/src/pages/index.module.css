@@ -464,6 +464,10 @@
   font-size: 13px;
 }
 
+:global([data-theme='dark']) .screenshotPair figcaption {
+  color: var(--stim-ink);
+}
+
 .forAgents {
   display: grid;
   grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);

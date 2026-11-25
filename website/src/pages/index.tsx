@@ -19,7 +19,8 @@ OK: com.acme.shop on stim-shop (iPhone 17 26.5) (4F2A..), Metro port 8083 (from 
   app         com.acme.shop
   metro       running on port 8083
   cache       from cache
-  logs        ~/.stim/workspaces/shop--3f9c2a1b7d3b4e58/logs
+  compilation cache not run; artifact cache supplied the app
+  logs        /Users/you/.stim/workspaces/shop--3f9c2a1b7d3b4e58/logs
   agent-device stim agent-device open com.acme.shop --platform ios --udid 4F2A91C6-7D3B-4E58-9A1F-2C6B8E0D5A73`;
 
 type Pillar = {
