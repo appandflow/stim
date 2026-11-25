@@ -43,6 +43,7 @@
     case settings = "Settings"
     case connectionsIncoming = "Connections: using this machine"
     case connectionsOutgoing = "Connections: this machine uses"
+    case connectionsMachine = "Connections: machine details"
     case addMachine = "Add remote machine"
     case approveMachine = "Approve a machine here"
     case pairPhone = "Pair a phone"
@@ -72,7 +73,7 @@
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .connectionsIncoming: return [.ready, .empty, .error]
-      case .connectionsOutgoing: return [.ready]
+      case .connectionsOutgoing, .connectionsMachine: return [.ready]
       case .tokens, .addMachine, .approveMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
         return [.ready]
       }
@@ -313,6 +314,8 @@
         ConnectionsPlayground(segment: .incoming, now: fixtureDate, scenario: scenario)
       case .connectionsOutgoing:
         ConnectionsPlayground(segment: .outgoing, now: fixtureDate)
+      case .connectionsMachine:
+        ConnectionsPlayground(segment: .outgoing, now: fixtureDate, details: true)
       case .discovery:
         DiscoveryPlayground()
       case .addMachine:

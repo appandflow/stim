@@ -9,6 +9,7 @@
     var now: Date
     var scenario: PlaygroundScenario = .ready
     var height: CGFloat = 640
+    var details = false
     @State private var allows = true
     @State private var awake = false
 
@@ -92,6 +93,25 @@
     }
 
     var body: some View {
+      if details { machineDetails } else { segments }
+    }
+
+    private var machineDetails: some View {
+      let refused = PairedServers.Entry(
+        id: Self.mini.id, kind: .pairing(Self.mini),
+        connection: .refused(ServerError(code: "desktop-api-older", message: "")))
+      let status = statuses.first { $0.machine == "mini" }
+      return MachineDetailPage(
+        entry: "mini", detail: MachineDetail(MachineDetail.Input(entry: "mini", status: status)), status: status,
+        pairing: refused, capabilities: ["iOS"], working: false, canAsk: true, hosted: [], builds: [],
+        buildsNote: "No recorded build ran on this machine yet.", back: {}, ask: {}, startUpdate: {},
+        stopHosted: { _ in }, remove: {}, showsToggles: false, toggles: EmptyView()
+      )
+      .frame(width: 780, height: height)
+      .background(Palette.background)
+    }
+
+    private var segments: some View {
       VStack(spacing: 0) {
         Picker("Direction", selection: .constant(segment)) {
           Text("Using this machine").tag(ConnectionsSegment.incoming)
