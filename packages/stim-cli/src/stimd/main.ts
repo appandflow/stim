@@ -1797,6 +1797,7 @@ async function runStimdInner(
               const restart =
                 serviceMove ||
                 (kind === 'desktop' &&
+                  netBusy === 0 &&
                   !serviceNet &&
                   !pinned() &&
                   running !== null &&

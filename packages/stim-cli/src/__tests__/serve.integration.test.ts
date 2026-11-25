@@ -3,10 +3,21 @@ import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { connect, createServer } from 'node:net';
 import { createHmac } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { workspaceStateDir } from '@stim-cli/core';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { DESKTOP_API, PHONE_API } from '@stim-cli/core/protocol';
 import { daemonNdjsonFile, desktopKeyFile, isJsonObject, stimBuildDigest, stimdRecordFile } from '@stim-cli/core/state';
 import { noiseConnect, stimdConnect, terminateClients } from '../../../server/__tests__/noise-client.ts';
@@ -229,6 +240,68 @@ test('a Desktop net.ensure with other listener options restarts the net thread w
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
   } finally {
+    if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test('a Desktop net.ensure keeps the running listener while a workspace action is busy', async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-net-busy-')));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const workspace = join(home, 'app');
+  mkdirSync(workspace);
+  writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+  const state = join(workspaceStateDir(workspace), 'state.json');
+  mkdirSync(workspaceStateDir(workspace), { recursive: true });
+  writeFileSync(state, JSON.stringify({ launches: {} }));
+  let lock: ReturnType<typeof tryAcquireClaim>['acquired'];
+  const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
+    env,
+    stdio: 'ignore',
+  });
+  const stimdExited = once(stimd, 'exit');
+  try {
+    await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 15_000 });
+    const { socket } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const loopback = await desktopEnsure(socket, { port: 0, loopbackOnly: true });
+    expect(loopback).toMatchObject({ listening: true });
+    await vi.waitFor(
+      async () => {
+        expect((await fetch(`http://127.0.0.1:${loopback.port}/health`)).status).toBe(200);
+      },
+      { timeout: 15_000 },
+    );
+    const desktop = await stimdConnect(socket);
+    const challenged = await desktop.request('hello', {
+      client: { name: 'Stim Desktop', version: '1.0.0', desktopApi: DESKTOP_API },
+      desktopBootstrap: true,
+    });
+    const key = readFileSync(desktopKeyFile(), 'utf8').trim();
+    expect(await desktop.request('desktop.authenticate', { proof: proofFor(key, nonceOf(challenged)) })).toMatchObject({
+      result: { authorized: true },
+    });
+    lock = tryAcquireClaim({ root: join(home, 'config.lock.claims'), mode: 'exclusive' }).acquired;
+    assert.ok(lock);
+    expect(await desktop.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+    expect(await desktop.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'action-busy',
+    );
+    const wider = await desktopEnsure(socket, { port: 0, loopbackOnly: false });
+    expect(wider).toEqual(loopback);
+    expect((await fetch(`http://127.0.0.1:${loopback.port}/health`)).status).toBeLessThan(600);
+    expect(readFileSync(daemonNdjsonFile(), 'utf8')).not.toContain('net_restart');
+    if (lock) releaseClaim(lock);
+    terminateClients();
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+  } finally {
+    if (lock) releaseClaim(lock);
+    terminateClients();
     if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
     if (previousHome === undefined) delete process.env.STIM_HOME;
     else process.env.STIM_HOME = previousHome;
