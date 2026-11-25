@@ -39,7 +39,7 @@ const text = (fields: Record<string, unknown>): string =>
 
 /**
  * Request timing for stim-server. An error reply always goes to the service log (stderr), once a minute per
- * client, method, code and refusal reason. With debug logging on, every request goes to the service log and to
+ * client, method, code and refusal reason. With debug logging on, every request and host event goes only to
  * `logs/debug/server.ndjson` with its duration and the slow steps. Service lines start with the time and carry the
  * method, the client's device id, the CLI run id, durations and the error code, plus the refusal message of a
  * `build-busy` or `build-refused` reply: never params, other messages, tokens or tickets.
@@ -101,10 +101,10 @@ export function createRequestLog({
               : undefined;
           const line = reason === undefined ? text(fields) : `${text(fields)} reason=${JSON.stringify(reason)}`;
           if (debug.enabled()) {
-            write(`stim-server: debug request ${line}`);
             const { run, ...rest } = fields;
             debug.log('request', { ...rest, runId: run, ...(reason === undefined ? {} : { reason }) });
-          } else if (
+          }
+          if (
             code !== undefined &&
             errorDue(`${client.id}|${method}|${code}|${reason?.replace(/[\d.]+/g, '#') ?? ''}`)
           ) {
@@ -115,9 +115,9 @@ export function createRequestLog({
     },
     host(event, fields, failed = false) {
       if (debug.enabled()) {
-        write(`stim-server: debug ${event} ${text(fields)}`);
         debug.log(event, fields);
-      } else if (failed && errorDue(`host|${event}|${String(fields.host)}`)) {
+      }
+      if (failed && errorDue(`host|${event}|${String(fields.host)}`)) {
         write(`stim-server: ${event} ${text(fields)}`);
       }
     },

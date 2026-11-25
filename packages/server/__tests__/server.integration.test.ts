@@ -3392,18 +3392,20 @@ describe('request log', () => {
   });
 
   it('with debug on, times every request and splits the hello into its slow steps', async () => {
-    const lines: string[] = [];
+    const debugRecords: Record<string, unknown>[] = [];
     const port = await start({
       host: { executable: join(root, 'missing'), name: 'Stim Host Dev' },
       requestLog: createRequestLog({
-        service: (line) => lines.push(line),
-        debug: { enabled: () => true, log: () => {} },
+        service: () => {},
+        debug: { enabled: () => true, log: (event, fields) => debugRecords.push({ event, ...fields }) },
       }),
     });
     const { keyPair } = await pair(port, '100.64.0.2');
-    lines.length = 0;
+    debugRecords.length = 0;
     await returning(port, keyPair, '100.64.0.2');
-    expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*probe=\d+/);
+    expect(debugRecords.find((record) => record.event === 'request' && record.method === 'hello')).toMatchObject({
+      probe: expect.any(Number),
+    });
   });
 });
 
