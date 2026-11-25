@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import type { RealSizeResult } from 'real-size';
 import {
   ENDED_AGENT_RETENTION_MS,
   diskUsageCacheFile,
@@ -27,7 +28,7 @@ const BRANCH = 'feat/1688-physical-device-tiles';
 let home: string;
 let app: string;
 let avd: string;
-let calls: { file: string; args: string[] }[];
+let calls: { file: string; args: string[]; targets?: string[] }[];
 let head: string;
 let clock: number;
 let gate: Promise<void> | null;
@@ -72,18 +73,32 @@ beforeEach(() => {
     ...real,
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
     runFileAsync: async (file, args = [], opts) => {
-      calls.push({ file, args });
+      const call: (typeof calls)[number] = { file, args };
+      calls.push(call);
       if (file === 'nice' && args[2] === 'find') throw new Error('find: unknown predicate');
       if (file === 'nice') {
+        const realSize = args.includes('--json');
+        const targets: string[] = args.slice(realSize ? args.indexOf('--') + 1 : 4);
+        call.targets = targets;
         opts?.onSpawn?.({ pid: duPid } as ChildProcess);
         await gate;
-        clock += walkMs(args.slice(4));
-        if (duFails || args.slice(4).some((path: string) => failing.includes(path)))
-          throw new Error('Command timed out after 120000ms: du');
-        return args
-          .slice(4)
-          .map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`)
-          .join('');
+        clock += walkMs(targets);
+        if (duFails || targets.some((path) => failing.includes(path)))
+          throw Object.assign(new Error(`Command timed out after 120000ms: ${args[2]}`), {
+            status: null,
+            signal: 'SIGKILL',
+            code: 'ETIMEDOUT',
+            stdout: '',
+            stderr: '',
+          });
+        if (realSize) {
+          const [path = ''] = targets;
+          const allocated = (kilobytes[path] ?? 1) * 1024;
+          const total = { allocated, private: allocated, files: 1, exact: true, skipped: 0 };
+          const result: RealSizeResult = { paths: [{ path, ...total }], total };
+          return JSON.stringify(result);
+        }
+        return targets.map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`).join('');
       }
       if (file === 'git') return `${head}\n`;
       if (file === 'gh') return GRAPHQL;
@@ -104,7 +119,7 @@ afterEach(() => {
 });
 
 function duWalks(): string[][] {
-  return calls.filter((call) => call.file === 'nice' && call.args[2] !== 'find').map((call) => call.args.slice(4));
+  return calls.flatMap((call) => (call.targets ? [call.targets] : []));
 }
 
 function environment(): EnvironmentState {
@@ -140,7 +155,7 @@ test('measures stale folders and pull requests in the background, then status re
   expect(read.disk).toEqual({
     worktreeBytes: 1000 * 1024,
     nodeModulesBytes: 400 * 1024,
-    nodeModulesPrivateBytes: null,
+    nodeModulesPrivateBytes: 400 * 1024,
     buildBytes: 200 * 1024,
     measuredAt,
   });
