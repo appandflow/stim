@@ -341,6 +341,9 @@ A daemon.json whose process is gone is stale and does not block removal.
 gc of a finished worktree does the same.
 stop closes owned-device sessions in that directory without deleting it.
 See stim guide logs for AGENT_DEVICE_STATE_DIR examples.
+Removing a checkout, by worktree remove, gc or maintenance, asks each build
+worker that built it to drop its area; one that does not answer within 5
+seconds is skipped and never fails the removal (\`guide settings\`).
 
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators

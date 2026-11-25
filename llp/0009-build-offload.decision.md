@@ -270,6 +270,33 @@ whose Gradle home is deleted.
 
 Cancelling a build used to stop another repository’s Gradle daemon when both shared a Gradle home. Repository-local identities and claims let the sibling build continue. The eviction record has a name-only identity because the build can write inside the directory being evicted. [Gradle cancellation](https://github.com/appandflow/stim/pull/4725), [Area eviction](https://github.com/appandflow/stim/pull/5207).
 
+A client records, in each workspace's state (`buildAreas`), every worker an offloaded build of that workspace
+went to, with the area's name there and the checkout's canonical root, before it syncs or fetches. Once that
+checkout's folder is proven gone (`stim worktree remove` of a linked worktree, which `gc` and maintenance also run,
+or the reclaim of a project whose folder is already gone), it asks each recorded worker, in parallel and within 5
+seconds, to drop that area with `build.area.drop`, a method of the `build` capability that names only the area. The
+worker takes the client from the authenticated connection, so a client reaches only its own areas, and refuses a
+name that is not an area. It drops the area, its client's newest included, unless one of eviction's per-area retain
+rules holds (a live build, unfetched output, a running Gradle daemon, a held or unresolved claim, or a device its
+home lists), with the same claim-guarded move aside, answers once the area is out of `repos/`, and deletes it
+after. The planner's age, free-space and newest-area rules do not apply. Removal never waits longer or fails for
+it: a worker that is unreachable, unpaired, refuses or answers late is skipped, as is one older than this method,
+which answers `forbidden` to a build-only connection; that worker's `server.workerAreaMaxAgeDays` still applies.
+
+A worktree per task leaves one area per removed worktree on the worker, each 14 to 28 GB, for the full age limit.
+A worker serving one agent machine held 670 GB of such areas at 94% disk while the least-recently-used floor never
+triggered. The area name hashes the checkout's real path, which cannot be recomputed after the folder is gone, so
+the client records it when it first uses a worker.
+
+Recorded in [#6289](https://github.com/appandflow/stim/issues/6289):
+
+Maintainer decision: "Yes, file it (Recommended)", 2026-11-24, choosing to file an issue "so a worker drops a client checkout's build area as soon as that worktree is removed (instead of waiting out the age limit)".
+
+Maintainer decision: "can u file and implement too", 2026-11-24.
+
+The method name, the record in workspace state, the 5-second deadline, dropping a client's newest area, and
+answering before the deletion finishes were chosen by the implementer of #6289, not by the maintainer.
+
 ## Service and engine updates
 
 `stim service` installs,
@@ -326,3 +353,4 @@ remains: admission racing an already committed takeback can still be cancelled.
 - [Worker approval](../packages/server/src/setup.ts), [job launch](../packages/server/src/offload-jobs.ts), and [engine update authorization](../packages/server/src/handlers/engine.ts).
 - [Build placement](../packages/stim-cli/src/offload/client.ts), [signing input selection](../packages/stim-cli/src/offload/signing-files.ts), and [compatibility version](../packages/stim-cli/src/engine/toolchain.ts).
 - [Offload job host](../packages/stim-cli/src/job/offload/host.ts) and [worker service](../packages/server/src/service.ts).
+- [Area drops a removal requests](../packages/stim-cli/src/offload/build-areas.ts) and [the worker root that serves them](../packages/server/src/build.ts).
