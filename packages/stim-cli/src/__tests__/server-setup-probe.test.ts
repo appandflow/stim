@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderPlist } from '@stim-cli/server/service-plist';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
+import { serverNetworkFindings } from '../diagnostics/server-network.ts';
 import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
 import { serverSetupFindings } from '../diagnostics/server-setup.ts';
 import { getExecutor, resetExecutor, setExecutor, type ExecOptions } from '../exec.ts';
@@ -33,7 +34,11 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
   const readUnit = async (
     withHost: boolean,
     loaded: (node: string, script: string, args: string[]) => string[],
-    { binary = false, unmanaged = false } = {},
+    {
+      binary = false,
+      unmanaged = false,
+      share,
+    }: { binary?: boolean; unmanaged?: boolean; share?: Parameters<typeof readServerSetup>[1] } = {},
   ) => {
     home = mkdtempSync(join(tmpdir(), 'stim-probe-'));
     vi.stubEnv('HOME', home);
@@ -81,9 +86,11 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
         return null;
       },
     });
-    const setup = await readServerSetup('2.0.0');
+    const setup = await readServerSetup('2.0.0', share);
     labels = [...(setup?.services ?? []), ...(setup?.staleServices ?? [])].map((service) => service.label);
-    return setup ? [...serverSetupFindings(setup), ...serverPermissionFindings(setup)] : [];
+    return setup
+      ? [...serverSetupFindings(setup), ...serverNetworkFindings(setup), ...serverPermissionFindings(setup)]
+      : [];
   };
 
   it('finds the default unit by its StimService marker and reports the definition launchd still runs', async () => {
@@ -95,7 +102,9 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
 
   it('reports only the stale shim unit when an external Android SDK denies access without a server or socket', async () => {
     vi.stubEnv('ANDROID_HOME', '/Volumes/ExternalSSD/Android/sdk');
-    const findings = await readUnit(false, (_node, _script, shimArgs) => [...shimArgs, '--old-option']);
+    const findings = await readUnit(false, (_node, _script, shimArgs) => [...shimArgs, '--old-option'], {
+      share: { exposure: 'proxy', publicUrl: null },
+    });
     expect(findings.map((finding) => finding.code)).toEqual(['server-service-stale']);
   });
 

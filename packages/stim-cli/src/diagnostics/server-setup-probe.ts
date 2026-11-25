@@ -400,7 +400,7 @@ export async function readServerSetup(
           host: '',
           tailscaleStatus: null,
           serve: null,
-          share,
+          share: { exposure: 'auto', publicUrl: null },
           shares: null,
           notsentLowat: null,
         } satisfies NetworkReading),
