@@ -25,6 +25,11 @@ const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
 const NOT_PROFILES = new Set(['.exact-swept']);
 /** What Exact writes in a `target/` it owns: its sweep ledger and lock, and the folders that hold an app's records. */
 const EXACT_OWNED = [EXACT_LEDGER, `${EXACT_LEDGER}.lock`, 'web-receipts', 'native-receipts', 'receipts', 'traces'];
+
+export function exactOwnedEntry(target: string): string | undefined {
+  return EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
+}
+
 /** What an earlier engine's staged trim left, which may hold records it moved aside; nothing removes it automatically. */
 const staging = (name: string): boolean => name === '.stim-trimmed' || name.startsWith('.stim-not-restored-');
 const CANNOT_READ = 'the files processes hold open cannot be read';
@@ -739,7 +744,7 @@ export async function deleteCargoTarget(
       );
     return exactDelete(app, target, result, signal);
   }
-  const exactOwned = EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
+  const exactOwned = exactOwnedEntry(target);
   if (exactOwned)
     return keep(`it holds Exact's ${exactOwned} but no Exact app beside it, so it may be shared by Exact apps`);
   const sizes = new Map<string, DirectorySize>();
