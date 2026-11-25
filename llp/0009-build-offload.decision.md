@@ -271,21 +271,27 @@ whose Gradle home is deleted.
 Cancelling a build used to stop another repository’s Gradle daemon when both shared a Gradle home. Repository-local identities and claims let the sibling build continue. The eviction record has a name-only identity because the build can write inside the directory being evicted. [Gradle cancellation](https://github.com/appandflow/stim/pull/4725), [Area eviction](https://github.com/appandflow/stim/pull/5207).
 
 A client records, in each workspace's state (`buildAreas`), every worker an offloaded build of that workspace
-went to, with the area's name there and the checkout's canonical root, before it syncs or fetches. Once that
-checkout's folder is proven gone (`stim worktree remove` of a linked worktree, which `gc` and maintenance also run,
-or the reclaim of a project whose folder is already gone), it asks each recorded worker, in parallel and within 5
-seconds, to drop that area with `build.area.drop`, a method of the `build` capability that names only the area. The
-worker takes the client from the authenticated connection, so a client reaches only its own areas, and refuses a
-name that is not an area. It drops the area, its client's newest included, unless one of eviction's per-area retain
-rules holds (a live build, unfetched output, a running Gradle daemon, a held or unresolved claim, or a device its
-home lists, or a process list it cannot read), with the same claim-guarded move aside, answers once the area is
-out of `repos/`, and deletes it after. The planner's age, free-space and newest-area rules do not apply. It prunes
-the client's unreferenced blobs only while another area of that client remains, so the next checkout of a
+went to, with the area's name there, the checkout's canonical root and the device id of the volume that holds it,
+before it syncs or fetches. Once that checkout is proven gone (`stim worktree remove` of a linked worktree, which `gc`
+and maintenance also run, or the reclaim of a project whose folder is already gone), it asks each recorded worker, in
+parallel and within 5 seconds, to drop that area with `build.area.drop`, a method of the `build` capability that names
+only the area. Proven gone means the root is absent and its nearest existing ancestor is on the recorded device, so a
+checkout on an unmounted volume, whose mount point then sits on its parent's volume, is never taken for removed; a
+record without the device is not read. The client checks again just before it sends the request, and a connection
+that opens after the deadline is closed unasked, since the area name hashes only the path and a checkout recreated
+there would be the one dropped. The worker takes the client from the authenticated connection, so a client reaches
+only its own areas. It accepts only a name that is exactly one of the client's area entries, never its claim set or
+another spelling of it, and checks again after listing processes, so an area moved or a client removal started
+meanwhile answers as such. It drops the area, its client's newest included, unless one of eviction's per-area retain
+rules holds (a live build, unfetched output, a running Gradle daemon, a held or unresolved claim, a device its home
+lists, or a process list it cannot read), with the same claim-guarded move aside, answers once the area is out of
+`repos/`, and deletes it after. The planner's age, free-space and newest-area rules do not apply. It prunes the
+client's unreferenced blobs only while another area of that client remains, so the next checkout of a
 worktree-per-task client reuses them. Removal never waits longer or fails for it: a worker that is unreachable,
 unpaired, refuses or answers late is skipped, as is one older than this method, which answers `forbidden` to a
-build-only connection; that worker's `server.workerAreaMaxAgeDays` still applies. A worker that could not be
-reached or did not answer in time is not asked again by the same process for 10 minutes, so a `gc` pass or a
-long-running stimd that removes many worktrees waits for it once.
+build-only connection; that worker's `server.workerAreaMaxAgeDays` still applies. A worker that could not be reached
+or did not answer in time is not asked again by the same process for 10 minutes, so a `gc` pass or a long-running
+stimd that removes many worktrees waits for it once.
 
 A worktree per task leaves one area per removed worktree on the worker, each 14 to 28 GB, for the full age limit.
 A worker serving one agent machine held 670 GB of such areas at 94% disk while the least-recently-used floor never
