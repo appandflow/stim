@@ -266,8 +266,7 @@ struct AppPreferencesView: View {
         .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
     else {
       helperState = "not registered"
-      let message =
-        "Install a current Developer ID-signed, notarized Stim Host.app in ~/Applications or /Applications to enable the helper."
+      let message = "Run `stim service install --helper` in Terminal to install Stim Host and register the helper."
       if action == "status" { helperExplanation = message } else { helperError = message }
       return
     }
@@ -280,9 +279,13 @@ struct AppPreferencesView: View {
         let state = value["state"],
         ["registered", "requires approval", "not registered", "unavailable on this OS"].contains(state)
       else {
-        let message = "Install a helper-capable Developer ID-signed, notarized Stim Host and retry. " + result.stderrText
+        let tooOld = result.exited && result.status == 64
+        let message =
+          tooOld
+          ? "Run `stim service install --helper` in Terminal to update Stim Host and register the helper."
+          : "Install a helper-capable Developer ID-signed, notarized Stim Host and retry. " + result.stderrText
         if action == "status" {
-          helperState = "unavailable"
+          helperState = tooOld ? "Stim Host too old" : "unavailable"
           helperExplanation = message
         } else {
           helperError = message

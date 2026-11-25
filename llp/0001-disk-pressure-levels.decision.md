@@ -1243,7 +1243,14 @@ Registration is opt-in through the signed Stim Host executable, using
 SMAppService.daemon and an embedded LaunchDaemon plist with BundleProgram.
 An administrator approves it under Login Items & Extensions. Both Desktop
 preferences and service install/uninstall --helper use that executable; these
-flags affect only the helper. The helper has no listener, Mach service, socket
+flags affect only the helper. Install --helper first installs or updates the
+pinned signed release in ~/Applications as the full service install does, so a
+Mac that never installed the server service, or installed it before a
+helper-capable Host, still registers
+([#6297](https://github.com/appandflow/stim/issues/6297)). It replaces only the
+bundle: a server already running from the old one keeps running until its next
+restart. Uninstall --helper downloads nothing. Desktop does not download Stim
+Host; for a missing or too old one it shows that command. The helper has no listener, Mach service, socket
 or request file. It does not accept targets, paths or thresholds from callers.
 It is independent of daemon.mode and STIM_HOME until unregistered.
 
