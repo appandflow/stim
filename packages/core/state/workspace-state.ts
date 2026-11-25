@@ -79,6 +79,8 @@ export interface ServiceRecord {
   kind: 'commands' | 'process';
   /** Absolute working directory. */
   cwd: string;
+  /** Absolute path of the env file read at each launch; its contents are never recorded. */
+  envFile?: string;
   /** The variables Stim sets for the service's commands: its ports, its id and its derived values. */
   env: Record<string, string>;
   /** The `PATH` of the `stim services start` that recorded it; every later run of its commands uses it. */
@@ -155,6 +157,7 @@ export function readServiceRecords(state: WorkspaceState | null | undefined): Re
     if (value.stoppedBy === 'idle' || value.stoppedBy === 'command') record.stoppedBy = value.stoppedBy;
     if (typeof value.idleStopFailedAt === 'string') record.idleStopFailedAt = value.idleStopFailedAt;
     if (typeof value.teardownFailure === 'string') record.teardownFailure = value.teardownFailure;
+    if (typeof value.envFile === 'string') record.envFile = value.envFile;
     if (typeof value.path === 'string') record.path = value.path;
     records[name] = record;
   }

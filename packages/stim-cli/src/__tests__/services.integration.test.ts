@@ -229,6 +229,63 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     expect(existsSync(join(root, 'data'))).toBe(false);
   });
 
+  test('commands read envFile at each launch while Stim variables stay private and win', async () => {
+    const envFile = join(root, '.service.env');
+    const marker = join(root, 'env-marker');
+    const script = join(scripts, 'env.mjs');
+    writeFileSync(
+      script,
+      `import { writeFileSync } from 'node:fs'; writeFileSync(process.argv[2], JSON.stringify([process.env.SECRET, process.env.DB_PORT]));`,
+    );
+    writeFileSync(envFile, 'SECRET=first\nDB_PORT=1\n');
+    declare({
+      db: {
+        envFile: '.service.env',
+        ports: { pg: 'DB_PORT' },
+        ready: [process.execPath, '-e', ''],
+        start: [process.execPath, script, marker],
+        stop: [process.execPath, script, marker],
+      },
+    });
+    const operation = ctx();
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'started' }]);
+    const port = String(recorded('db').port);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual(['first', port]);
+    expect(serviceRecords(root).db?.envFile).toBe(envFile);
+    expect(recorded('db').env).toEqual({ DB_PORT: port });
+    expect(await servicesEnv(root)).toEqual({ db: { DB_PORT: port } });
+    writeFileSync(envFile, 'SECRET=second\nDB_PORT=1\n');
+    expect(await stopServices(root, undefined, 'command', { operation })).toMatchObject([{ outcome: 'stopped' }]);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual(['second', port]);
+  });
+
+  test('a supervised process gets its envFile variables', async () => {
+    const marker = join(root, 'env-marker');
+    writeFileSync(join(root, '.service.env'), 'SECRET=process\n');
+    declare({
+      worker: {
+        envFile: '.service.env',
+        start: [
+          process.execPath,
+          '-e',
+          `require('fs').writeFileSync(${JSON.stringify(marker)}, process.env.SECRET); setInterval(Object, 1000)`,
+        ],
+      },
+    });
+    expect(await startServices(root, undefined, { operation: ctx() })).toMatchObject([{ outcome: 'started' }]);
+    pids.add(recorded('worker').pid);
+    await expect.poll(() => existsSync(marker) && readFileSync(marker, 'utf8')).toBe('process');
+  }, 30_000);
+
+  test('a missing envFile fails the start and names the file', async () => {
+    declare({
+      broken: { envFile: 'missing.env', start: [process.execPath, '-e', ''], stop: [process.execPath, '-e', ''] },
+    });
+    expect(await startServices(root, undefined, { operation: ctx() })).toMatchObject([
+      { name: 'broken', outcome: 'failed', detail: expect.stringContaining(join(root, 'missing.env')) },
+    ]);
+  });
+
   test('a workspace whose folder is gone runs the orphan teardown from the home folder with the service id', async () => {
     const marker = join(home, 'orphan.txt');
     declare({

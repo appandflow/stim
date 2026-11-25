@@ -540,8 +540,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         until stim stop. Unset runs here. See stim guide macos.
   services              the workspace services, keyed by name: { "start":
                         command, "stop"?, "teardown"?, "orphanTeardown"?,
-                        "ready"?, "ports"?, "idEnv"?, "env"?, "cwd"?,
-                        "dependsOn"? }. Without stop, start is a process Stim
+                        "ready"?, "ports"?, "idEnv"?, "env"?, "envFile"?,
+                        "cwd"?, "dependsOn"? }. Without stop, start is a process Stim
                         supervises. stim services start records each service
                         as resolved and later stops run only that record.
                         See \`guide services\`.
