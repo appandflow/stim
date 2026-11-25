@@ -286,6 +286,12 @@ export function readDiskUsagePartial(path: string): boolean {
   return entry !== null && entry.path === path && entry.partial === true;
 }
 
+/** The clone-group stamp recorded before the walk, or null for an entry without one. */
+export function readDiskUsageCloneGroup(path: string): string | null {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  return entry !== null && entry.path === path && typeof entry.cloneGroup === 'string' ? entry.cloneGroup : null;
+}
+
 /**
  * Why the cached walk of `path` has no private bytes although it tried to count them: its volume cannot report shared
  * blocks, or the counting walk failed. Null for an entry without the field.

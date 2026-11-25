@@ -1041,11 +1041,10 @@ RULES
                               null when it could not be measured within 10
                               seconds; sizes are cached
                               for up to an hour while no entry of the
-                              directory was added or removed (for
-                              node_modules and Pods, for up to six hours
-                              while their install signature is unchanged,
-                              the same measurement status and the daemon
-                              use). null
+                              directory was added or removed (node_modules
+                              and Pods: while the install is unchanged,
+                              after 6h only if another checkout's copy
+                              changed, up to a day). null
                               for a root outside git. The source checkout and roots
                               outside git are left out
     unlistedWorktreeDirectories
@@ -1926,8 +1925,9 @@ RULES
   priority, off its refresh path. A folder is due 5 minutes after its last
   walk ended (an hour when its environment is idle), or 20 walk durations if
   longer; all watchers' walks are 4 durations apart. A node_modules is
-  measured again when its install changes and after 6 hours. A failed or
-  timed-out walk is retried after the same 5 minutes or hour.
+  walked again on reinstall, after 6h if another checkout's copy changed,
+  and daily. A failed or timed-out walk is retried after the same
+  5 minutes or hour.
   Sizes are cached under $STIM_HOME/disk-usage, which one-shot status only
   reads, so the fields appear once a watcher has measured.
 
