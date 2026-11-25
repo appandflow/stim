@@ -155,7 +155,7 @@ test('measures stale folders and pull requests in the background, then status re
   expect(read.disk).toEqual({
     worktreeBytes: 1000 * 1024,
     nodeModulesBytes: 400 * 1024,
-    nodeModulesPrivateBytes: 400 * 1024,
+    nodeModulesPrivateBytes: process.platform === 'win32' ? null : 400 * 1024,
     buildBytes: 200 * 1024,
     measuredAt,
   });
