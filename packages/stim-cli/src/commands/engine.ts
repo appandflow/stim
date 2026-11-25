@@ -169,7 +169,11 @@ const uninstall = defineOp({
     try {
       rmdirSync(root);
     } catch {}
-    console.log(kept.length ? `Removed the engine pointer; ${root} keeps ${kept.join(', ')}.` : `Removed ${root}.`);
+    console.log(
+      kept.length
+        ? `Removed the engine pointer; ${root} keeps ${kept.join(', ')}, which a running stim still uses; delete it once that stops.`
+        : `Removed ${root}.`,
+    );
   },
 });
 
