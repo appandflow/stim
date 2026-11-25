@@ -7,6 +7,7 @@ import { refusal } from './refusal.ts';
 import { removeWorktree } from './remove-worktree.ts';
 import { runtimeError } from './runtime-error.ts';
 import { verifyAndStop } from './verify-and-stop.ts';
+import { WEBSITE_CASES } from './website-prompts.ts';
 
 export const CASES: EvalCase[] = [
   firstLaunch,
@@ -17,4 +18,5 @@ export const CASES: EvalCase[] = [
   ownDevice,
   verifyAndStop,
   removeWorktree,
+  ...WEBSITE_CASES,
 ];
