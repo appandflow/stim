@@ -420,7 +420,7 @@ describe('buildIos with a mocked executor', () => {
     expect(notes.length).toBe(1);
     expect(spawnCalls[0]?.args).toContain('DEBUG_INFORMATION_FORMAT=dwarf');
     expect(notes[0]).toMatch(
-      /^ {2}cache {7}compilation cache on \(CAS at .*compilation-cache, Swift off, 6\.3 < 6\.4\)$/,
+      /^ {2}cache {7}compilation cache on \(CAS at .*compilation-cache\.noindex, Swift off, 6\.3 < 6\.4\)$/,
     );
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
@@ -433,7 +433,7 @@ describe('buildIos with a mocked executor', () => {
     );
     expect(readManifest().caches).toContainEqual(
       expect.objectContaining({
-        dir: join(stateHome, 'compilation-cache'),
+        dir: join(stateHome, 'compilation-cache.noindex'),
         name: 'Xcode compilation cache',
         prune: 'atomic',
       }),
@@ -478,7 +478,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 0, null);
     await promise;
     expect(notes[0]).toMatch(
-      /compilation cache on \(CAS at .*compilation-cache, Swift off, react-native 0\.86 < 0\.87\)$/,
+      /compilation cache on \(CAS at .*compilation-cache\.noindex, Swift off, react-native 0\.86 < 0\.87\)$/,
     );
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
@@ -516,7 +516,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 0, null);
     await promise;
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatch(/compilation cache on \(CAS at .*compilation-cache, Swift on\)$/);
+    expect(notes[0]).toMatch(/compilation cache on \(CAS at .*compilation-cache\.noindex, Swift on\)$/);
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
     expect(args).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');

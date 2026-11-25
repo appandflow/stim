@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import {
+  agentDeviceStateDirsIn,
   agentDeviceUsageFile,
   readAgentDeviceUsageCache,
   type AgentDeviceUsage,
@@ -180,10 +181,6 @@ function directories(dir: string): string[] {
   }
 }
 
-function workspaceAgentDeviceDir(dir: string): string {
-  return join(dir, 'agent-device');
-}
-
 function readRunnerLock(dir: string): { pid: number; startTime: string } | 'unreadable' | null {
   if (!existsSync(dir)) return null;
   try {
@@ -209,11 +206,9 @@ function readRunnerLock(dir: string): { pid: number; startTime: string } | 'unre
 function discover(env?: NodeJS.ProcessEnv, cwd?: string): UsageTree {
   const runnerRoot = canonical(join(userHome(env), '.agent-device', 'apple-runner'));
   const hostedDir = canonical(join(configDir(), 'server', 'agent-device'));
-  const workspaceDirs = listWorkspaceDirs().map(({ dir, projectRoot }) => ({
-    dir: canonical(workspaceAgentDeviceDir(dir)),
-    projectRoot,
-    bytes: null,
-  }));
+  const workspaceDirs = listWorkspaceDirs().flatMap(({ dir, projectRoot }) =>
+    agentDeviceStateDirsIn(dir).map((stateDir) => ({ dir: canonical(stateDir), projectRoot, bytes: null })),
+  );
   const override = envDir('AGENT_DEVICE_STATE_DIR', env, cwd);
   const candidate = override ? canonical(override) : null;
   const overlaps =

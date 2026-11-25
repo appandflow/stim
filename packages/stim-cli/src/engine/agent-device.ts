@@ -2,6 +2,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { engineShim, ownStoreEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { migrateWorkspaceAgentDeviceDir } from '../workspace/noindex-folders.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
 import { sanitizeDeviceLabel } from '../devices/ios.ts';
 import type { RemoteDaemon } from './eas-simulator.ts';
@@ -152,6 +153,7 @@ export async function readRemoteSimulatorArch(
  * the engine store, so the hook outlives the store entry, else this copy's own entry.
  */
 export function writeAgentDeviceBootHook(root: string, engine: StoreEngine | null = ownStoreEngine()): void {
+  migrateWorkspaceAgentDeviceDir(root);
   const dir = workspaceAgentDeviceDir(root);
   const file = join(dir, 'boot-hook.json');
   const stim = engine ? [engineShim(engine)] : [process.execPath, spawnEntry('cli')];

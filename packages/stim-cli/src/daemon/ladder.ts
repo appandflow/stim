@@ -22,6 +22,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { leftoverNoindexCaches } from '../workspace/noindex-folders.ts';
 import { formatBytes, formatSize, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
 import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
@@ -683,9 +684,12 @@ async function cachesRung(context: RungContext): Promise<void> {
 async function sharedCachesStep(context: RungContext): Promise<void> {
   const critical = context.level === 'critical';
   const recentDays = critical ? 0 : context.settings.protectRecentHours / 24;
+  const leftovers = leftoverNoindexCaches();
   const entries = [
     { cache: rootCache('Build cache', buildCacheRoot(), 2), capGb: context.settings.buildCacheMaxGb },
-    { cache: rootCache('Metro transform caches', metroCacheRoot(), 3), capGb: context.settings.metroCacheMaxGb },
+    ...[metroCacheRoot(), ...leftovers.filter((each) => each.category === 'metro-cache').map((each) => each.dir)].map(
+      (dir) => ({ cache: rootCache('Metro transform caches', dir, 3), capGb: context.settings.metroCacheMaxGb }),
+    ),
   ];
   for (const { cache, capGb } of entries) {
     await actionBoundary(context);
@@ -722,51 +726,56 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
         : `${context.why}; trimmed to half of its ${capGb} GB cap`,
     );
   }
-  const compilation = sharedCompilationCache();
-  await actionBoundary(context);
-  if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
-    const capGb = context.settings.swiftCompilationCacheMaxGb;
-    const bytes = critical
-      ? 0
-      : capGb > 0
-        ? await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS })
-        : 0;
-    if (bytes === null)
-      recordAction(
-        context,
-        {
-          rung: 3,
-          kind: 'empty-cache',
-          target: compilation,
-          outcome: 'kept',
-          bytes: 0,
-          detail: unsizedDetail(compilation),
-        },
-        context.why,
-      );
-    else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
-      const blocked = cacheBlocked(
-        { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
-        await discoverCachesAsync(),
-      );
-      if (blocked)
+  const compilations = [
+    sharedCompilationCache(),
+    ...leftovers.filter((each) => each.category === 'compilation-cache').map((each) => each.dir),
+  ];
+  for (const compilation of compilations) {
+    await actionBoundary(context);
+    if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
+      const capGb = context.settings.swiftCompilationCacheMaxGb;
+      const bytes = critical
+        ? 0
+        : capGb > 0
+          ? await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS })
+          : 0;
+      if (bytes === null)
         recordAction(
           context,
-          { rung: 3, kind: 'empty-cache', target: compilation, outcome: 'kept', bytes: 0, detail: blocked },
+          {
+            rung: 3,
+            kind: 'empty-cache',
+            target: compilation,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unsizedDetail(compilation),
+          },
           context.why,
         );
-      else {
-        await run(context, {
-          kind: 'would-empty-cache',
-          target: compilation,
-          dir: compilation,
-          bytes,
-          reason: 'it can only be emptied whole',
-        });
+      else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
+        const blocked = cacheBlocked(
+          { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
+          await discoverCachesAsync(),
+        );
+        if (blocked)
+          recordAction(
+            context,
+            { rung: 3, kind: 'empty-cache', target: compilation, outcome: 'kept', bytes: 0, detail: blocked },
+            context.why,
+          );
+        else {
+          await run(context, {
+            kind: 'would-empty-cache',
+            target: compilation,
+            dir: compilation,
+            bytes,
+            reason: 'it can only be emptied whole',
+          });
+        }
       }
     }
   }
-  if (critical) await emptyRegisteredCaches(context, [buildCacheRoot(), metroCacheRoot(), compilation]);
+  if (critical) await emptyRegisteredCaches(context, [...entries.map((entry) => entry.cache.dir), ...compilations]);
   for (const [directory, lock] of [
     [fingerprintIndexDir(), fingerprintIndexLock()],
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],

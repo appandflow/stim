@@ -13,7 +13,7 @@ import {
   measuredDirectorySizeAsync,
   type DirectorySize,
 } from '../../fs-util.ts';
-import { isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/state';
+import { agentDeviceStateDirsIn, isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { agentDeviceDaemon } from '../../devices/activity.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
@@ -103,7 +103,7 @@ function inspectWorkspaceResidue(dir: string, held: readonly string[] = []): Wor
       continue;
     }
     if (RESIDUE_LOCKS.includes(lockOf(entry)) || RESIDUE_FILES.includes(entry)) continue;
-    if (entry === 'agent-device') {
+    if (agentDeviceStateDirsIn(dir).includes(join(dir, entry))) {
       const daemon = agentDeviceDaemon(join(dir, entry));
       if (daemon !== 'none' && daemon !== 'dead') return blocked('its agent-device daemon may be running');
       continue;

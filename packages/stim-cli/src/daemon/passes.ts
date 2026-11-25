@@ -26,6 +26,7 @@ import { configuredDaemonMode, daemonMode } from './mode.ts';
 import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
 import { runServiceStopPass } from './service-stops.ts';
 import { watchedStep } from './step-timing.ts';
+import { migrateNoindexFolders } from '../workspace/noindex-folders.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -542,6 +543,16 @@ export function createMaintenanceLane(
       const loopDelay = monitorEventLoopDelay();
       loopDelay.enable();
       current = (async () => {
+        try {
+          for (const rename of migrateNoindexFolders())
+            log(
+              rename.moved ? 'info' : 'debug',
+              'noindex_rename',
+              rename.moved ? `renamed ${rename.from} to ${rename.to}` : `kept ${rename.from}: ${rename.kept}`,
+            );
+        } catch (error) {
+          log('warn', 'noindex_rename', error instanceof Error ? error.message : String(error));
+        }
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await watchedStep(log, 'fingerprint_precompute', () =>
           precompute.run({ config, workspaces, pressure, operation }, act),

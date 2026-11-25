@@ -29,6 +29,7 @@ import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } fro
 import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
+import { migrateWorkspaceAgentDeviceDir } from '../workspace/noindex-folders.ts';
 import { MODE_EXPO, detectDevServer, readMetroTunnel } from '../stimd/metro/state.ts';
 import { repackReachRefusal } from '../stimd/metro/server-repack.ts';
 import {
@@ -1227,6 +1228,7 @@ export async function startDevServer(
     }
   };
   try {
+    migrateWorkspaceAgentDeviceDir(root);
     const facts = await run();
     try {
       writeAgentDeviceBootHook(root);

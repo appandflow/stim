@@ -23,7 +23,7 @@ const OBSERVE_MAX_MS = 6 * 60_000;
 const OBSERVE_POLL_MS = 10_000;
 const BUILD_WAIT_MS = 25 * 60_000;
 const HEARTBEAT_MS = 20_000;
-const SHARED_CACHES = ['build-cache', 'compilation-cache', 'metro-cache', 'fingerprint-memo'];
+const SHARED_CACHES = ['build-cache', 'compilation-cache.noindex', 'metro-cache.noindex', 'fingerprint-memo'];
 const MAX_HARD_FLOOR_PROBES = 3;
 const COLD_BUILD_WAIT_MS = 5 * 60_000;
 
