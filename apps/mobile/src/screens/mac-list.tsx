@@ -101,15 +101,6 @@ export function MacList() {
                   accessibilityLabel={t`Rename ${name} on this phone`}
                   onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
                 />
-                {state.kind === 'open' && state.deviceId ? (
-                  <Button
-                    title={t`Rename This Phone`}
-                    variant="plain"
-                    size="small"
-                    accessibilityLabel={t`Rename this phone on ${name}`}
-                    onPress={() => router.push({ pathname: '/rename', params: { id: item.id, on: 'machine' } })}
-                  />
-                ) : null}
                 <Button
                   title={t`Remove`}
                   variant="destructive"
@@ -119,6 +110,17 @@ export function MacList() {
                 />
               </View>
             </View>
+            {state.kind === 'open' && state.deviceId ? (
+              <View style={styles.buttonsStacked}>
+                <Button
+                  title={t`Rename This Phone`}
+                  variant="plain"
+                  size="small"
+                  accessibilityLabel={t`Rename this phone on ${name}`}
+                  onPress={() => router.push({ pathname: '/rename', params: { id: item.id, on: 'machine' } })}
+                />
+              </View>
+            ) : null}
           </Card>
         );
       }}
