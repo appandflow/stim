@@ -2035,8 +2035,9 @@ SHARED BUILD CACHES
   The folders Stim fills with churn end in .noindex, which keeps macOS
   Spotlight out of them: metro-cache.noindex, compilation-cache.noindex and
   ccache.noindex, and agent-device.noindex in each workspace. A home that
-  still has the old names keeps using them until stimd renames each folder,
-  once no build, dev server or agent-device daemon holds it. An old folder left
+  still has the old names keeps using them until stimd renames each folder
+  (daemon.mode on, not report), once no build, dev server or agent-device
+  daemon holds it. An old folder left
   beside its new name stays, and gc measures and trims it like the cache.
   A path that caches.metroCache, STIM_METRO_CACHE or server.workerRoot
   names never moves; set server.workerRoot to a *.noindex path to keep a

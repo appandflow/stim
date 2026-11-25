@@ -4,6 +4,12 @@ import { join } from 'node:path';
 import { metroCacheRoot } from '@stim-cli/core';
 import { sharedCcache, sharedCompilationCache, workspaceAgentDeviceDir } from '@stim-cli/core/state';
 import * as identity from '../process-identity.ts';
+import * as dependencies from '../daemon/dependencies.ts';
+import * as measure from '../daemon/measure.ts';
+import { createMaintenanceLane } from '../daemon/passes.ts';
+import * as maintenanceRun from '../stimd/passes/run.ts';
+import { loadConfig, saveConfig } from '../workspace/config.ts';
+import { testContext } from './_context.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -173,4 +179,32 @@ test('a Metro cache root a setting or the environment names, and an old folder t
   expect(sharedCcache()).toBe(linked);
   expect(existsSync(join(home, 'metro-cache.noindex'))).toBe(false);
   expect(existsSync(join(home, 'ccache.noindex'))).toBe(false);
+});
+
+test.each([
+  ['report', false],
+  ['on', true],
+] as const)('the maintenance lane in daemon.mode %s renames old folders only when it acts', async (_mode, act) => {
+  const compilation = oldFolder(join(home, 'compilation-cache'));
+  const agentDevice = oldFolder(join(workspaceDir(root), 'agent-device'));
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  vi.spyOn(dependencies, 'runDormantDependencies').mockResolvedValue([]);
+  vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+  const lane = createMaintenanceLane(() => {}, { run: async () => {} });
+  lane.start(
+    {
+      config: loadConfig(),
+      measured: await measure.measureTick(null, Date.now()),
+      operation: testContext(),
+      workspaces: [],
+      pressure: { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+    },
+    act,
+  );
+  await lane.settled();
+
+  expect(existsSync(compilation)).toBe(!act);
+  expect(existsSync(agentDevice)).toBe(!act);
+  expect(sharedCompilationCache()).toBe(act ? join(home, 'compilation-cache.noindex') : compilation);
+  expect(workspaceAgentDeviceDir(root)).toBe(act ? join(workspaceDir(root), 'agent-device.noindex') : agentDevice);
 });

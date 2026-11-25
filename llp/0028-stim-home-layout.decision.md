@@ -47,10 +47,13 @@ under its old name while that exists, else the `*.noindex` path. A home made
 before the rename keeps working, and no first build or dev server creates an
 empty new folder beside a warm old one.
 
-stimd renames an old folder at the start of each maintenance lane pass, in
-report mode too, since a rename deletes nothing. The CLI renames a workspace's
+stimd renames an old folder at the start of each maintenance lane pass while
+`daemon.mode` is `on`; in `report` mode the lane writes nothing, so the old
+names stay and the resolvers keep serving them. The CLI renames a workspace's
 agent-device directory before `stim start` reports its path, before it writes
-the boot hook, and before `stim agent-device` runs there. A folder moves with one `rename`, never
+the boot hook, and before `stim agent-device` runs there, in every mode: those
+commands write the workspace's state, the boot hook among it, whatever
+`daemon.mode` is. A folder moves with one `rename`, never
 a copy, and only when:
 
 - it is a real directory, not a symbolic link, and nothing exists at the new

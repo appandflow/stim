@@ -540,11 +540,11 @@ the folders it fills with regenerable churn, on every platform:
 
 Config, state and logs keep their names and stay searchable. A Stim home that
 still has these folders under their old names, without `.noindex`, keeps using
-them until stimd renames each one. It renames a folder only when nothing holds
-it: no build runs for the compilation cache or ccache, no dev server runs in
-the home for the Metro cache, and no agent-device daemon may still be running
-in that workspace's directory.
-If both names exist, Stim uses the new one and leaves the old one where it is,
+them until stimd renames each one, which it does while `daemon.mode` is `on`,
+not in `report` mode. It renames a folder only when nothing holds it: no build
+runs for the compilation cache or ccache, no dev server runs in the home for
+the Metro cache, and no agent-device daemon may still be running in that
+workspace's directory. If both names exist, Stim uses the new one and leaves the old one where it is,
 and `gc` measures and trims it like the cache it was.
 
 A path you set yourself never moves: `caches.metroCache`, `STIM_METRO_CACHE` and

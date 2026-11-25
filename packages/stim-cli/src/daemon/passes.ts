@@ -543,16 +543,18 @@ export function createMaintenanceLane(
       const loopDelay = monitorEventLoopDelay();
       loopDelay.enable();
       current = (async () => {
-        try {
-          for (const rename of migrateNoindexFolders())
-            log(
-              rename.moved ? 'info' : 'debug',
-              'noindex_rename',
-              rename.moved ? `renamed ${rename.from} to ${rename.to}` : `kept ${rename.from}: ${rename.kept}`,
-            );
-        } catch (error) {
-          log('warn', 'noindex_rename', error instanceof Error ? error.message : String(error));
-        }
+        // @ref LLP 0028#an-existing-home-renames-each-folder-once-nothing-holds-it -- report mode writes nothing
+        if (act)
+          try {
+            for (const rename of migrateNoindexFolders())
+              log(
+                rename.moved ? 'info' : 'debug',
+                'noindex_rename',
+                rename.moved ? `renamed ${rename.from} to ${rename.to}` : `kept ${rename.from}: ${rename.kept}`,
+              );
+          } catch (error) {
+            log('warn', 'noindex_rename', error instanceof Error ? error.message : String(error));
+          }
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await watchedStep(log, 'fingerprint_precompute', () =>
           precompute.run({ config, workspaces, pressure, operation }, act),
