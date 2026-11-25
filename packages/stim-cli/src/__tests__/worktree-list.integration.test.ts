@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, utimesSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { diskUsageCacheFile, gcMarkFile, GC_MARK_VERSION } from '@stim-cli/core/state';
+import { diskUsageCacheFile, gcMarkFile, GC_MARK_VERSION, loadConfig, getConfigPath } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { formatBytes } from '../fs-util.ts';
+import { linkedWorktreeFindings } from '../diagnostics/doctor-worktrees.ts';
 import { listOp, worktreeListPayload } from '../commands/worktree-list.ts';
 import { upsertProject } from '../workspace/config.ts';
 
@@ -160,12 +161,22 @@ test('machine listing uses saved observations and leaves unobserved worktrees un
       pushed: null,
       finished: null,
       emptyBranch: null,
-      activity: null,
+      activity: { at: new Date(now - 40 * 86_400_000).toISOString(), basis: 'git' },
       lastUsedAt: null,
       keep: { code: 'dirty', reason: 'kept: saved dirty verdict', eligibleAt: null },
     },
   };
   save(gcMarkFile(roots[0]), mark);
+  save(diskUsageCacheFile(roots[0]), { path: roots[0], bytes: 2 * GIB, privateBytes: 2 * GIB, measuredAt: checkedAt });
+  const findings = await linkedWorktreeFindings(repository, undefined, now);
+  expect(findings).toHaveLength(1);
+  expect(findings[0]).toMatchObject({ code: 'linked-worktrees', level: 'note' });
+  expect(findings[0]?.detail).toContain(`.worktrees/dirty (dirty, ${formatBytes(2 * GIB)}, idle 40d)`);
+  expect(findings[0]?.detail).toContain('Verdicts checked 3h ago.');
+  expect(findings[0]?.detail).toContain(
+    'Here and in the repositories maintenance has checked on this machine: 2 linked worktrees in 1 repository',
+  );
+  expect(findings[0]?.detail).toContain('Automatic maintenance is off on this machine (daemon.mode)');
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   const output = await run({ all: true, json: true });
   const payload = JSON.parse(output[0] ?? '');
@@ -197,9 +208,86 @@ test('machine listing uses saved observations and leaves unobserved worktrees un
   expect(mixed[0]).toContain('checked 3h ago, oldest 96h ago');
   rmSync(gcMarkFile(roots[0]));
   rmSync(gcMarkFile(roots[1]));
+  rmSync(diskUsageCacheFile(roots[1]));
+  const neverChecked = await linkedWorktreeFindings(repository);
+  expect(neverChecked[0]?.detail).toContain('maintenance worktree check has not run');
+  expect(neverChecked[0]?.detail).toContain('2 not checked');
+  expect(neverChecked[0]?.detail).toContain('1 without a known real size');
   const unchecked = await run({ all: true });
   expect(unchecked[0]).toContain('maintenance worktree check has not run');
   expect(unchecked[0]).toContain('run stim worktree list in this repository for current verdicts');
   const unknown = JSON.parse((await run({ all: true, json: true }))[0] ?? '');
   expect(unknown.repositories[0]).toMatchObject({ checkedAt: null, oldestCheckedAt: null });
+});
+
+test('doctor omits repositories without linked worktrees or saved marks', async () => {
+  for (const root of roots)
+    getExecutor().runFile('git', ['worktree', 'remove', '--force', root], { cwd: repository, timeoutMs: 5000 });
+  expect(await linkedWorktreeFindings(repository)).toEqual([]);
+});
+
+const merged = { reason: 'merged into origin/main', at: null };
+test.each([
+  { finished: merged, settings: { removeFinishedWorktrees: false }, off: 'removeFinishedWorktrees is off' },
+  { finished: null, settings: { removeIdleWorktrees: false }, off: 'removeIdleWorktrees is off' },
+  { finished: null, settings: { removeIdleWorktrees: true, olderThanDays: 0 }, off: 'olderThanDays is 0' },
+  { finished: merged, settings: { removeIdleWorktrees: false }, off: null },
+])('saved removal with settings $settings and finished $finished is off: $off', async ({ finished, settings, off }) => {
+  save(getConfigPath(), { ...loadConfig(), maintenance: settings });
+  save(gcMarkFile(roots[1]), {
+    v: GC_MARK_VERSION,
+    root: roots[1],
+    device: 1,
+    markedAt: savedAt,
+    lastActivityAt: null,
+    candidates: [],
+    worktree: {
+      markedAt: savedAt,
+      source: repository,
+      head: null,
+      keys: [],
+      clean: true,
+      pushed: true,
+      finished,
+      emptyBranch: false,
+      activity: null,
+      lastUsedAt: null,
+      keep: undefined,
+    },
+  });
+  const payload = await worktreeListPayload([repository]);
+  expect(payload.repositories[0]?.worktrees[0]).toMatchObject({
+    willRemove: !off,
+    reason: off ? 'removal-off' : null,
+  });
+  expect(payload.repositories[0]?.worktrees[0]?.detail?.endsWith(`but maintenance.${off}`)).toBe(Boolean(off));
+  expect(payload.total.removeBytes).toBe(off ? 0 : 2 * GIB);
+  expect(payload.total.keptBytes).toBe(off ? 2 * GIB : 0);
+  expect((await linkedWorktreeFindings(repository))[0]?.detail.includes('removal-off')).toBe(Boolean(off));
+});
+
+test('live listing keeps a merged registered worktree when removal is off', async () => {
+  save(getConfigPath(), {
+    ...loadConfig(),
+    maintenance: { removeFinishedWorktrees: false },
+    gc: { worktreeGraceMinutes: 0 },
+  });
+  upsertProject(roots[1], { metroPort: null });
+  getExecutor().runFile('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], {
+    cwd: repository,
+    timeoutMs: 5000,
+  });
+  getExecutor().runFile('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], {
+    cwd: repository,
+    timeoutMs: 5000,
+  });
+  const payload = JSON.parse((await run({ json: true }))[0] ?? '');
+  expect(payload.repositories[0].worktrees).toContainEqual(
+    expect.objectContaining({
+      path: roots[1],
+      willRemove: false,
+      reason: 'removal-off',
+      detail: expect.stringContaining('maintenance.removeFinishedWorktrees is off'),
+    }),
+  );
 });

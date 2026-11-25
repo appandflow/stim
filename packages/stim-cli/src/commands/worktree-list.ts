@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { readDiskUsage, readDiskUsagePartial, readGcMark, readGcMarks, type DaemonMode } from '@stim-cli/core/state';
+import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
 import { existsSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
@@ -42,6 +43,23 @@ interface Summary {
   removeBytes: number;
   keptBytes: number;
   kept: { reason: string; count: number; realBytes: number }[];
+}
+
+function applyRemovalSettings(entry: ListingEntry, finished: boolean, settings: MaintenanceSettings): void {
+  if (!entry.willRemove) return;
+  const setting = !settings.removeFinishedWorktrees
+    ? 'maintenance.removeFinishedWorktrees is off'
+    : finished
+      ? null
+      : !settings.removeIdleWorktrees
+        ? 'maintenance.removeIdleWorktrees is off'
+        : settings.olderThanDays <= 0
+          ? 'maintenance.olderThanDays is 0'
+          : null;
+  if (!setting) return;
+  entry.willRemove = false;
+  entry.reason = 'removal-off';
+  entry.detail = `${entry.detail}; cleanup would remove it but ${setting}`;
 }
 
 function summarize(entries: ListingEntry[]): Summary {
@@ -107,6 +125,7 @@ export async function worktreeListPayload(
   }[];
   total: Summary;
 }> {
+  const settings = resolveMaintenanceSettings(undefined, operation?.env ?? process.env);
   const deadline = Date.now() + BUDGET_MS;
   const listed = await Promise.all(
     [...new Set(repositories.map(canonicalPath))].toSorted().map(async (repository) => ({
@@ -146,7 +165,7 @@ export async function worktreeListPayload(
         now,
       );
       const disk = sizes(path);
-      return {
+      const item: ListingEntry = {
         path,
         branch: entry.branch ?? null,
         idleDays: idle,
@@ -160,6 +179,8 @@ export async function worktreeListPayload(
         old: idle !== null && idle >= OLD_DAYS,
         large: disk.realBytes !== null && disk.realBytes >= LARGE_BYTES,
       };
+      applyRemovalSettings(item, observation?.finished != null || observation?.emptyBranch === true, settings);
+      return item;
     });
     sortEntries(worktrees);
     const checks = worktrees
@@ -181,7 +202,7 @@ export async function worktreeListPayload(
   };
 }
 
-function worktreeCheckAgeLine(
+export function worktreeCheckAgeLine(
   checkedAt: string | null,
   oldestCheckedAt: string | null,
   now: number = Date.now(),
@@ -197,7 +218,7 @@ function sortEntries(entries: ListingEntry[]): void {
   entries.sort((a, b) => (b.realBytes ?? -1) - (a.realBytes ?? -1) || a.path.localeCompare(b.path));
 }
 
-function summaryLine(summary: Summary): string {
+export function summaryLine(summary: Summary): string {
   return `${plural(summary.count, 'worktree')}; ${formatBytes(summary.realBytes)} real; ${summary.unmeasured} without a known real size; cleanup removes ${formatBytes(summary.removeBytes)}; reclaimable kept ${formatBytes(summary.keptBytes)}${summary.kept.length ? ` (${summary.kept.map((group) => `${group.reason}: ${group.count}, ${formatBytes(group.realBytes)}`).join('; ')})` : ''}${summary.unchecked ? `; ${summary.unchecked} not checked` : ''}`;
 }
 
@@ -238,6 +259,7 @@ export const listOp: Op = defineOp({
           'Automatic maintenance is off on this machine, so saved verdicts are not refreshed. Run stim worktree list in a repository to check it now.',
         );
       if (!options.all) {
+        const settings = resolveMaintenanceSettings(undefined, operation.env);
         const roots = payload.repositories.flatMap((repo) => repo.worktrees.map((entry) => entry.path));
         const { collectWorktreeSweep, worktreeRemovalReason, worktreeActivityOfAsync } =
           await import('./gc/worktrees.ts');
@@ -261,6 +283,7 @@ export const listOp: Op = defineOp({
             entry.willRemove = !verdict.skipped;
             entry.reason = verdict.skipCode;
             entry.detail = verdict.skipped?.replace(/^kept: /, '') ?? worktreeRemovalReason(verdict, sweep);
+            applyRemovalSettings(entry, true, settings);
             entry.checkedAt = new Date(sweep.now).toISOString();
             const activity =
               verdict.idleDays === null && verdict.activity === null

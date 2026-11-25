@@ -185,7 +185,7 @@ leased until <time>" for each one.`,
       summary: Summary }], total: Summary }
     Summary = { count, realBytes, unmeasured, unchecked, removeBytes,
       keptBytes, kept: [{ reason, count, realBytes }] }
-    Paths are absolute. Unknown values are null; reason is the kept gc code.
+    Paths are absolute. Unknown values are null; reason is the kept gc code or removal-off.
     Repository checkedAt/oldestCheckedAt are the newest/oldest observation times
     (--all), or now (current check); null when never checked. --all uses saved
     observations; unchecked worktrees have willRemove null.

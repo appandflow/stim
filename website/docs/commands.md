@@ -90,6 +90,13 @@ CocoaPods state, cache conflicts, device capacity, remote session problems and
 fingerprint evaluation problems. The checkout is left untouched unless
 `--fix` is passed.
 
+In a git repository, doctor also notes the linked worktrees: their count, real
+size and the bytes kept worktrees hold, up to three old or large kept ones with
+their reason, how old the saved verdicts and sizes are, and the totals for
+every repository maintenance has checked on this machine. It reads only the
+verdicts and sizes maintenance saved; it never measures or checks a worktree.
+Run `stim worktree list` for current numbers.
+
 Fingerprint checks evaluate project configuration, including
 `fingerprint.config.js`, in a child process. Doctor reads a project eas-cli's
 version from its `package.json` and runs `eas whoami` only with an `eas` on
@@ -2584,6 +2591,10 @@ and the oldest check when it differs by more than a day. A repository with no
 observations says the maintenance worktree check has not run; run
 `stim worktree list` there for current verdicts. When automatic maintenance is
 off, a notice on stderr explains that saved verdicts are not refreshed.
+A removal that `maintenance.removeFinishedWorktrees` or
+`maintenance.removeIdleWorktrees` turns off, or an idle removal while
+`maintenance.olderThanDays` is 0, is listed as kept, reason `removal-off`,
+naming the setting.
 JSON includes top-level `daemonMode` (`on`, `report` or `off`) and each
 repository's `checkedAt` (newest) and `oldestCheckedAt` (oldest), or null with
 no observations. For a current repository check, both are now. Per-worktree

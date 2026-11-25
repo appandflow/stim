@@ -9,6 +9,7 @@ stim worktree list shows linked worktrees, real and apparent sizes, idle age,
 old/large marks and cleanup verdicts. --all uses saved maintenance observations
 across repositories. Both only report and never delete. --json prints one payload
 (guide facts payloads). Sizes missing or over an hour old are measured within a two-minute budget.
+stim doctor notes the same summary from saved data only.
 Real size is whole-worktree private bytes; apparent size is allocated bytes.
 Neither includes Stim workspace data outside the checkout.
 
