@@ -1,6 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { installServer } from '@stim-cli/server/release-install';
 import { recordJobUse } from '../engine-store/jobs.ts';
 import { readManifest } from '../engine-store/store.ts';
 import { fetchTree, removeTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
@@ -28,14 +27,7 @@ export async function installJobBuild(root: string, build: string, source: JobSo
         throw Object.assign(error as Error, { mismatch: unpublished });
       }
     } else {
-      const installs = join(root, scratchName());
-      try {
-        const options = ['--cache', join(root, '.npm-cache'), '--prefer-online', '--install-strategy=shallow'];
-        const { dir } = await installServer(join(installs, 'versions'), source, process.execPath, log, options);
-        renameSync(join(dir, 'node_modules', 'stim'), scratch);
-      } finally {
-        rmSync(installs, { recursive: true, force: true });
-      }
+      await fetchTree(root, source, scratch, log);
     }
     const sealed = seal(staging, scratch);
     if (sealed !== build)

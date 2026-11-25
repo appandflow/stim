@@ -129,16 +129,17 @@ describe('offload job builds on a worker', () => {
     writeFileSync(join(root, 'jobs', `${build}.json`), JSON.stringify({ format: 1, version, usedAt }));
   };
   /** A cacache index entry for `stim-<version>.tgz` and its content file, both older than the cache trim's week. */
-  const tarball = (version: string): string[] => {
+  const tarball = (version: string): [string, string] => {
     const cache = join(root, '.npm-cache', '_cacache');
     const digest = createHash('sha512').update(version).digest();
     const hex = digest.toString('hex');
     const content = join(cache, 'content-v2', 'sha512', hex.slice(0, 2), hex.slice(2, 4), hex.slice(4));
     const index = join(cache, 'index-v5', version.replaceAll('.', ''), 'entry');
     const key = `make-fetch-happen:request-cache:https://registry.npmjs.org/stim/-/stim-${version}.tgz`;
+    const record = JSON.stringify({ key, integrity: `sha512-${digest.toString('base64')}` });
     for (const [file, text] of [
       [content, 'tgz'],
-      [index, `hash\t${JSON.stringify({ key, integrity: `sha512-${digest.toString('base64')}` })}`],
+      [index, `\n${createHash('sha1').update(record).digest('hex')}\t${record}\n`],
     ] as const) {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, text);
@@ -158,6 +159,26 @@ describe('offload job builds on a worker', () => {
     expect(collectStore(root).toSorted()).toEqual([builds[3], builds[4]]);
     expect(kept.every((file) => existsSync(file))).toBe(true);
     expect(dropped.some((file) => existsSync(file))).toBe(false);
+  });
+
+  test('the npm cache trim leaves no index record naming a content file it removed', () => {
+    used(A, '1.0.0', 1);
+    const kept = tarball('1.0.0');
+    const revalidated = tarball('2.0.0');
+    const untouched = tarball('2.0.1');
+    const now = new Date();
+    utimesSync(revalidated[1], now, now);
+    collectStore(root);
+    expect(kept.every((file) => existsSync(file))).toBe(true);
+    for (const [content, index] of [revalidated, untouched]) expect(existsSync(index)).toBe(existsSync(content));
+  });
+
+  test('the npm cache trim keeps a cache with nothing older than a week whole', () => {
+    const files = [...tarball('2.0.0'), ...tarball('2.0.1')];
+    const now = new Date();
+    for (const file of files) utimesSync(file, now, now);
+    collectStore(root);
+    expect(files.every((file) => existsSync(file))).toBe(true);
   });
 
   test('a build installed for a job but not yet started is kept by the record its install wrote', () => {
