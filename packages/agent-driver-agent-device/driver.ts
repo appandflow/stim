@@ -409,6 +409,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         else if (registered(this.launchRoot)) await this.retire(this.launchRoot);
         this.launchId = randomBytes(8).toString('hex');
         this.prepareLaunchDir();
+        this.linkSessions();
         writeFileSync(this.launchFile, `${this.launchId}\n`, { mode: 0o600 });
       } catch (error) {
         await this.host.claims.release(claim.id).catch(() => false);
@@ -423,7 +424,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     if (this.options.device) {
       try {
         this.prepareRecordings();
-        this.linkSessions();
       } catch (error) {
         process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
       }
