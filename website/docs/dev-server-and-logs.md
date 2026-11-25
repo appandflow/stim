@@ -541,7 +541,7 @@ checkout (`idle_stage_candidates`, `stopped_output_candidates`,
 that threw adds `error`. Rung 1 also splits its time, in milliseconds, into
 `marksMs` (reading saved marks), `queueMs` (yielding the disk queue to
 higher-priority work), `authorizeMs`, `measureMs` (disk pressure reads),
-`clearMs` (deleting outputs), `refreshDiscoverMs` and `refreshReadMs` (finding
+`clearMs` (rechecking and clearing each target), `refreshDiscoverMs` and `refreshReadMs` (finding
 and re-reading checkouts), with `targets` and the slowest target and root
 (`slowestTarget`, `slowestTargetMs`, `slowestRoot`, `slowestRootMs`); a part
 that never ran is absent. A tick at normal writes one, up to 16 at high and up

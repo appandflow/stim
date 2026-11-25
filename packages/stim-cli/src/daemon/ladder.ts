@@ -402,7 +402,7 @@ async function idleOutputsRung(context: RungContext, _causes: Cause[], tally?: S
           (b.candidate.bytes ?? -1) - (a.candidate.bytes ?? -1),
       );
     for (const { mark, candidate } of ranked) {
-      if (context.act) await time('queueMs', async () => context.between?.());
+      if (context.act && context.between) await time('queueMs', context.between);
       context.stop?.throwIfAborted();
       context.operation?.signal.throwIfAborted();
       if (context.act && context.between) {

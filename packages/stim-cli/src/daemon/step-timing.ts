@@ -106,9 +106,9 @@ export async function timedStep<T>(
         'daemon_step',
         `${step}${fields?.rung === undefined ? '' : ` ${String(fields.rung)}`} ${outcome} in ${durationMs}ms${count === undefined ? '' : `; ${count} items`}`,
         {
+          ...Object.fromEntries(Object.entries(tally.fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
           step,
           ...Object.fromEntries(Object.entries(fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
-          ...Object.fromEntries(Object.entries(tally.fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
           startedAt: new Date(startedAt).toISOString(),
           durationMs,
           ...(count === undefined ? {} : { items: count }),
