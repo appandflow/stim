@@ -2,18 +2,6 @@ export function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * What a hosted client may send with one agent-device command. `flags` and `refused` classify every flag
- * `agent-device help <command>` lists, by its first spelling, with the request key the client sends for it.
- */
-export interface DeviceCommandRule {
-  flags?: Readonly<Record<string, string>>;
-  refused?: Readonly<Record<string, string>>;
-  /** Request keys the client derives from positionals or sends as structured `input` fields. */
-  keys?: readonly string[];
-  positionals?: (positionals: readonly unknown[], params: Record<string, unknown>) => DeviceRefusal | undefined;
-}
-
 interface DeviceRefusal {
   rule: 'command' | 'host-path' | 'request';
   message: string;
@@ -53,283 +41,84 @@ const openClose = (command: string) => (positionals: readonly unknown[]) =>
         message: `${command} on a hosted device accepts only installed app names or bundle ids, never paths or URLs.`,
       };
 
-const SNAPSHOT_VIEW = { '--depth': 'snapshotDepth', '--scope': 'snapshotScope', '--raw': 'snapshotRaw' };
-const SETTLE = { '--settle': 'settle', '--settle-quiet': 'settleQuietMs', '--timeout': 'timeoutMs' };
-const PRESS = {
-  '--count': 'count',
-  '--interval-ms': 'intervalMs',
-  '--hold-ms': 'holdMs',
-  '--jitter-px': 'jitterPx',
-  '--double-tap': 'doubleTap',
-  '--verify': 'verify',
-};
-const REPAIR_RECORDING = { '--record': 'record' };
-
-/** The commands a hosted iOS simulator or Android emulator client may run, all scoped to that one device. */
-export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> = {
-  open: {
-    flags: {
-      '--test-ime': 'testIme',
-      '--no-test-ime': 'testIme',
-      '--activity': 'activity',
-      '--relaunch': 'relaunch',
-      '--foreground': 'foreground',
-      '--no-record': 'noRecord',
-      '--timeout': 'timeoutMs',
-      '--wait': 'waitMs',
-      '--no-post-gesture-stabilization': 'postGestureStabilization',
-    },
-    refused: {
-      '--force': 'force',
-      '--surface': 'surface',
-      '--metro-host': 'metroHost',
-      '--metro-port': 'metroPort',
-      '--bundle-url': 'bundleUrl',
-      '--launch-url': 'launchUrl',
-      '--launch-console': 'launchConsole',
-      '--launch-args': 'launchArgs',
-      '--save-script': 'saveScript',
-      '--os': 'osVersion',
-      '--image-tag': 'imageTag',
-      '--physical': 'physical',
-      '--device-mode': 'deviceMode',
-      '--device-baseline': 'deviceBaseline',
-    },
-    positionals: openClose('Open'),
+export const DEVICE_POSITIONAL_CHECKS: Readonly<
+  Record<string, (positionals: readonly unknown[], params: Record<string, unknown>) => DeviceRefusal | undefined>
+> = {
+  open: openClose('Open'),
+  close: openClose('Close'),
+  screenshot: (positionals) =>
+    positionals.every(remoteScreenshot)
+      ? undefined
+      : {
+          rule: 'host-path',
+          message: 'Screenshots use only agent-device remote artifacts.',
+        },
+  record: (positionals, params) => {
+    const [action, output, ...rest] = positionals;
+    if ((action !== 'start' && action !== 'stop') || rest.length > 0 || (action === 'stop' && output !== undefined))
+      return {
+        rule: 'command',
+        message: 'Refused record: this connection allows only record start and record stop.',
+      };
+    if (output !== undefined && !remoteRecording(output))
+      return {
+        rule: 'host-path',
+        message:
+          "Refused record start: the hosting Mac writes a recording only in this session's private area and returns it through agent-device's remote download, so a host output path is refused.",
+      };
+    const meta = params.meta;
+    if (
+      action === 'start' &&
+      !(
+        isJsonObject(meta) &&
+        isJsonObject(meta.clientArtifactPaths) &&
+        typeof meta.clientArtifactPaths.outPath === 'string' &&
+        meta.clientArtifactPaths.outPath.trim() !== ''
+      )
+    )
+      return {
+        rule: 'request',
+        message:
+          'Refused record start: it needs the local destination agent-device sends when it runs with --remote-config.',
+      };
+    return undefined;
   },
-  close: {
-    refused: { '--force': 'force', '--save-script': 'saveScript', '--shutdown': 'shutdown' },
-    positionals: openClose('Close'),
-  },
-  snapshot: {
-    flags: {
-      '-i': 'snapshotInteractiveOnly',
-      ...SNAPSHOT_VIEW,
-      '--diff': 'snapshotDiff',
-      '--timeout': 'timeoutMs',
-      '--actions': 'snapshotCustomActions',
-      '--observe-only': 'snapshotObserveOnly',
-      '--force-full': 'snapshotForceFull',
-    },
-    refused: REPAIR_RECORDING,
-  },
-  wait: { flags: SNAPSHOT_VIEW, keys: ['durationMs', 'timeoutMs'] },
-  find: {
-    flags: { '--depth': 'snapshotDepth', '--raw': 'snapshotRaw', '--first': 'findFirst', '--last': 'findLast' },
-    refused: REPAIR_RECORDING,
-    keys: ['timeoutMs'],
-  },
-  get: { flags: SNAPSHOT_VIEW, refused: REPAIR_RECORDING },
-  is: { flags: SNAPSHOT_VIEW, refused: REPAIR_RECORDING },
-  click: { flags: { ...PRESS, ...SETTLE, '--button': 'clickButton', ...SNAPSHOT_VIEW } },
-  fill: {
-    flags: { '--delay-ms': 'delayMs', '--text-stdin': 'textStdin', '--verify': 'verify', ...SETTLE, ...SNAPSHOT_VIEW },
-    refused: { '--record-as': 'recordAs' },
-  },
-  press: { flags: { ...PRESS, ...SETTLE, ...SNAPSHOT_VIEW } },
-  type: { flags: { '--delay-ms': 'delayMs' } },
-  focus: {},
-  scroll: {
-    flags: {
-      '--duration-ms': 'durationMs',
-      '--pixels': 'pixels',
-      '--until': 'until',
-      '--max-passes': 'maxPasses',
-      '--no-post-gesture-stabilization': 'postGestureStabilization',
-      ...SETTLE,
-    },
-  },
-  screenshot: {
-    flags: {
-      '--out': 'out',
-      '--overlay-refs': 'overlayRefs',
-      '--crop-on': 'screenshotCropOn',
-      '--pixel-density': 'screenshotPixelDensity',
-      '--scale': 'screenshotScale',
-      '--no-stabilize': 'screenshotNoStabilize',
-      '--normalize-status-bar': 'screenshotNormalizeStatusBar',
-      '--screen-mask': 'screenshotScreenMask',
-      '--capture-backend': 'screenshotCaptureBackend',
-    },
-    refused: { '--fullscreen': 'screenshotFullscreen' },
-    positionals: (positionals) =>
-      positionals.every(remoteScreenshot)
-        ? undefined
-        : {
-            rule: 'host-path',
-            message: 'Screenshots use only agent-device remote artifacts.',
-          },
-  },
-  batch: {
-    flags: { '--steps': 'batchSteps', '--on-error': 'batchOnError', '--max-steps': 'batchMaxSteps' },
-    refused: { '--steps-file': 'stepsFile', '--out': 'out' },
-  },
-  devices: {},
-  diff: {
-    flags: {
-      '-i': 'snapshotInteractiveOnly',
-      ...SNAPSHOT_VIEW,
-      '--overlay-refs': 'overlayRefs',
-      '--threshold': 'threshold',
-    },
-    refused: { '--out': 'out', '--baseline': 'baseline', '--screen-mask': 'screenshotScreenMask' },
-    keys: ['kind'],
-  },
-  longpress: { flags: { ...SETTLE, ...SNAPSHOT_VIEW }, keys: ['durationMs'] },
-  swipe: {
-    flags: {
-      '--count': 'count',
-      '--pause-ms': 'pauseMs',
-      '--pattern': 'pattern',
-      '--no-post-gesture-stabilization': 'postGestureStabilization',
-    },
-    keys: ['from', 'to'],
-  },
-  back: { flags: { ...SETTLE, '--in-app': 'backMode', '--system': 'backMode' } },
-  home: {},
-  orientation: {},
-  appstate: {},
-  alert: { keys: ['timeoutMs'] },
-  record: {
-    flags: {
-      '--fps': 'fps',
-      '--quality': 'quality',
-      '--hide-touches': 'hideTouches',
-      '--scope': 'recordingScope',
-      '--out': 'out',
-    },
-    positionals: (positionals, params) => {
-      const [action, output, ...rest] = positionals;
-      if ((action !== 'start' && action !== 'stop') || rest.length > 0 || (action === 'stop' && output !== undefined))
-        return {
-          rule: 'command',
-          message: 'Refused record: this connection allows only record start and record stop.',
-        };
-      if (output !== undefined && !remoteRecording(output))
-        return {
+  push: (positionals) =>
+    positionals.length === 2 && appId(positionals[0]) && inlineJsonObject(positionals[1])
+      ? undefined
+      : {
           rule: 'host-path',
           message:
-            "Refused record start: the hosting Mac writes a recording only in this session's private area and returns it through agent-device's remote download, so a host output path is refused.",
-        };
-      const meta = params.meta;
-      if (
-        action === 'start' &&
-        !(
-          isJsonObject(meta) &&
-          isJsonObject(meta.clientArtifactPaths) &&
-          typeof meta.clientArtifactPaths.outPath === 'string' &&
-          meta.clientArtifactPaths.outPath.trim() !== ''
-        )
-      )
-        return {
+            'Refused push: a hosted device takes push <bundle id> <inline JSON object>; a payload file on the hosting Mac is refused.',
+        },
+  artifacts: (positionals) =>
+    positionals.length === 0
+      ? undefined
+      : {
           rule: 'request',
-          message:
-            'Refused record start: it needs the local destination agent-device sends when it runs with --remote-config.',
-        };
-      return undefined;
-    },
-  },
-  'action-button': {},
-  'app-switcher': {},
-  apps: { flags: { '--all': 'appsFilter' } },
-  capabilities: {},
-  events: {},
-  fold: { flags: { '--keyframes': 'keyframes' } },
-  gesture: {
-    flags: {
-      '--count': 'count',
-      '--pointer-count': 'pointerCount',
-      '--hold-ms': 'holdMs',
-      '--pause-ms': 'pauseMs',
-      '--no-post-gesture-stabilization': 'postGestureStabilization',
-    },
-    keys: [
-      'kind',
-      'deviceTarget',
-      'origin',
-      'delta',
-      'durationMs',
-      'direction',
-      'distance',
-      'preset',
-      'scale',
-      'degrees',
-      'points',
-      'source',
-      'destination',
-      'sourceHoldMs',
-      'moveMs',
-      'destinationHoldMs',
-    ],
-  },
-  'hardware-button': {},
-  keyboard: {},
-  'react-native': {},
-  telephony: {},
-  'trigger-app-event': {},
-  network: { flags: { '--include': 'networkInclude' } },
-  push: {
-    positionals: (positionals) =>
-      positionals.length === 2 && appId(positionals[0]) && inlineJsonObject(positionals[1])
-        ? undefined
-        : {
-            rule: 'host-path',
-            message:
-              'Refused push: a hosted device takes push <bundle id> <inline JSON object>; a payload file on the hosting Mac is refused.',
-          },
-  },
-  perf: {
-    refused: { '--kind': 'kind', '--template': 'perfTemplate', '--out': 'out' },
-    positionals: (positionals) =>
-      (positionals.length === 1 && positionals[0] === 'frames') ||
-      (positionals.length === 2 && positionals[0] === 'memory' && positionals[1] === 'sample')
-        ? undefined
-        : {
-            rule: 'host-path',
-            message:
-              'Refused perf: a hosted device allows only perf frames and perf memory sample; snapshots, profiles and traces write files on the hosting Mac.',
-          },
-  },
-  artifacts: {
-    refused: { '--provider': 'provider', '--provider-session': 'providerSessionId' },
-    positionals: (positionals) =>
-      positionals.length === 0
-        ? undefined
-        : {
-            rule: 'request',
-            message: 'Refused artifacts: a hosted device lists only its own session artifacts.',
-          },
-  },
-  settings: {
-    flags: { '--app': 'app' },
-    positionals: (positionals, params) => {
-      // agent-device trims and lowercases the setting, its action and the permission target.
-      const [setting, , target] = positionals.map((value) => String(value).trim().toLowerCase());
-      if (
-        setting === 'permission' &&
-        ['accessibility', 'screen-recording', 'input-monitoring'].includes(String(target))
-      )
-        return {
-          rule: 'command',
-          message: `Refused settings permission ${target}: it is a macOS permission of the hosting Mac.`,
-        };
-      const app = isJsonObject(params.input) ? params.input.app : undefined;
-      if ((setting === 'clear-app-state' && !positionals.slice(1).every(appId)) || (app !== undefined && !appId(app)))
-        return {
-          rule: 'host-path',
-          message: 'Settings on a hosted device accept only installed app names or bundle ids, never paths.',
-        };
-      return undefined;
-    },
+          message: 'Refused artifacts: a hosted device lists only its own session artifacts.',
+        },
+  settings: (positionals, params) => {
+    // agent-device trims and lowercases the setting, its action and the permission target.
+    const [setting, , target] = positionals.map((value) => String(value).trim().toLowerCase());
+    if (setting === 'permission' && ['accessibility', 'screen-recording', 'input-monitoring'].includes(String(target)))
+      return {
+        rule: 'command',
+        message: `Refused settings permission ${target}: it is a macOS permission of the hosting Mac.`,
+      };
+    const app = isJsonObject(params.input) ? params.input.app : undefined;
+    if ((setting === 'clear-app-state' && !positionals.slice(1).every(appId)) || (app !== undefined && !appId(app)))
+      return {
+        rule: 'host-path',
+        message: 'Settings on a hosted device accept only installed app names or bundle ids, never paths.',
+      };
+    return undefined;
   },
 };
 
-const newerThanHost = (release: string) =>
-  `agent-device ${release} added it, and the hosted daemon of an older agent-device refuses to start with a policy that names it.`;
 const CLIENT_SIDE = 'it runs in the agent-device client on your Mac, not on the hosted device.';
 const STIM_INSTALLS = 'Stim installs the hosted app; an install reads app files on the hosting Mac.';
 
-/** Every other agent-device command, with the reason a hosted client cannot run it. */
 export const REFUSED_DEVICE_COMMANDS: Readonly<Record<string, string>> = {
   logs: 'its log files live on the hosting Mac; read the hosted app logs with stim logs.',
   trace: 'trace capture writes files on the hosting Mac.',
@@ -339,6 +128,13 @@ export const REFUSED_DEVICE_COMMANDS: Readonly<Record<string, string>> = {
   boot: 'Stim boots the hosted device; boot can start other devices on the hosting Mac.',
   shutdown: 'Stim shuts the hosted device down; use stim stop.',
   install: STIM_INSTALLS,
+  install_source: STIM_INSTALLS,
+  release_materialized_paths: STIM_INSTALLS,
+  runtime: "it sets the Metro address the hosted app loads; Stim's Metro bridge already does.",
+  session_save_script: 'it writes a script file on the hosting Mac.',
+  lease_allocate: 'Stim holds the lease for this connection.',
+  lease_heartbeat: 'Stim holds the lease for this connection.',
+  lease_release: 'Stim holds the lease for this connection.',
   reinstall: STIM_INSTALLS,
   'install-from-source': STIM_INSTALLS,
   uninstall:
@@ -350,8 +146,6 @@ export const REFUSED_DEVICE_COMMANDS: Readonly<Record<string, string>> = {
   hover: 'it drives web pages only.',
   viewport: 'it resizes web pages only.',
   'tv-remote': 'it drives TV devices only.',
-  audit: newerThanHost('0.21.39'),
-  shake: newerThanHost('0.21.42'),
   auth: CLIENT_SIDE,
   cdp: CLIENT_SIDE,
   connect: CLIENT_SIDE,
@@ -368,4 +162,42 @@ export const REFUSED_DEVICE_COMMANDS: Readonly<Record<string, string>> = {
   session: CLIENT_SIDE,
   takeover: CLIENT_SIDE,
   web: CLIENT_SIDE,
+};
+
+export const REFUSED_DEVICE_INPUTS: Readonly<Record<string, string>> = {
+  out: '--out',
+  saveScript: '--save-script',
+  sessionSaveScript: 'sessionSaveScript',
+  baseline: '--baseline',
+  launchConsole: '--launch-console',
+  launchArgs: '--launch-args',
+  launchUrl: '--launch-url',
+  bundleUrl: '--bundle-url',
+  artifactsDir: '--artifacts-dir',
+  stepsFile: '--steps-file',
+  searchPath: '--search-path',
+  retainPaths: '--retain-paths',
+  installSource: 'installSource',
+  metroProjectRoot: 'metroProjectRoot',
+  metroRuntimeFile: 'metroRuntimeFile',
+  iosXctestrunFile: 'iosXctestrunFile',
+  iosXctestDerivedDataPath: 'iosXctestDerivedDataPath',
+  iosXctestEnvDir: 'iosXctestEnvDir',
+  developerDir: 'developerDir',
+  artifact: '--artifact',
+  dsym: '--dsym',
+  reportJunit: '--report-junit',
+  metroHost: '--metro-host',
+  metroPort: '--metro-port',
+  surface: '--surface',
+  osVersion: '--os',
+  imageTag: '--image-tag',
+  physical: '--physical',
+  deviceMode: '--device-mode',
+  deviceBaseline: '--device-baseline',
+  record: '--record',
+  recordAs: '--record-as',
+  screenshotFullscreen: '--fullscreen',
+  perfTemplate: '--template',
+  providerSessionId: '--provider-session',
 };

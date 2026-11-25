@@ -36,11 +36,11 @@ import type {
   HostedAgentLease,
 } from '@stim-cli/agent-driver';
 import {
-  DEVICE_COMMAND_RULES,
+  DEVICE_POSITIONAL_CHECKS,
+  REFUSED_DEVICE_INPUTS,
   isJsonObject,
   REFUSED_DEVICE_COMMANDS,
   remoteScreenshot,
-  type DeviceCommandRule,
 } from './device-policy.ts';
 import { AGENT_DEVICE_RETIRE_MS, resolveAgentDevice } from './agent-device-bin.ts';
 import { listProcesses } from './processes.ts';
@@ -83,8 +83,6 @@ const POLICY = {
   },
 };
 
-const DEVICE_COMMANDS = Object.keys(DEVICE_COMMAND_RULES);
-
 const DEVICE_AGENT_DEVICE =
   'Agent control requires agent-device 0.21.30 or later on the hosting Mac. Update it with: npm install --global --prefix "$HOME/.local" agent-device';
 
@@ -115,7 +113,6 @@ function devicePolicy(device: HostedAgentDevice) {
   return {
     version: 1,
     devices: { allow: [{ [selector]: id }] },
-    commands: { allow: DEVICE_COMMANDS },
     capabilities: { deny: ['device-shutdown'] },
   };
 }
@@ -127,7 +124,7 @@ function devicePolicyDigest(device: HostedAgentDevice): string {
     .update(
       JSON.stringify({
         devices: [id],
-        commands: { mode: 'allow', names: DEVICE_COMMANDS.toSorted() },
+        commands: null,
         capabilities: ['device-shutdown'],
       }),
     )
@@ -1028,7 +1025,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             hint:
               refusal.rule === 'recording'
                 ? 'Run agent-device record stop, then start a new recording.'
-                : `The hosted agent connection allows only ${(this.options.device ? DEVICE_COMMANDS : POLICY.commands.allow).join(', ')} on the one ${this.options.device ? (this.options.device.udid ? 'hosted iOS simulator' : 'hosted Android emulator') : 'leased macOS app'}; retrying will not help.`,
+                : this.options.device
+                  ? `Stim refuses this on the hosted ${this.options.device.udid ? 'iOS simulator' : 'Android emulator'}; retrying will not help.`
+                  : `The hosted agent connection allows only ${POLICY.commands.allow.join(', ')} on the one leased macOS app; retrying will not help.`,
             retriable: false,
             details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule: refusal.rule, ...refusal.details },
           },
@@ -1539,32 +1538,6 @@ const DEVICE_CLIENT_AMBIENT_INPUTS = [
   'provider',
 ];
 
-// agent-device's macos-app lease rejects these host inputs; ios-instance does not (ADR 0007).
-const HOST_INPUTS = [
-  'out',
-  'saveScript',
-  'sessionSaveScript',
-  'baseline',
-  'launchConsole',
-  'launchArgs',
-  'launchUrl',
-  'bundleUrl',
-  'artifactsDir',
-  'stepsFile',
-  'searchPath',
-  'retainPaths',
-  'installSource',
-  'metroProjectRoot',
-  'metroRuntimeFile',
-  'iosXctestrunFile',
-  'iosXctestDerivedDataPath',
-  'iosXctestEnvDir',
-  'developerDir',
-  'artifact',
-  'dsym',
-  'reportJunit',
-];
-
 function pinDeviceRequest(
   rpc: Record<string, unknown>,
   id: Refusal['id'],
@@ -1625,13 +1598,6 @@ function pinDeviceRequest(
   return { rpc };
 }
 
-const DEVICE_SESSION_INPUTS = ['platform', 'verbose', 'session', 'leaseId', 'noRecord'];
-
-function refusedKey(command: string, rule: DeviceCommandRule, key: string): string {
-  const flag = Object.entries({ ...rule.flags, ...rule.refused }).find(([, value]) => value === key)?.[0];
-  return `Refused ${command} ${flag ?? JSON.stringify(key.slice(0, MAX_ECHO))}: a hosted device does not take it.`;
-}
-
 function inspectDeviceCommand(
   params: Record<string, unknown>,
   id: Refusal['id'],
@@ -1639,16 +1605,11 @@ function inspectDeviceCommand(
 ): Refusal | null {
   const refuse = (rule: Refusal['rule'], message: string): Refusal => ({ id, rule, message, details: {} });
   const command = typeof params.command === 'string' ? params.command : '';
-  const rule = Object.hasOwn(DEVICE_COMMAND_RULES, command) ? DEVICE_COMMAND_RULES[command] : undefined;
-  if (!rule) {
-    const name = JSON.stringify(command.slice(0, MAX_ECHO));
+  if (Object.hasOwn(REFUSED_DEVICE_COMMANDS, command))
     return refuse(
       'command',
-      Object.hasOwn(REFUSED_DEVICE_COMMANDS, command)
-        ? `Refused command ${name}: ${REFUSED_DEVICE_COMMANDS[command]}`
-        : `Refused command ${name}: it is not a hosted device command.`,
+      `Refused command ${JSON.stringify(command.slice(0, MAX_ECHO))}: ${REFUSED_DEVICE_COMMANDS[command]}`,
     );
-  }
   if (device.platform === 'android' && params.serial !== undefined && params.serial !== device.id)
     return refuse('device', 'Another emulator is refused; this connection targets one hosted emulator.');
   if (isJsonObject(params.runtime) && Object.keys(params.runtime).length > 0)
@@ -1660,13 +1621,6 @@ function inspectDeviceCommand(
   const screenshot = command === 'screenshot';
   const positionals = Array.isArray(params.positionals) ? params.positionals : [];
   const recordStart = command === 'record' && positionals[0] === 'start';
-  const allowed = new Set([
-    ...DEVICE_CLIENT_AMBIENT_INPUTS,
-    ...DEVICE_SELECTORS,
-    ...DEVICE_SESSION_INPUTS,
-    ...Object.values(rule.flags ?? {}),
-    ...(rule.keys ?? []),
-  ]);
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields)) continue;
     if (
@@ -1676,20 +1630,18 @@ function inspectDeviceCommand(
     )
       return refuse('device', `Another ${noun} is refused; this connection targets one hosted ${noun}.`);
     if (fields.shutdown === true) return refuse('command', 'Simulator shutdown is refused; use stim stop.');
-    const unknown = Object.keys(fields).find((key) => fields[key] !== undefined && !allowed.has(key));
-    if (unknown !== undefined) return refuse('request', refusedKey(command, rule, unknown));
-    if (
-      HOST_INPUTS.some(
-        (key) =>
-          fields[key] !== undefined &&
-          fields[key] !== false &&
-          !(screenshot && key === 'out' && remoteScreenshot(fields[key])) &&
-          !(recordStart && key === 'out'),
-      )
-    )
-      return refuse('host-path', 'Host paths and launch inputs are refused.');
+    for (const [key, flag] of Object.entries(REFUSED_DEVICE_INPUTS)) {
+      if (fields[key] === undefined || fields[key] === false) continue;
+      if (key === 'out' && ((screenshot && remoteScreenshot(fields[key])) || recordStart)) continue;
+      return refuse(
+        'host-path',
+        `Refused ${command} ${flag}: a hosted device does not take host paths, launch inputs or device selection.`,
+      );
+    }
   }
-  const refusal = rule.positionals?.(positionals, params);
+  const refusal = Object.hasOwn(DEVICE_POSITIONAL_CHECKS, command)
+    ? DEVICE_POSITIONAL_CHECKS[command]?.(positionals, params)
+    : undefined;
   if (refusal) return refuse(refusal.rule, refusal.message);
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields) || fields.batchSteps === undefined) continue;

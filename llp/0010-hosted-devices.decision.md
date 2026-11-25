@@ -104,6 +104,19 @@ Hosting approval never widens ordinary workspace read or phone control.
 
 An old capture helper or input child can outlive a connection. Holding the same device’s claims across capture, installation and teardown prevents it from acting on a replacement. [iOS control](https://github.com/appandflow/stim/pull/2359), [Android control](https://github.com/appandflow/stim/pull/2721), [macOS control](https://github.com/appandflow/stim/pull/2485), [Recorder cleanup](https://github.com/appandflow/stim/pull/5031).
 
+## Refuse known harmful hosted device operations
+
+Maintainer decision: "stop keeping an allow list for hosted simulators and emulators, and block only what is known to be harmful", 2026-11-24 ([#6221](https://github.com/appandflow/stim/issues/6221)).
+
+Connected machines are trusted; the guard protects the host, other sessions and
+Stim's records from an agent's honest mistake. Refused commands name known
+harmful operations. One refused request key list covers host paths, launch
+inputs and device selection. Positional guards constrain app ids, remote
+artifacts, inline push JSON and session artifacts. The daemon policy pins the
+device and denies shutdown without a commands field. Unknown commands and keys
+pass. A future agent-device command acting on the host stays open until added
+to the refused commands or keys. macOS app leases retain their command allow list.
+
 ## Code
 
 - [Session admission, resume and teardown](../packages/server/src/device-host.ts), [capture and input](../packages/server/src/hosted-view.ts).

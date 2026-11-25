@@ -40,7 +40,7 @@ const digest = () => {
   if (!policy.devices) return undefined;
   return createHash('sha256').update(JSON.stringify({
     devices: policy.devices.allow.map((device) => device.udid ?? device.serial),
-    commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
+    commands: policy.commands ? { mode: 'allow', names: policy.commands.allow.toSorted() } : null,
     capabilities: policy.capabilities.deny,
   })).digest('hex');
 };
