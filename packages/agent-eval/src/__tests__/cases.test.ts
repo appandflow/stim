@@ -324,3 +324,86 @@ test('verify and stop needs the workspace-wide stop, not one slot', () => {
 test('free disk does not count a dry run that only printed help', () => {
   expect(outcome('free-disk', [call(['gc', '--dry-run', '--help'])])).toBe('inconclusive');
 });
+
+const guideAgent = () => call(['guide', 'agent'], { kind: 'guide' });
+
+test.each([
+  ['website-simulator', [['ios', '--device-type', 'iPhone 17', '--runtime=26.5']], true],
+  ['website-simulator', [['ios', '--device-type', 'iPhone 16', '--runtime', '26.5']], false],
+  ['website-phone', [['ios', '--device']], true],
+  ['website-phone', [['ios']], false],
+  ['website-logs', [['logs', '--errors', '--since', '10m']], true],
+  ['website-logs', [['logs', '--errors']], false],
+  ['website-stop', [['stop']], true],
+  ['website-stop', [['stop', '--slot', 'phone']], false],
+  [
+    'website-slots',
+    [
+      ['ios', '--slot', 'phone'],
+      ['ios', '--slot=tablet', '--device-type', 'iPad Air 11-inch (M3)'],
+      ['ios', '--slot', 'hardware', '--device'],
+    ],
+    true,
+  ],
+  [
+    'website-slots',
+    [
+      ['ios', '--slot', 'phone'],
+      ['ios', '--slot', 'tablet'],
+      ['ios', '--slot', 'hardware', '--device'],
+    ],
+    false,
+  ],
+])('website prompt %s after the guide: %j passes %s', (id, argvs, expected) => {
+  expect(grade(id, [guideAgent(), ...argvs.map((argv) => call(argv))])).toBe(expected);
+});
+
+test('website prompts fail when any stim action comes before the guide', () => {
+  expect(grade('website-phone', [call(['ios', '--device']), guideAgent()])).toBe(false);
+  expect(grade('website-phone', [call(['ios']), guideAgent(), call(['ios', '--device'])])).toBe(false);
+});
+
+test('website phone fails when another launch targets a simulator', () => {
+  expect(grade('website-phone', [guideAgent(), call(['ios']), call(['ios', '--device'])])).toBe(false);
+});
+
+test('website slots fail when the devices are stopped', () => {
+  const launched = [
+    ['ios', '--slot', 'phone'],
+    ['ios', '--slot', 'tablet', '--device-type', 'iPad Pro 13-inch (M5)'],
+    ['ios', '--slot', 'hardware', '--device'],
+  ].map((argv) => call(argv));
+  expect(grade('website-slots', [guideAgent(), ...launched, call(['stop'])])).toBe(false);
+});
+
+test('website worktree needs warm in a new worktree and no launch in the original checkout', () => {
+  const guide = guideAgent();
+  const warm = call(['worktree', 'warm'], { cwdRelative: '.worktrees/change' });
+  const ios = call(['ios'], { cwdRelative: '.worktrees/change' });
+  expect(grade('website-worktree', [guide, warm, ios])).toBe(true);
+  expect(grade('website-worktree', [guide, call(['worktree', 'warm']), call(['ios'])])).toBe(false);
+  expect(grade('website-worktree', [guide, warm, ios, call(['ios'])])).toBe(false);
+  const warmedLate = [
+    guide,
+    call(['worktree', 'warm']),
+    call(['ios'], { cwdRelative: '.worktrees/change' }),
+    call(['worktree', 'warm'], { cwdRelative: '.worktrees/change' }),
+  ];
+  expect(grade('website-worktree', warmedLate)).toBe(false);
+  const subdirectory = [
+    guide,
+    call(['worktree', 'warm'], { cwdRelative: 'src' }),
+    call(['ios'], { cwdRelative: 'src' }),
+  ];
+  expect(grade('website-worktree', subdirectory)).toBe(false);
+  const otherWorktree = [guide, warm, call(['ios'], { cwdRelative: '.worktrees/other' })];
+  expect(grade('website-worktree', otherWorktree)).toBe(false);
+});
+
+test('website failure needs logs --errors after the failed launch and before any relaunch', () => {
+  const failed = () => call(['ios'], { exitCode: 1 });
+  const errors = () => call(['logs', '--errors']);
+  expect(grade('website-failure', [guideAgent(), failed(), errors(), failed()])).toBe(true);
+  expect(grade('website-failure', [guideAgent(), failed(), failed(), errors()])).toBe(false);
+  expect(grade('website-failure', [guideAgent(), failed()])).toBe(false);
+});

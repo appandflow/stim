@@ -93,6 +93,7 @@ function permissionProfile(paths: TrialPaths): string {
     ':minimal': 'read',
     ':workspace_roots': 'write',
     [paths.harness]: 'write',
+    [join(paths.base, 'repo', '.git')]: 'write',
     [paths.bin]: 'read',
     [paths.home]: 'read',
     [join(paths.base, 'repo', '.git')]: 'read',

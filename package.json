@@ -28,7 +28,6 @@
     "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
     "release:prep": "node scripts/release-prep.mjs",
     "preinstall": "npx only-allow pnpm",
-    "test:prompts": "node scripts/prompt-eval/run.mjs",
     "rpc:generate": "node scripts/generate-rpc-validators.mjs",
     "rpc:check": "node scripts/generate-rpc-validators.mjs --check"
   },

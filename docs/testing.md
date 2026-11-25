@@ -291,8 +291,8 @@ other full-suite and native validation work paused. Do not use retries, change
 the repository's worker defaults, or serialize the suites to call this proof a
 pass.
 
-The opt-in [website prompt evaluation](../scripts/prompt-eval/README.md) checks
-real-agent command selection against the shipped guides without native builds.
+The on-demand [agent evals](../packages/agent-eval/README.md) check how real
+agents act on the shipped skill, guides and website prompts without native builds.
 
 ## Optional mobile AI pilot
 
