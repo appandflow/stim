@@ -638,7 +638,7 @@ if (process.argv[2] !== 'build') {
     await writeFile(exclusiveClaimDir(claimRoot), '');
     expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty(
       'result.capacity.declined',
-      expect.stringContaining(`Stim cannot tell whether the build worker claim at ${exclusiveClaimDir(claimRoot)}`),
+      'another build of this repository is running here',
     );
     await rm(exclusiveClaimDir(claimRoot));
     expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty('result.capacity.declined', null);

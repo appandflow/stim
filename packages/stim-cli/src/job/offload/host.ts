@@ -20,7 +20,6 @@ import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import { isDeepStrictEqual } from 'node:util';
 import {
-  ClaimRefusedError,
   claimFilesRemoveCommand,
   claimRemoveCommand,
   markClaimChildPending,
@@ -664,7 +663,9 @@ export class BuildHost {
         capacity: {
           ...capacity,
           ...memory,
-          declined: capacity.declined ?? areaBuildDecline(area),
+          ...(!capacity.declined && areaBuilding(area)
+            ? { declined: 'another build of this repository is running here' }
+            : {}),
         },
         warm: {
           checkout: existsSync(join(area, 'src')),
@@ -1520,18 +1521,13 @@ function areaBuilt(area: string): string[] {
   }
 }
 
-/** Why area claims block `build.start`, or null when they do not. */
-function areaBuildDecline(area: string): string | null {
+/** Whether live or unresolved claims block `build.start` in this area. */
+function areaBuilding(area: string): boolean {
   try {
-    const root = `${area}.claims`;
-    const claims = readClaimSet(root);
-    const entry = claims.unresolved[0];
-    if (entry)
-      return new ClaimRefusedError({ claimPath: entry.path, root, label: 'build worker', reason: entry.reason })
-        .message;
-    return claims.live.length > 0 ? 'another build of this repository is running here' : null;
+    const claims = readClaimSet(`${area}.claims`);
+    return claims.live.length > 0 || claims.unresolved.length > 0;
   } catch {
-    return null;
+    return false;
   }
 }
 
