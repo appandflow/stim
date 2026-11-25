@@ -20,9 +20,13 @@ public enum SimulatorRotation {
 
   /// Drops the remembered orientation of a simulator that shut down: it boots upright.
   public static func forget(udid: String) {
+    remember(nil, udid: udid)
+  }
+
+  static func remember(_ orientation: UInt32?, udid: String) {
     lock.lock()
     defer { lock.unlock() }
-    sent[udid] = nil
+    sent[udid] = orientation
   }
 
   public static func rotate(udid: String, clockwise: Bool) -> Bool {
@@ -44,9 +48,7 @@ public enum SimulatorRotation {
     } else {
       guard send(orientation: next, to: device) else { return false }
     }
-    lock.lock()
-    sent[udid] = next
-    lock.unlock()
+    remember(next, udid: udid)
     NotificationCenter.default.post(name: didRotate, object: udid)
     return true
   }

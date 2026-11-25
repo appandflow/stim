@@ -166,7 +166,6 @@ public final class SimulatorDisplayNSView: NSView {
   private var udid: String?
   private var screenID: UInt32 = 1
   private var display: SimDisplay?
-  private var singlePanel = true
   private let callbackID = NSUUID()
   private var redrawPending = false
   private var retryTimer: Timer?
@@ -266,6 +265,7 @@ public final class SimulatorDisplayNSView: NSView {
 
   func detach() {
     disconnect()
+    if let udid, CoreSimulator.displays(udid: udid).isEmpty { SimulatorRotation.forget(udid: udid) }
     udid = nil
   }
 
@@ -297,6 +297,7 @@ public final class SimulatorDisplayNSView: NSView {
     }
     let displays = CoreSimulator.displays(udid: udid)
     guard let display = displays.first(where: { $0.screenProperties?.screenID == screenID }) else {
+      if displays.isEmpty { SimulatorRotation.forget(udid: udid) }
       watchInput()
       retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
         self?.retryTimer = nil
@@ -305,7 +306,6 @@ public final class SimulatorDisplayNSView: NSView {
       return
     }
     self.display = display
-    singlePanel = displays.filter { $0.screenProperties?.screenType == 0 }.count < 2
     watchInput()
     showSurface()
     display.registerSurfacesCallback(callbackID) { [weak self] _ in
@@ -324,7 +324,8 @@ public final class SimulatorDisplayNSView: NSView {
   private func showSurface() {
     guard let display, let udid else { return }
     let app = display.screenProperties?.uiOrientation ?? 1
-    let device = singlePanel ? SimulatorRotation.orientation(udid: udid) : nil
+    let panels = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }.count
+    let device = panels < 2 ? SimulatorRotation.orientation(udid: udid) : nil
     showSurface(display.framebufferSurface, orientation: screenOrientation(app: app, device: device))
   }
 

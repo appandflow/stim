@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 
 @testable import SimulatorFrames
@@ -190,4 +191,25 @@ import Testing
     }
   }
 
+}
+
+@Suite struct RememberedRotationTests {
+  @Test @MainActor func aSimulatorWithNoScreenBootsUprightAgain() {
+    let udid = UUID().uuidString
+    SimulatorRotation.remember(3, udid: udid)
+    let view = SimulatorDisplayNSView(frame: .zero)
+    view.attach(udid: udid, screenID: 1)
+    #expect(SimulatorRotation.orientation(udid: udid) == nil)
+    #expect(screenOrientation(app: 1, device: SimulatorRotation.orientation(udid: udid)) == 1)
+    view.detach()
+  }
+
+  @Test @MainActor func detachingFromAShutDownSimulatorForgetsItsTurn() {
+    let udid = UUID().uuidString
+    let view = SimulatorDisplayNSView(frame: .zero)
+    view.attach(udid: udid, screenID: 1)
+    SimulatorRotation.remember(4, udid: udid)
+    view.detach()
+    #expect(SimulatorRotation.orientation(udid: udid) == nil)
+  }
 }
