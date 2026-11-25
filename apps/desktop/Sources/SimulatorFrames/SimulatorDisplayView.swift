@@ -242,6 +242,15 @@ public final class SimulatorDisplayNSView: NSView {
       inputStatus.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       inputStatus.topAnchor.constraint(equalTo: topAnchor, constant: 8),
     ])
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(rotated(_:)), name: SimulatorRotation.didRotate, object: nil)
+  }
+
+  @objc private func rotated(_ notification: Notification) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self, notification.object as? String == self.udid else { return }
+      self.showSurface()
+    }
   }
 
   required init?(coder: NSCoder) { nil }
@@ -311,8 +320,12 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func showSurface() {
-    guard let display else { return }
-    showSurface(display.framebufferSurface, orientation: display.screenProperties?.uiOrientation ?? 1)
+    guard let display, let udid else { return }
+    let app = display.screenProperties?.uiOrientation ?? 1
+    let panels = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }.count
+    let device =
+      panels < 2 ? SimulatorRotation.orientation(udid: udid, bootedAt: SimulatorRotation.bootedAt(udid: udid)) : nil
+    showSurface(display.framebufferSurface, orientation: screenOrientation(app: app, device: device))
   }
 
   func showSurface(_ surface: IOSurface?, orientation: UInt32) {

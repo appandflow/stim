@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 
 @testable import SimulatorFrames
@@ -190,4 +191,16 @@ import Testing
     }
   }
 
+}
+
+@Suite struct RememberedRotationTests {
+  @Test func aTurnFromAnEarlierBootIsNotTheDevicesOrientation() {
+    let udid = UUID().uuidString
+    let firstBoot = Date(timeIntervalSince1970: 1_000)
+    SimulatorRotation.remember(3, udid: udid, bootedAt: firstBoot)
+    #expect(SimulatorRotation.orientation(udid: udid, bootedAt: firstBoot) == 3)
+    let device = SimulatorRotation.orientation(udid: udid, bootedAt: Date(timeIntervalSince1970: 2_000))
+    #expect(device == nil)
+    #expect(screenOrientation(app: 1, device: device) == 1)
+  }
 }
