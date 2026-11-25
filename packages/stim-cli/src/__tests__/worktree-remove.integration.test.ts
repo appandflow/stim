@@ -26,6 +26,8 @@ import {
 } from '../commands/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
+import { NATIVE_RUN_LOCK } from '../engine/native-run.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { serviceRunningFrom } from '../workspace/service-guard.ts';
 import { startOp } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
@@ -1102,6 +1104,79 @@ test('action: a missing recorded tunnel does not block normal worktree removal',
   expect(getProject(wtDir)).toBeNull();
   expect(existsSync(workspaceDir(wtDir))).toBe(false);
   expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(true);
+});
+
+function linkedWorktreeExecutor() {
+  return makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+}
+
+async function removeWhileHeld(details: Record<string, string>, releaseOn: RegExp | null) {
+  upsertProject(wtDir, { label: 'feature' });
+  ensureWorkspaceStorage(wtDir);
+  const exec = linkedWorktreeExecutor();
+  setExecutor(exec);
+  let release!: () => void;
+  const released = new Promise<void>((done) => {
+    release = done;
+  });
+  let acquired!: () => void;
+  const held = new Promise<void>((done) => {
+    acquired = done;
+  });
+  const holder = withWorkspaceProcessLock(
+    workspaceDir(wtDir),
+    NATIVE_RUN_LOCK,
+    async () => {
+      acquired();
+      await released;
+    },
+    { external: true, waitMs: 0, details },
+  );
+  await held;
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => {
+    errs.push(String(message));
+    if (releaseOn?.test(String(message))) release();
+  };
+  try {
+    await captureAction(removeOp)(wtDir, {});
+  } finally {
+    console.error = original;
+    release();
+    await holder;
+  }
+  return { exec, text: errs.join('\n') };
+}
+
+test('action: removal waits for a background pass that holds the native-run lock, then removes the worktree', async () => {
+  const { exec, text } = await removeWhileHeld(
+    { purpose: 'fingerprint evaluation' },
+    /waiting for Stim's fingerprint evaluation \(pid \d+/,
+  );
+
+  expect(text).toMatch(/waiting for Stim's fingerprint evaluation/);
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBeNull();
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(true);
+});
+
+test.each([
+  ['a command run', { command: 'ios', platform: 'ios' }, /`stim ios` \(pid \d+.*\) holds its native-run\.lock/],
+  ['a claim with no purpose', {}, /another Stim run \(pid \d+.*\) holds its native-run\.lock/],
+])('action: removal refuses at once while %s holds the native-run lock, naming it', async (_, details, reason) => {
+  const { exec, text } = await removeWhileHeld(details, null);
+
+  expect(text).not.toMatch(/waiting for/);
+  expect(text).toMatch(reason);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
 });
 
 test('action: a retained EAS session prevents generic worktree removal', async () => {

@@ -1455,6 +1455,7 @@ export async function removeWorktrees(
           : undefined;
       removed = await removeWorktreeTarget(candidate.path, {
         linkedOnly: true,
+        backgroundLockWait: false,
         ...(candidate.discovered ? { podChurnIsDirty: true } : {}),
         guard,
         mergedHead,

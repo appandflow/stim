@@ -50,6 +50,8 @@ export function describeNativeRunHolder(holder: ClaimHolder, now: number): strin
   const started = Date.parse(holder.startedAt);
   const facts = [`pid ${holder.owner.pid}`];
   if (Number.isFinite(started)) facts.push(`running for ${formatElapsed(now - started)}`);
+  const { purpose } = holder.details;
+  if (command === null && typeof purpose === 'string') return `Stim's ${purpose} (${facts.join(', ')})`;
   if (command === null) return `another Stim run (${facts.join(', ')})`;
   if (command === 'build') return `an artifact build (${facts.join(', ')})`;
   return `\`stim ${command}${slot === 'default' ? '' : ` --slot ${slot}`}\` (${facts.join(', ')})`;
