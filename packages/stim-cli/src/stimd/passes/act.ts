@@ -498,8 +498,14 @@ async function deleteTrashAction(context: ActContext): Promise<ActionOutcome> {
     : kept('none is deletable now');
 }
 
-async function deleteTempLeftoversAction(): Promise<ActionOutcome> {
-  const { value: done } = await quietly(() => deleteTempLeftovers());
+async function deleteTempLeftoversAction(context: ActContext): Promise<ActionOutcome> {
+  const { value: done } = await quietly(() =>
+    deleteTempLeftovers({
+      env: context.operation?.env,
+      signal: context.operation?.signal,
+      operation: context.operation,
+    }),
+  );
   if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
   return done.count ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` } : kept('none is idle now');
 }
@@ -606,7 +612,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-delete-gradle-version':
       return deleteGradleVersionAction(action, context);
     case 'would-delete-temp-leftovers':
-      return deleteTempLeftoversAction();
+      return deleteTempLeftoversAction(context);
     case 'would-delete-trash':
       return deleteTrashAction(context);
     case 'would-delete-status-caches':

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import * as gcDevices from '../commands/gc/devices.ts';
+import { processContext } from '../cli-operation.ts';
 import { collectTempLeftovers, deleteTempLeftovers, tempLeftoverSection } from '../commands/gc/temp-leftovers.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -315,6 +316,22 @@ test('rung 6 plans and deletes the idle leftovers', async () => {
   const outcome = await executeAction(action, { settings, protectedRoot: '' });
   expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
   expect([existsSync(idle), existsSync(recent)]).toEqual([false, true]);
+});
+
+test('rung 6 deletes leftovers from the operation temp directory', async () => {
+  const idle = oldDir('stim-server-AbC123', { 'state.json': '{}' });
+  const operation = { ...processContext(home), env: { ...process.env, TMPDIR: fakeTmp } };
+  for (const key of TMP_KEYS) process.env[key] = outside;
+  const settings = { ...resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), removeFinishedWorktrees: false };
+
+  const planned = await planRung6(settings, { operation });
+  const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');
+  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp) }));
+  if (!action) return;
+
+  const outcome = await executeAction(action, { settings, protectedRoot: '', operation });
+  expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
+  expect(existsSync(idle)).toBe(false);
 });
 
 test('cancelling temporary cleanup yields during removal and preserves the next leftover', async () => {
