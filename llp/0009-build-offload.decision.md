@@ -316,9 +316,12 @@ while stimd is ready, removes the folder of a recorded id that the approvals, re
 removal as a revocation with the same retain reasons, each logged once until it changes. It acts on nothing when either
 file cannot be read whole or an approval entry's id is not a registry id, and an approval entry this version cannot
 read, or whose `capabilities` is not a list of names, names its id. A folder with no record stays whatever it is named
-or holds, because a client's build writes there. An id leaves the record only after this process deleted that folder,
-never because the folder reads absent, which an unmounted volume also shows. Folders orphaned before this rule, or by
-hand-editing the registry, have no record and are not removed automatically.
+or holds, because a client's build writes there. Every removal of a whole client folder, a revocation's included, stops
+the client's jobs and drops its kept bundles, then keeps the folder while the approvals cannot be read whole or still
+name the id. An id leaves the record only after this process deleted that folder, never because the folder reads absent,
+which an unmounted volume also shows: the folder is checked again, by device and inode, just before it is deleted, and
+one that went away or changed meanwhile stays recorded. Folders orphaned before this rule, or by hand-editing the
+registry, have no record and are not removed automatically.
 
 A worker held 7 areas, 20 GB, of a client that `stim pairings` no longer listed a month after a revocation no running
 stimd had served, while age eviction, which reads only approved clients, never reached them. Recorded in

@@ -349,6 +349,8 @@ export interface BuildWorkerRootOptions {
   removed?: () => readonly string[] | null;
   /** Drops `client` from that record once this process removed its folder. */
   forget?: (client: string) => void;
+  /** Whether the build approvals may still name `client`, true when they cannot be read; its folder then stays. */
+  mayBeApproved?: (client: string) => boolean;
   /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
   ready?: () => boolean;
   /** The offload jobs running now. */
@@ -569,7 +571,12 @@ export class BuildWorkerRoot {
     await this.options.stopJobs(client);
     const clientDir = this.clientDir(client);
     for (const token of handoffTokens(clientDir)) dropHandoff(clientDir, token);
-    const existed = lstatSync(clientDir, { throwIfNoEntry: false }) !== undefined;
+    // @ref LLP 0009#repository-ownership-and-cleanup -- a folder goes only once the approvals, read whole, omit its id
+    if (this.options.mayBeApproved?.(client)) {
+      note(`stim-server: retaining the build area of ${client}: the build approvals may still name it.`);
+      return false;
+    }
+    const before = lstatSync(clientDir, { throwIfNoEntry: false });
     if (notRealDirectory(clientDir)) return await this.removeDir(client, clientDir, note);
     if (!(await this.resumeEvicted(client))) {
       note(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
@@ -612,7 +619,15 @@ export class BuildWorkerRoot {
       if (ownsWindowsGradleHome(clientDir)) dirs.push(gradleUserHome(clientDir));
       if (!(await this.removeWindowsDirs(client, dirs, note))) return false;
     }
-    return (await this.removeDir(client, clientDir, note)) && existed;
+    if (!before) return false;
+    const now = lstatSync(clientDir, { throwIfNoEntry: false });
+    if (!now?.isDirectory() || now.dev !== before.dev || now.ino !== before.ino) {
+      note(`stim-server: retaining the build area of ${client}: its folder went away or changed during the removal.`);
+      return false;
+    }
+    return (
+      (await this.removeDir(client, clientDir, note)) && lstatSync(clientDir, { throwIfNoEntry: false }) === undefined
+    );
   }
 
   private async removeDir(client: string, dir: string, note: (line: string) => void): Promise<boolean> {

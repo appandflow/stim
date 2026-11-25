@@ -552,6 +552,12 @@ function recordRemovedBuildClients(ids: readonly string[]): void {
   writeJson(removedBuildClientsFile(), { version: REMOVED_VERSION, clients });
 }
 
+/** Whether `build-clients.json` may still name `id`: it does, or it cannot be read whole. */
+export function buildClientMayBeApproved(id: string): boolean {
+  const listed = listedBuildClients();
+  return listed === null || listed.has(id);
+}
+
 /**
  * The build clients whose worker folders may be removed: recorded as dropped from `build-clients.json` and not named
  * there now. Null when either file cannot be read whole.

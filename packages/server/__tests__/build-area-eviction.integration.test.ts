@@ -26,6 +26,7 @@ import { BuildWorkerRoot, writeHandoff, type BuildLimits, type BuildWorkerRootOp
 import { BuildHost, type BuildHostOptions } from '../../stim-cli/src/job/offload/host.ts';
 import { areaLastUsed, recordAreaUse, recordRootUsage } from '../src/worker-areas.ts';
 import {
+  buildClientMayBeApproved,
   forgetRemovedBuildClient,
   removedBuildClients,
   revokeDevice,
@@ -67,7 +68,8 @@ class Worker {
 
   constructor(
     limits: Partial<BuildLimits>,
-    options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'removed' | 'forget'>,
+    options: Partial<BuildHostOptions> &
+      Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'removed' | 'forget' | 'mayBeApproved'>,
   ) {
     this.host = new BuildHost({ worker: join(home, 'worker.mjs'), env: process.env, limits, ...options });
     this.root = new BuildWorkerRoot({
@@ -76,6 +78,7 @@ class Worker {
       ready: options.ready,
       removed: options.removed,
       forget: options.forget,
+      mayBeApproved: options.mayBeApproved,
       jobs: () => this.live.values(),
       stopJobs: async (client) => {
         for (const [entry, owner] of this.live) {
@@ -148,7 +151,8 @@ class Worker {
 
 const start = (
   limits: Partial<BuildLimits> = {},
-  options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'removed' | 'forget'> = {},
+  options: Partial<BuildHostOptions> &
+    Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'removed' | 'forget' | 'mayBeApproved'> = {},
 ) => {
   running = new Worker({ daemonSweepMs: 60 * 60_000, ...limits }, options);
   return running;
@@ -1650,7 +1654,11 @@ describe('a build client whose approval was removed', () => {
     return isJsonObject(record) ? record.clients : undefined;
   };
   const newKey = () => randomBytes(32).toString('base64url');
-  const removals = { removed: removedBuildClients, forget: forgetRemovedBuildClient };
+  const removals = {
+    removed: removedBuildClients,
+    forget: forgetRemovedBuildClient,
+    mayBeApproved: buildClientMayBeApproved,
+  };
 
   function approveBuild(publicKey = newKey()): string {
     const ticket = Buffer.from(newSecret(), 'base64url');
@@ -1744,6 +1752,38 @@ describe('a build client whose approval was removed', () => {
     rmSync(join(root, id), { recursive: true });
     await start({}, removals).remove(id);
     expect(recorded()).toEqual([id]);
+  });
+
+  test('a served client whose approval entry this version cannot read keeps its folder through revocation', async () => {
+    const id = approveBuild();
+    const path = area(id, 'subject', 0);
+    const file: unknown = JSON.parse(readFileSync(registry(), 'utf8'));
+    assert(isJsonObject(file) && Array.isArray(file.devices));
+    file.devices = [{ id, record: { kind: 'passkey' } }];
+    writeFileSync(registry(), JSON.stringify(file));
+    const host = start({}, removals);
+    host.root.serve(id);
+    host.root.abandonDetached(() => false, true);
+    await host.remove(id);
+    expect(existsSync(path)).toBe(true);
+    expect(logs.join('\n')).toMatch(
+      new RegExp(`retaining the build area of ${id}: the build approvals may still name it`),
+    );
+  });
+
+  test('a folder that goes away during the removal, as on an unmount, keeps the record', async () => {
+    const id = revoked();
+    const away = join(home, 'unmounted');
+    const list = fsPromises.readdir;
+    vi.spyOn(fsPromises, 'readdir').mockImplementation(async (path, options) => {
+      if (path === join(root, id, 'repos')) fs.renameSync(join(root, id), away);
+      return list(path, options);
+    });
+    syncBuiltinESMExports();
+    await start({}, removals).evictAreas();
+    expect(recorded()).toEqual([id]);
+    expect(existsSync(join(away, 'repos', 'subject', 'src', 'file'))).toBe(true);
+    expect(logs.join('\n')).toMatch(/its folder went away or changed during the removal/);
   });
 
   test('keeps the record through a failed deletion, and drops it once a later pass deletes the folder', async () => {

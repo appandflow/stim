@@ -98,6 +98,7 @@ import { digest } from './share-identity.ts';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
+  buildClientMayBeApproved,
   buildClientsReadable,
   forgetRemovedBuildClient,
   removedBuildClients,
@@ -859,6 +860,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     allowed: (client) => buildAllowed({ id: client }),
     removed: removedBuildClients,
     forget: forgetRemovedBuildClient,
+    mayBeApproved: buildClientMayBeApproved,
     jobs: () => jobs.live(),
     stopJobs: (client) => jobs.stop(client),
   });
