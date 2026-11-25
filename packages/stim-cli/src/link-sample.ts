@@ -382,7 +382,7 @@ async function builtInPlace(
  * SAMPLE_TIMEOUT_MS, so a build after the sample ends it. A `.build` folder is checked only in a package listed with a
  * native project folder, and build output outside those folders (such as React Native built from source) is not seen.
  * No read starts after `until`, and a sample that `until` left less than SAMPLE_TIMEOUT_MS records no `timeout`
- * verdict. A package list (`.pnpm` or a scope folder) that could not be read leaves no `links` verdict. Both records are written under their
+ * verdict. A package list (`.pnpm` or a scope folder) that could not be read leaves no verdict. Both records are written under their
  * lock; when it is not had in time, there is no verdict and nothing is written.
  */
 export async function hardLinkSample(
@@ -432,11 +432,11 @@ export async function hardLinkSample(
   }
   const counts = { linked: sample.linked, sampled: sample.sampled };
   const store = sample.store ?? undefined;
+  if (sample.incomplete) return null;
   if (sample.sampled < MIN_FILES || sample.packages < MIN_PACKAGES || sample.linked < sample.sampled * LINKED_SHARE) {
     await write('other', counts, store);
     return null;
   }
-  if (sample.incomplete) return null;
   if (!native?.complete) native = await findNativeRoots(path, signature, sample.dirs, native, io, until, signal);
   if (!native?.complete) return null;
   const built = await builtInPlace(native.roots, io, until, signal);
