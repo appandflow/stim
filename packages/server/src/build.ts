@@ -104,6 +104,7 @@ const DAY_MS = 24 * HOUR_MS;
 const EVICTED_DIR = 'evicted';
 const HANDOFFS_DIR = 'handoffs';
 const HANDOFF_TOKEN = /^[0-9a-f]{64}$/;
+const CLIENT_ID = /^[0-9a-f]{8}$/;
 
 export const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
@@ -342,6 +343,8 @@ export interface BuildWorkerRootOptions {
   limits?: Partial<BuildLimits>;
   /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
   allowed?: (client: string) => boolean;
+  /** The clients the build approvals name, or null when they cannot be read; an eviction pass removes the others. */
+  listed?: () => ReadonlySet<string> | null;
   /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
   ready?: () => boolean;
   /** The offload jobs running now. */
@@ -681,8 +684,9 @@ export class BuildWorkerRoot {
   }
 
   /**
-   * Evicts repository areas of approved clients: those unused for longer than `server.workerAreaMaxAgeDays` and, while
-   * the volume is near the disk floor, the least recently used. Calls made during a pass join it.
+   * Removes the folders of clients the build approvals do not name, then evicts repository areas of approved clients:
+   * those unused for longer than `server.workerAreaMaxAgeDays` and, while the volume is near the disk floor, the least
+   * recently used. Calls made during a pass join it.
    */
   evictAreas(): Promise<void> {
     this.evicting ??= this.evictionPass()
@@ -704,6 +708,7 @@ export class BuildWorkerRoot {
 
   private async evictionPass(): Promise<void> {
     this.lastEviction = Date.now();
+    await Promise.all(this.removeUnlisted());
     const maxAgeMs = workerAreaMaxAgeDays() * DAY_MS;
     for (const client of this.workerClients()) {
       if (this.closed) return;
@@ -815,6 +820,23 @@ export class BuildWorkerRoot {
       console.error(`stim-server: could not delete the build area ${key}: ${String(error)}`),
     );
     return { dropped: true };
+  }
+
+  private removeUnlisted(): Promise<void>[] {
+    // @ref LLP 0009#repository-ownership-and-cleanup -- a client the approvals read do not name loses its folder
+    if (this.closed || !(this.options.ready?.() ?? true)) return [];
+    const listed = this.options.listed?.() ?? null;
+    if (listed === null) return [];
+    const hasRepos = (client: string) => {
+      try {
+        return lstatSync(join(this.clientDir(client), 'repos'), { throwIfNoEntry: false })?.isDirectory() === true;
+      } catch {
+        return false;
+      }
+    };
+    return this.workerClients(true)
+      .filter((client) => CLIENT_ID.test(client) && !listed.has(client) && hasRepos(client))
+      .map((client) => this.remove(client));
   }
 
   private workerClients(all = false): string[] {

@@ -348,10 +348,12 @@ interface Contents {
 
 /** Records of protocol 1, which stored device tokens and tailnet nodes, are not read, and neither are those of a newer version. */
 function readContents(file: string): Contents {
-  const none: Contents = { slots: [], others: [], newer: null };
   const text = readRegistryText(file);
-  if (text === null) return none;
-  const registry = parseRegistry(file, text);
+  return text === null ? { slots: [], others: [], newer: null } : parseContents(file, text, parseRegistry(file, text));
+}
+
+function parseContents(file: string, text: string, registry: Record<string, unknown>): Contents {
+  const none: Contents = { slots: [], others: [], newer: null };
   const { version, devices } = registry;
   if (typeof version === 'number' && version > REGISTRY_VERSION) return { ...none, newer: version };
   if (version !== REGISTRY_VERSION) return none;
@@ -485,6 +487,31 @@ export function readBuildClients(): PairedDevice[] {
 export function buildClientsReadable(): boolean {
   const registry = readJsonObject(clientsFile('build'));
   return registry?.version === REGISTRY_VERSION && Array.isArray(registry.devices);
+}
+
+/**
+ * The ids `build-clients.json` names with `build`, an entry this version cannot read counted by its id, or null when
+ * the file is missing, unreadable, of another version or holds an entry without an id, so that an id it leaves out is
+ * one the worker positively does not approve.
+ */
+export function listedBuildClients(): ReadonlySet<string> | null {
+  const file = clientsFile('build');
+  try {
+    const text = readRegistryText(file);
+    if (text === null) return null;
+    const registry = parseRegistry(file, text);
+    if (registry.version !== REGISTRY_VERSION) return null;
+    const ids = new Set<string>();
+    for (const slot of parseContents(file, text, registry).slots) {
+      const id = slotId(slot);
+      if (id === undefined) return null;
+      if (!slot.device || slot.device.capabilities.includes('build')) ids.add(id);
+    }
+    return ids;
+  } catch (error) {
+    if (error instanceof RegistryUnavailable) return null;
+    throw error;
+  }
 }
 
 /** Device-host approvals live apart from read/control pairings and build clients. */

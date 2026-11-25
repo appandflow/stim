@@ -275,6 +275,9 @@ Gradle home. The worker removes these areas:
   area at once. This is best effort and never fails the removal: a worker that
   does not answer within 5 seconds or runs an older Stim keeps the area until
   the age limit below.
+- Every area of a client that no longer holds `build` on the worker, revoked
+  or unpaired, at its next removal pass, even when stim-server was not running
+  at the revocation. A worker that cannot read its approvals keeps them.
 - An area with no build or cached artifact fetch for
   `server.workerAreaMaxAgeDays` days (default 7, `0` turns this off).
 - While the volume of `server.workerRoot` has less than 50 GB free, the least

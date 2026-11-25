@@ -308,6 +308,21 @@ The method name, the record in workspace state, the 5-second deadline and 10-min
 newest area, keeping its blobs when no area remains, and answering before the deletion finishes were chosen by the
 implementer of #6289, not by the maintainer.
 
+A revocation removes a client's folder under `server.workerRoot` only when a job of that client ran in the stimd that
+sees it. Each eviction pass therefore also removes the folder of every client that `build-clients.json` does not name
+with `build`, through the same removal as a revocation: it stops the client's jobs, drops its kept bundles, and keeps
+the folder while an evicted area is not deleted yet, an area claim is held or unresolved, its areas cannot be read, or
+a device its home lists remains. It acts only while stimd is ready and only on a file it read whole in this version's
+format. A missing file, one that cannot be read or parsed, one a newer Stim wrote, or one with an entry that has no id
+removes nothing, and an entry this version cannot read keeps the folder of the id it names. Only a folder named like a
+registry id (8 hex characters) that holds a real `repos` directory counts as a client's, so other folders in a shared
+`server.workerRoot` stay.
+
+A worker held 7 areas, 20 GB, of a client that `stim pairings` no longer listed a month after a revocation no running
+stimd had served, while age eviction, which reads only approved clients, never reached them. Recorded in
+[#6294](https://github.com/appandflow/stim/issues/6294); the rule follows the issue's fix idea, written by an agent,
+and the folder-name and `repos` tests were chosen by the implementer of #6294, not by the maintainer.
+
 ## Service and engine updates
 
 `stim service` installs,

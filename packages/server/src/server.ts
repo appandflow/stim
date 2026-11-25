@@ -99,6 +99,7 @@ import { NotificationLog, notificationLogFile, publicEntry } from './notificatio
 import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
   buildClientsReadable,
+  listedBuildClients,
   dropPushToken,
   readRegistries,
   recordsForKey,
@@ -855,6 +856,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.buildLimits,
     ready: () => startup.state === 'ready',
     allowed: (client) => buildAllowed({ id: client }),
+    listed: listedBuildClients,
     jobs: () => jobs.live(),
     stopJobs: (client) => jobs.stop(client),
   });

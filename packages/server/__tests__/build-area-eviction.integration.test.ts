@@ -22,9 +22,10 @@ import { WebSocket } from 'ws';
 import { BuildArtifactCache } from '../../stim-cli/src/offload/build-artifact-cache.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
-import { BuildWorkerRoot, writeHandoff, type BuildLimits } from '../src/build.ts';
+import { BuildWorkerRoot, writeHandoff, type BuildLimits, type BuildWorkerRootOptions } from '../src/build.ts';
 import { BuildHost, type BuildHostOptions } from '../../stim-cli/src/job/offload/host.ts';
 import { areaLastUsed, recordAreaUse, recordRootUsage } from '../src/worker-areas.ts';
+import { listedBuildClients } from '../src/registry.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -59,13 +60,14 @@ class Worker {
 
   constructor(
     limits: Partial<BuildLimits>,
-    options: Partial<BuildHostOptions> & { allowed?: (client: string) => boolean; ready?: () => boolean },
+    options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'listed'>,
   ) {
     this.host = new BuildHost({ worker: join(home, 'worker.mjs'), env: process.env, limits, ...options });
     this.root = new BuildWorkerRoot({
       limits,
       allowed: options.allowed,
       ready: options.ready,
+      listed: options.listed,
       jobs: () => this.live.values(),
       stopJobs: async (client) => {
         for (const [entry, owner] of this.live) {
@@ -138,7 +140,7 @@ class Worker {
 
 const start = (
   limits: Partial<BuildLimits> = {},
-  options: Partial<BuildHostOptions> & { allowed?: (client: string) => boolean; ready?: () => boolean } = {},
+  options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'listed'> = {},
 ) => {
   running = new Worker({ daemonSweepMs: 60 * 60_000, ...limits }, options);
   return running;
@@ -1629,5 +1631,66 @@ markClaimChildPending(tryAcquireClaim({ root: ${JSON.stringify(`${path}.claims`)
     expect(await host.dropArea('a', 'subject')).toEqual({ dropped: true });
     await host.evictAreas();
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe('a client the build approvals do not name', () => {
+  const APPROVED = 'aaaa0001';
+  const REVOKED = 'bbbb0002';
+  const buildClients = (text: string) => {
+    mkdirSync(join(home, 'server'), { recursive: true });
+    writeFileSync(join(home, 'server', 'build-clients.json'), text);
+  };
+  const approved = (id: string) => ({
+    id,
+    name: 'Laptop',
+    publicKey: 'A'.repeat(43),
+    pairedAt: new Date().toISOString(),
+    capabilities: ['build'],
+  });
+  const approve = (...entries: unknown[]) => buildClients(JSON.stringify({ version: 2, devices: entries }));
+
+  test('loses its folder on a pass with no job of it in this process; a listed client and other folders stay', async () => {
+    const kept = area(APPROVED, 'subject', 0);
+    area(REVOKED, 'subject', 0);
+    mkdirSync(join(root, REVOKED, 'blobs'));
+    mkdirSync(join(root, 'jobs', 'repos'), { recursive: true });
+    mkdirSync(join(root, 'cccc0003'));
+    approve(approved(APPROVED));
+    await start({}, { listed: listedBuildClients }).evictAreas();
+
+    expect(existsSync(join(root, REVOKED))).toBe(false);
+    expect(existsSync(kept)).toBe(true);
+    expect(existsSync(join(root, 'jobs', 'repos'))).toBe(true);
+    expect(existsSync(join(root, 'cccc0003'))).toBe(true);
+  });
+
+  test.each([
+    { name: 'no build-clients.json', write: () => mkdirSync(join(home, 'server'), { recursive: true }) },
+    { name: 'a build-clients.json that does not parse', write: () => buildClients('{"version":2,"devices":[') },
+    { name: 'a build-clients.json a newer Stim wrote', write: () => buildClients('{"version":3,"devices":[]}') },
+    { name: 'an entry with no id', write: () => approve(approved(APPROVED), '"opaque"') },
+    { name: 'an unreadable entry with its id', write: () => approve({ id: REVOKED, record: { kind: 'passkey' } }) },
+    { name: 'a Stim home that is not ready', write: () => approve(), ready: false },
+  ])('keeps every folder with $name', async ({ write, ready }) => {
+    const path = area(REVOKED, 'subject', 0);
+    write();
+    await start({}, { listed: listedBuildClients, ready: () => ready ?? true }).evictAreas();
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test('keeps the folder while an area claim is held, and a later pass removes it', async () => {
+    const path = area(REVOKED, 'subject', 0);
+    const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
+    assert(claim);
+    approve();
+    const host = start({}, { listed: listedBuildClients });
+    await host.evictAreas();
+    expect(existsSync(path)).toBe(true);
+    expect(logs.join('\n')).toMatch(new RegExp(`retaining the build area of ${REVOKED}; ownership .* is held`));
+
+    releaseClaim(claim);
+    await host.evictAreas();
+    expect(existsSync(join(root, REVOKED))).toBe(false);
   });
 });
