@@ -47,8 +47,9 @@ export type PromotionResult = { flipped: string } | { staged: string } | { refus
 /**
  * Puts a build into the store and points the engine at it: under the promotion lock, gets the tree (cloned or
  * fetched), refuses unattended moves `promotionRefusal` names and builds the claimed homes' schema rules out, runs
- * the self-test, then flips at once with no live resident process or stages otherwise, and collects garbage. The
- * pointer is written by the build it names: another build's tree is handed to that tree's own `engine-select`.
+ * the self-test, then flips at once for the current build or with no live resident process, stages otherwise, and
+ * collects garbage. The pointer is written by the build it names: another build's tree is handed to that tree's own
+ * `engine-select`.
  */
 export async function promote(promotion: Promotion): Promise<PromotionResult> {
   const { root, source, ctx } = promotion;
@@ -91,7 +92,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       });
       const entry = { dir: build, version: manifest.version, installedAt: new Date().toISOString() };
       writeState(root, { ...state, installed: [...state.installed.filter((each) => each.dir !== build), entry] });
-      if (claimsHeld(readBuildClaims(root))) {
+      if (build !== current?.dir && claimsHeld(readBuildClaims(root))) {
         const staged: Staged = {
           format: FORMAT,
           dir: build,

@@ -101,6 +101,72 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'selecting the current engine under a shared claim updates its settings without staging',
+  () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-current-select-')));
+    const home = join(tmp, 'home');
+    const root = join(tmp, 'engine');
+    const work = join(tmp, 'work');
+    const read = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
+    const env = { ...process.env, HOME: tmp, STIM_HOME: home, STIM_ENGINE_ROOT: root };
+    mkdirSync(work);
+    mkdirSync(home);
+    try {
+      const installed = machineCopy(PACKAGE, join(tmp, 'a'));
+      const install = spawnSync(process.execPath, [join(installed, 'bin', 'stim.mjs'), 'engine', 'install'], {
+        cwd: work,
+        env,
+        encoding: 'utf8',
+      });
+      expect(install.status).toBe(0);
+      const current = read(join(root, 'current.json'));
+      const a: string = current.dir;
+      const channel = current.channel === 'latest' ? 'next' : 'latest';
+      const claim = tryAcquireClaim({
+        root: buildClaimRoot(root, a),
+        mode: 'shared',
+        details: { drained: false },
+      }).acquired;
+      if (!claim) throw new Error('fixture claim unavailable');
+      try {
+        const select = spawnSync(
+          process.execPath,
+          [
+            join(root, a, 'dist', 'engine-select.mjs'),
+            '--source',
+            join(root, a),
+            '--explicit',
+            '--pin',
+            'fixture pin',
+            '--channel',
+            channel,
+            '--set-by',
+            'fixture',
+          ],
+          { cwd: work, env, encoding: 'utf8' },
+        );
+        expect(select.status).toBe(0);
+        expect(JSON.parse(select.stdout)).toEqual({ flipped: a });
+        expect(existsSync(join(root, 'staged.json'))).toBe(false);
+        expect(read(join(root, 'current.json'))).toMatchObject({
+          dir: a,
+          pinned: true,
+          pinReason: 'fixture pin',
+          channel,
+          setBy: 'fixture',
+        });
+      } finally {
+        releaseClaim(claim);
+      }
+    } finally {
+      if (process.platform !== 'win32') execFileSync('chmod', ['-R', 'u+w', tmp]);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+  120_000,
+);
+
+test.skipIf(process.platform === 'win32')(
   'GC keeps a build an orphan of a dead stimd still runs from, and removes it once the orphan exits',
   async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-orphan-build-')));
