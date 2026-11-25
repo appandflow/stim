@@ -1,6 +1,5 @@
 import { throwIfCancelled } from '../cancellation.ts';
-import { exitCli, runProcessOperation } from '../cli-operation.ts';
-import { hungRead } from '../workspace/bounded-read.ts';
+import { runProcessOperation } from '../cli-operation.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { configDir, ensurePrivateDir, isScopedHome } from '@stim-cli/core';
 import { randomBytes } from 'node:crypto';
@@ -556,8 +555,6 @@ const gc: Op = defineOp({
       withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
     );
     if (interrupted !== null) process.exitCode = interrupted;
-    // A Node filesystem read that never answers, on a dead network or FUSE mount, keeps the event loop alive.
-    if (hungRead() !== null) exitCli(typeof process.exitCode === 'number' ? process.exitCode : 0);
   },
 });
 
