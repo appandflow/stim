@@ -824,8 +824,8 @@ export async function startDevServer(
               message: `The managed ${record.provider} tunnel is no longer verified running before supervisor startup.`,
               remedy:
                 stopped.status === 'failed'
-                  ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason}. The tunnel record remains available to \`stim stop\`.`
-                  : 'Retry `stim start --remote`.',
+                  ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason}. The tunnel record remains available to \`stim stop\`. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.`
+                  : 'Retry `stim start --remote`. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.',
             });
           } else startMetro(record.url);
           publicOrigin = record.url;
@@ -854,8 +854,8 @@ export async function startDevServer(
             message: `The managed ${record.provider} tunnel is no longer verified running before the dev server became ready.`,
             remedy:
               stopped.status === 'failed'
-                ? `The tunnel cleanup also failed: ${stopped.reason}. Run \`stim stop\`, then retry.`
-                : 'Run `stim stop`, then `stim start --remote`.',
+                ? `The tunnel cleanup also failed: ${stopped.reason}. Run \`stim stop\`, then retry. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.`
+                : 'Run `stim stop`, then `stim start --remote`. If the tunnel dies again, set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.',
           });
         };
 

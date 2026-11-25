@@ -519,6 +519,9 @@ export async function runPrebuild(
     logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: 'prebuild' });
   };
 
+  const remedy =
+    'Fix what the error or the `expo prebuild` output above reports, then run again.' +
+    (logWriter ? ' `stim logs --source build` shows the full transcript.' : '');
   let child: ChildProcess;
   try {
     const invocation = remoteCliInvocation(
@@ -543,6 +546,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `Could not run \`expo prebuild\`: ${(err as Error)?.message || err}`,
+      remedy,
       lastLines: [] as string[],
     });
   }
@@ -564,6 +568,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `Could not run \`expo prebuild\`: ${result.error?.message || result.error}`,
+      remedy,
       lastLines: tail.slice(),
       durationMs,
     });
@@ -574,7 +579,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` failed (${how}).`,
-      ...(dirExists && !clean ? { remedy: staleNativeDirRemedy(platform) } : {}),
+      remedy: dirExists && !clean ? staleNativeDirRemedy(platform) : remedy,
       lastLines: tail.slice(),
       durationMs,
     });
@@ -584,6 +589,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` succeeded but did not create ${nativeDirName(platform)}/.`,
+      remedy,
       lastLines: tail.slice(),
       durationMs,
     });
