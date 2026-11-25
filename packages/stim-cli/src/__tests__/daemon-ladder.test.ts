@@ -1502,7 +1502,7 @@ describe('the pressure ladder', () => {
     expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
   });
 
-  test('critical output sweep keeps a marked nested checkout after discoverRoots is broadened', async () => {
+  test('critical output sweep removes marked outputs of a recorded-only nested checkout after registration is removed', async () => {
     const { root } = workspace('team/app', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
     mkdirSync(output, { recursive: true });
@@ -1522,7 +1522,7 @@ describe('the pressure ladder', () => {
       pressure('critical'),
     );
 
-    expect(existsSync(output)).toBe(true);
+    expect(existsSync(output)).toBe(false);
   });
 
   test('high output sweep does not refresh once the disk reaches critical', async () => {

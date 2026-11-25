@@ -238,6 +238,29 @@ describe.skipIf(process.platform === 'win32')(
       expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([main]);
     });
 
+    test('an acting daemon pass removes recorded-only linked worktree build outputs inside a registered main checkout', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } });
+      const main = register(repo('main'));
+      const linked = join(main, '.worktrees', 'feature');
+      git(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
+      ensureWorkspaceStorage(linked);
+      mkdirSync(join(linked, BUILD), { recursive: true });
+      writeFileSync(join(linked, BUILD, 'app.apk'), 'artifact');
+      idleFor(3, linked);
+      recordWorkspaceUse(main, new Date());
+
+      const actions = await hourlyStep(true);
+
+      expect(readGcMark(linked)?.candidates).toContainEqual(
+        expect.objectContaining({ kind: 'outputs', path: join(linked, BUILD) }),
+      );
+      expect(actions).toContainEqual(
+        expect.objectContaining({ kind: 'delete-build-outputs', target: linked, outcome: 'done' }),
+      );
+      expect(existsSync(join(linked, BUILD))).toBe(false);
+      expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([main]);
+    });
+
     test('an empty normal candidate list reads no consumer marks', async () => {
       const root = register(repo('recent-workspace'));
       recordWorkspaceUse(root, new Date());
@@ -413,7 +436,7 @@ describe.skipIf(process.platform === 'win32')(
     );
 
     test.each(['pin', 'registration'])(
-      'current %s changes between measurement and claims keep saved outputs',
+      'current %s changes between measurement and claims recheck saved output authority',
       async (change) => {
         const root = register(repo('protected-after-measure'));
         writeFileSync(join(root, '.stim.json'), JSON.stringify({ maintenance: { keep: false } }));
@@ -436,9 +459,11 @@ describe.skipIf(process.platform === 'win32')(
         });
         const actions = await hourlyStep(true);
         expect(changed).toBe(true);
-        expect(actions).toEqual([expect.objectContaining({ target: root, outcome: 'kept' })]);
-        expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
-        expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(true);
+        expect(actions).toEqual([
+          expect.objectContaining({ target: root, outcome: change === 'pin' ? 'kept' : 'done' }),
+        ]);
+        expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(change === 'pin');
+        expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(change === 'pin');
       },
     );
 
