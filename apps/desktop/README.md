@@ -2416,6 +2416,7 @@ forwards it; a hosted run with `--remote` takes only the launch arguments). With
 at launch, does not record it as finished and does not offer the viewer setting, for that run only. Tips and
 discovery prompts also stay hidden, because they wait for a finished guide. **Help > Setup
 Guide** still opens it. To test the first-run flow, remove the argument from `.stim.json` for that run.
+`-ApplePersistenceIgnoreState YES` opens the main window at launch instead of the windows macOS saved for that bundle id.
 **Window > SwiftUI Playground** opens the
 in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that
