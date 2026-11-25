@@ -942,11 +942,18 @@ async function archiveRefusal(
 async function teardownReclaimed(
   keys: readonly string[],
   force: boolean,
+  log: (line: string) => void,
   operation?: StimContext,
 ): Promise<string | null> {
   for (const key of keys) {
     try {
-      await teardownServices(key, { force, ...(operation ? { operation, signal: operation.signal } : {}) });
+      const outcomes = await teardownServices(key, {
+        force,
+        ...(operation ? { operation, signal: operation.signal } : {}),
+      });
+      for (const outcome of outcomes) {
+        if (outcome.detail !== 'torn down') log(`service ${outcome.name}: ${outcome.detail}`);
+      }
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;
@@ -1840,7 +1847,7 @@ async function removeOrRefuse(
             if (archive) await discardWorktreeArchive(archive);
           };
           // @ref LLP 0027#removal-tears-services-down -- the data goes first, so a failure refuses with nothing touched
-          const keptBack = await teardownReclaimed(lockedKeys, opts.force === true, opts.operation);
+          const keptBack = await teardownReclaimed(lockedKeys, opts.force === true, output.error, opts.operation);
           if (keptBack) {
             await discardArchive();
             output.error(chalk.red(`Refusing to remove ${path}: ${keptBack}`));

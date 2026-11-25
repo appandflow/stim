@@ -10,7 +10,7 @@ import { debugLog } from '../debug-log.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { serviceRecords } from '../services.ts';
-import { findCommandWorkspace } from '../workspace/project.ts';
+import { findServerWorkspace } from '../workspace/project.ts';
 import {
   AVAILABLE_KINDS,
   detectKinds,
@@ -360,7 +360,7 @@ async function runTest(
         ? `${workers} workers (${fixed ? 'set by concurrency.testWorkers' : basis}) through ${plan.applied}`
         : `no worker count passed: ${plan.skipped} (${fixed ? `concurrency.testWorkers ${fixed}` : basis})`,
     );
-    const root = findCommandWorkspace(cwd);
+    const root = findServerWorkspace(cwd)?.root ?? null;
     // @ref LLP 0027#commands-get-the-services-env -- service values win over the caller's environment
     const services = root ? Object.assign({}, ...Object.values(serviceRecords(root)).map((record) => record.env)) : {};
     const result = await runCommand(

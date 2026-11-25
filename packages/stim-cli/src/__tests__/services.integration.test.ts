@@ -434,6 +434,8 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     const { port } = recorded('db');
     await expect(teardownServices(root, { operation })).rejects.toThrow(/run by hand in .*DB_PORT=\d+ .*db\.mjs fail/);
     expect(serviceRecords(root).db?.teardownFailure).toMatch(/exited with status 1/);
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'running' }]);
+    expect(serviceRecords(root).db?.teardownFailure).toBeUndefined();
     expect(getProject(root)?.ports).toEqual({ pg: port });
     expect(await teardownServices(root, { operation, force: true })).toMatchObject([{ outcome: 'torn-down' }]);
     expect(serviceRecords(root)).toEqual({});

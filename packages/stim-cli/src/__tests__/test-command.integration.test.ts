@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { upsertProject } from '../workspace/config.ts';
 import { listTestSlots, tryAcquireTestSlot } from '../engine/test-slots.ts';
 import { listTestWaiting } from '../engine/wait-queue.ts';
 import { signalLedGroup, stopGroupLeftovers } from '../commands/test.ts';
@@ -127,6 +128,20 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     const { code, stdout, stderr } = await start([]).done;
     expect(code).toBe(0);
     expect(ran(stdout).argv).toEqual(['--ci', `--maxWorkers=${announced(stderr)}`]);
+  }, 60_000);
+
+  test('runs from a monorepo root without a workspace selection note', async () => {
+    execFileSync('git', ['init', '-q'], { cwd: app });
+    const mobile = join(app, 'mobile');
+    mkdirSync(mobile);
+    writeFileSync(
+      join(mobile, 'package.json'),
+      JSON.stringify({ name: 'mobile', dependencies: { 'react-native': '*' } }),
+    );
+    upsertProject(mobile, {});
+    const { code, stderr } = await start([]).done;
+    expect(code).toBe(0);
+    expect(stderr).not.toContain('Using the Stim workspace');
   }, 60_000);
 
   test('Vitest gets the flag, with --minWorkers=1 before 3.2.4, and a serial Vitest config or a caller -w is kept', async () => {
