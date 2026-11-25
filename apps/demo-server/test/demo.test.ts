@@ -174,7 +174,11 @@ describe('pairing', () => {
     const machine = demo({ devices });
     const phoneKey: NoiseKeyPair = generateNoiseKeyPair();
     const first = await pair(machine, { keyPair: phoneKey, secret: SECRET, name: 'Review iPhone' });
-    const id = (first.hello.result?.device as { id: string } | undefined)?.id;
+    const device = first.hello.result?.device;
+    if (typeof device !== 'object' || device === null || !('id' in device) || typeof device.id !== 'string') {
+      throw new Error('hello has no device id');
+    }
+    const { id } = device;
     expect((await first.request('device.rename', { id, name: ' Reviewer iPhone ' })).result).toEqual({
       name: 'Reviewer iPhone',
     });
