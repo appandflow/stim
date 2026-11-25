@@ -40,9 +40,10 @@ const text = (fields: Record<string, unknown>): string =>
 /**
  * Request timing for stim-server. An error reply always goes to the service log (stderr), once a minute per
  * client, method, code and refusal reason. With debug logging on, every request and host event goes only to
- * `logs/debug/server.ndjson` with its duration and the slow steps. Service lines start with the time and carry the
- * method, the client's device id, the CLI run id, durations and the error code, plus the refusal message of a
- * `build-busy` or `build-refused` reply: never params, other messages, tokens or tickets.
+ * `logs/debug/server.ndjson` with its duration, slow steps and any error message, bounded to MAX_REASON characters.
+ * Service lines start with the time and carry the method, the client's device id, the CLI run id, durations and the
+ * error code, plus the refusal message of a `build-busy` or `build-refused` reply: never params, other messages,
+ * tokens or tickets.
  */
 export function createRequestLog({
   service = (line: string) => console.error(line),
@@ -95,14 +96,17 @@ export function createRequestLog({
             ...entry?.steps,
             error: code,
           };
-          const reason =
-            code !== undefined && LOGGED_REASONS.has(code) && typeof error?.message === 'string' && error.message
-              ? error.message.slice(0, MAX_REASON)
-              : undefined;
+          const debugReason =
+            typeof error?.message === 'string' && error.message ? error.message.slice(0, MAX_REASON) : undefined;
+          const reason = code !== undefined && LOGGED_REASONS.has(code) ? debugReason : undefined;
           const line = reason === undefined ? text(fields) : `${text(fields)} reason=${JSON.stringify(reason)}`;
           if (debug.enabled()) {
             const { run, ...rest } = fields;
-            debug.log('request', { ...rest, runId: run, ...(reason === undefined ? {} : { reason }) });
+            debug.log('request', {
+              ...rest,
+              runId: run,
+              ...(debugReason === undefined ? {} : { reason: debugReason }),
+            });
           }
           if (
             code !== undefined &&

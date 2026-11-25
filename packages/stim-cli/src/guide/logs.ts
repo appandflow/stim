@@ -481,7 +481,7 @@ an artifact; a client that ends its build closes its connection, so why reads
 connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server, every request and
 host_connect is recorded only in STIM_HOME/logs/debug/server.ndjson. Request
 fields: method, client, runId, ms, slow, steps such as whois and probe, error,
-reason. slow means 1000 ms or more; whois and probe time hello's Tailscale
+reason (error message). slow means 1000 ms or more; whois and probe time hello's Tailscale
 identity lookup and host permission probe. Unknown method names are logged as
 unknown. host_connect carries host, ms, connectMs and helloMs, or reused=true
 when an open connection was shared. Errors still reach the service log as

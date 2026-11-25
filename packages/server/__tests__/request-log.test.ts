@@ -100,3 +100,16 @@ test('with debug on, requests and host events go to the debug log and only failu
     { event: 'host_connect', host: 'mac', error: 'refused' },
   ]);
 });
+
+test('the debug record keeps the reason of any error, the service line only that of a build refusal', () => {
+  const { lines, records, log } = setup(true);
+  const tracker = log.track();
+  tracker.begin(1, 'device-host.metro.link');
+  tracker.reply({ id: 1, error: { code: 'action-failed', message: 'adb reverse failed: device offline' } });
+  expect(lines).toEqual([
+    '1970-01-01T00:00:00.000Z stim-server: request failed method=device-host.metro.link ms=0 error=action-failed',
+  ]);
+  expect(records).toEqual([
+    expect.objectContaining({ error: 'action-failed', reason: 'adb reverse failed: device offline' }),
+  ]);
+});
