@@ -547,6 +547,11 @@ the Metro cache, and no agent-device daemon may still be running in that
 workspace's directory. If both names exist, Stim uses the new one and leaves the old one where it is,
 and `gc` measures and trims it like the cache it was.
 
+The old `compilation-cache` name stays as a link to `compilation-cache.noindex`,
+so an Xcode build outside Stim whose `COMPILATION_CACHE_CAS_PATH` names the old
+path keeps sharing Stim's cache. Spotlight does not follow the link, and `gc`
+counts the cache once.
+
 The rename is one-way. After `stim engine rollback` to a release from before
 it, the older engine sees only the old names: its builds and dev servers start
 with cold caches, its `gc` does not measure the `.noindex` folders, and its

@@ -67,11 +67,25 @@ a copy, and only when:
   unresolved, and neither `caches.metroCache` nor `STIM_METRO_CACHE` names the
   root;
 - for an agent-device directory: its `daemon.json` names no daemon that may
-  still run, and no `daemon.lock` stands without one. A daemon keeps the old
-  directory until it stops, since agent-device refuses a symlinked state
-  directory.
+  still run, and no `daemon.lock` exists, whatever `daemon.json` says. A
+  replacement daemon takes the lock before it rewrites the record of a crashed
+  one, so a lock beside a dead record can mean a daemon starting; a stale lock
+  only defers the rename. A daemon keeps the old directory until it stops,
+  since agent-device refuses a symlinked state directory.
 
 After a shared cache moves, its entries in `caches.json` move with it.
+
+The old `compilation-cache` name stays behind as a symbolic link to
+`compilation-cache.noindex`. `stim doctor` tells builds outside Stim to point
+`COMPILATION_CACHE_CAS_PATH` at Stim's cache, and those builds take no claim and
+keep the absolute path they were given; through the link they keep sharing the
+renamed cache instead of filling a cold one at the old path. Spotlight does not
+index through a link. Stim treats that link as the cache's other name: the
+resolver returns the `*.noindex` path, even after the folder is gone, the
+migration and the leftover check skip it because it is not a real directory,
+and maintenance measures the cache once, by its canonical path. Stim never
+removes the link. ccache gets no link: nothing tells a build outside Stim to
+use Stim's ccache directory.
 
 Old and new names can both exist: an older Stim recreates an old folder, a
 build that resolved the old path just before the rename refills it, or an

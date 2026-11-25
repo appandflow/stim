@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { metroCacheRoot } from '@stim-cli/core';
@@ -72,7 +82,7 @@ test('an existing home moves each old folder once, with its contents and its cac
   ]);
   expect(migrateNoindexFolders()).toEqual([]);
   for (const folder of folders) {
-    expect(existsSync(folder)).toBe(false);
+    expect(existsSync(folder)).toBe(folder === join(home, 'compilation-cache'));
     const renamed = folder.replace(/(compilation-cache|ccache|metro-cache|agent-device)(?=\/|$)/, '$1.noindex');
     expect(readFileSync(join(renamed, 'entry'), 'utf8')).toBe(folder);
   }
@@ -84,6 +94,23 @@ test('an existing home moves each old folder once, with its contents and its cac
   );
   expect(caches).toEqual([join(home, 'compilation-cache.noindex'), join(home, 'metro-cache.noindex', 'app')]);
   expect(leftoverNoindexCaches()).toEqual([]);
+});
+
+test('the compilation cache keeps its old name as a link to the new folder for builds outside Stim', () => {
+  const old = oldFolder(join(home, 'compilation-cache'));
+  const renamed = join(home, 'compilation-cache.noindex');
+
+  expect(moved().map((rename) => rename.to)).toEqual([renamed]);
+  expect(lstatSync(old).isSymbolicLink()).toBe(true);
+  expect(realpathSync(old)).toBe(realpathSync(renamed));
+  writeFileSync(join(old, 'external'), 'xcodebuild outside Stim');
+  expect(readFileSync(join(renamed, 'external'), 'utf8')).toBe('xcodebuild outside Stim');
+  expect(sharedCompilationCache()).toBe(renamed);
+  expect(leftoverNoindexCaches()).toEqual([]);
+  expect(migrateNoindexFolders()).toEqual([]);
+
+  rmSync(renamed, { recursive: true });
+  expect(sharedCompilationCache()).toBe(renamed);
 });
 
 test('an old folder beside its new name is left alone and reported as a leftover cache', () => {
@@ -122,8 +149,11 @@ test('an agent-device daemon that may still run keeps its state directory until 
   ]);
   expect(workspaceAgentDeviceDir(root)).toBe(old);
 
-  rmSync(join(old, 'daemon.json'));
+  vi.spyOn(identity, 'inspectProcessStart').mockReturnValue({ status: 'gone' });
   writeFileSync(join(old, 'daemon.lock'), '');
+  expect(migrateNoindexFolders()[0]).toMatchObject({ moved: false, kept: 'its agent-device daemon may be starting' });
+
+  rmSync(join(old, 'daemon.json'));
   expect(migrateNoindexFolders()[0]).toMatchObject({ moved: false, kept: 'its agent-device daemon may be starting' });
 
   rmSync(join(old, 'daemon.lock'));
@@ -203,7 +233,7 @@ test.each([
   );
   await lane.settled();
 
-  expect(existsSync(compilation)).toBe(!act);
+  expect(lstatSync(compilation).isSymbolicLink()).toBe(act);
   expect(existsSync(agentDevice)).toBe(!act);
   expect(sharedCompilationCache()).toBe(act ? join(home, 'compilation-cache.noindex') : compilation);
   expect(workspaceAgentDeviceDir(root)).toBe(act ? join(workspaceDir(root), 'agent-device.noindex') : agentDevice);

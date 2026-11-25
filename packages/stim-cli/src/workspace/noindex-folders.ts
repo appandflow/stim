@@ -1,5 +1,5 @@
-import { lstatSync, readdirSync, renameSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { lstatSync, readdirSync, renameSync, symlinkSync } from 'node:fs';
+import { basename, join, sep } from 'node:path';
 import { configDir, defaultMetroCacheRoot, legacyNoindexDir, updateCacheManifest } from '@stim-cli/core';
 import { agentDeviceStateDirsIn, sharedNoindexCaches } from '@stim-cli/core/state';
 import { claimForEmptying } from '../cache/cache-claim.ts';
@@ -67,11 +67,19 @@ function runningBuild(): string | null {
   return lock ? `${lock.unresolved ? 'an unresolved' : 'a running'} build holds ${lock.path}` : null;
 }
 
+// @ref LLP 0028#an-existing-home-renames-each-folder-once-nothing-holds-it -- the compilation cache keeps a link at its old name
+function linkOldName(from: string, to: string): void {
+  try {
+    symlinkSync(process.platform === 'win32' ? to : basename(to), from, 'junction');
+  } catch {}
+}
+
 /**
  * Renames a cache Stim empties whole while no build runs, under the emptying claims of both names, which a build
  * holding the compilation cache refuses. No build claims ccache, so only the build slots and locks show its users.
+ * `link` leaves a link at the old name for builds outside Stim that were pointed at it.
  */
-function moveClaimedCache(to: string): NoindexRename | null {
+function moveClaimedCache(to: string, link: boolean): NoindexRename | null {
   const from = legacyNoindexDir(to);
   if (!pending(from, to)) return null;
   const building = runningBuild();
@@ -82,7 +90,12 @@ function moveClaimedCache(to: string): NoindexRename | null {
     const fresh = claimForEmptying(to);
     if (typeof fresh === 'string') return { from, to, moved: false, kept: fresh };
     try {
-      return pending(from, to) ? rename(from, to, () => moveRegistrations(from, to)) : null;
+      return pending(from, to)
+        ? rename(from, to, () => {
+            moveRegistrations(from, to);
+            if (link) linkOldName(from, to);
+          })
+        : null;
     } finally {
       releaseClaim(fresh);
     }
@@ -121,7 +134,7 @@ function moveAgentDeviceDir(directory: string): NoindexRename | null {
   const daemon = agentDeviceDaemon(from);
   if (daemon === 'live' || daemon === 'unknown')
     return { from, to, moved: false, kept: 'its agent-device daemon may be running' };
-  if (daemon === 'none' && present(join(from, 'daemon.lock')))
+  if (present(join(from, 'daemon.lock')))
     return { from, to, moved: false, kept: 'its agent-device daemon may be starting' };
   return rename(from, to);
 }
@@ -141,8 +154,10 @@ export function migrateWorkspaceAgentDeviceDir(projectRoot: string): NoindexRena
  */
 export function migrateNoindexFolders(): NoindexRename[] {
   const workspaces = workspaceEntries();
+  const [compilation, ccache] = sharedNoindexCaches();
   return [
-    ...sharedNoindexCaches().map(moveClaimedCache),
+    moveClaimedCache(compilation, true),
+    moveClaimedCache(ccache, false),
     moveMetroCache(workspaces),
     ...workspaces.map(moveAgentDeviceDir),
   ].filter((outcome): outcome is NoindexRename => outcome !== null);

@@ -176,7 +176,16 @@ export function legacyNoindexDir(dir: string): string {
  */
 export function noindexDir(dir: string): string {
   const legacy = legacyNoindexDir(dir);
-  return pathEntryExists(dir) || !pathEntryExists(legacy) ? dir : legacy;
+  return pathEntryExists(dir) || !pathEntryExists(legacy) || isNoindexLink(legacy, dir) ? dir : legacy;
+}
+
+/** Whether `legacy` is the link the CLI leaves at a renamed folder's old name, pointing at its `*.noindex` path `dir`. */
+export function isNoindexLink(legacy: string, dir: string): boolean {
+  try {
+    return path.resolve(path.dirname(legacy), fs.readlinkSync(legacy)) === path.resolve(dir);
+  } catch {
+    return false;
+  }
 }
 
 function configuredMetroCacheRoot(): string | null {
