@@ -739,14 +739,9 @@ test('action: force removal keeps an owned branch that has unique commits', asyn
   expect(errs.some((line) => /branch\s+kept worktree-feat-x \(it has 1 unique commit/.test(line))).toBe(true);
 });
 
-test('action: removing a worktree asks the workers that built it to drop its area and ignores one that cannot', async () => {
+/** Pairs each area's machine for builds; `mini` drops its area and every other worker is too old to know how. */
+function fakeBuildWorkers(areas: ReadonlyArray<{ machine: string }>): Array<[string, string, unknown]> {
   onTestFinished(() => void vi.restoreAllMocks());
-  const app = join(wtDir, 'apps/mobile');
-  upsertProject(wtDir, { worktreeRoot: true });
-  upsertProject(app, { platforms: {} });
-  const areas = ['mini', 'studio'].map((machine) => ({ machine, repo: 'wt-0123456789ab', checkout: wtDir }));
-  ensureWorkspaceStorage(app);
-  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: areas }));
   mkdirSync(dirname(buildMachinesFile()), { recursive: true });
   writeFileSync(
     buildMachinesFile(),
@@ -775,11 +770,27 @@ test('action: removing a worktree asks the workers that built it to drop its are
         asked.push([target.host, method, params]);
         return target.host === 'mini'
           ? { result: { dropped: true } }
-          : { error: { code: 'unknown-method', message: 'Unknown method build.area.drop.' } };
+          : {
+              error: {
+                code: 'forbidden',
+                message: 'build.area.drop needs read access, which this connection does not have.',
+              },
+            };
       },
       close: () => {},
     }),
   );
+  return asked;
+}
+
+test('action: removing a worktree asks the workers that built it to drop its area and ignores one that cannot', async () => {
+  const app = join(wtDir, 'apps/mobile');
+  upsertProject(wtDir, { worktreeRoot: true });
+  upsertProject(app, { platforms: {} });
+  const areas = ['mini', 'studio'].map((machine) => ({ machine, repo: 'wt-0123456789ab', checkout: wtDir }));
+  ensureWorkspaceStorage(app);
+  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: areas }));
+  const asked = fakeBuildWorkers(areas);
   const exec = makeExecutor({
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
@@ -872,11 +883,14 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(getProject(wtDir)).toBe(null);
 });
 
-test('action: removing a deleted worktree drops the record of its project and the projects inside it', async () => {
+test('action: removing a deleted worktree drops the record of its project and the projects inside it, and its build area', async () => {
   const app = join(wtDir, 'apps/mobile');
   upsertProject(wtDir, { worktreeRoot: true });
   upsertProject(app, { platforms: {} });
   ensureWorkspaceStorage(app);
+  const area = { machine: 'mini', repo: 'wt-0123456789ab', checkout: wtDir };
+  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: [area] }));
+  const asked = fakeBuildWorkers([area]);
   rmSync(wtDir, { recursive: true, force: true });
   setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
 
@@ -886,6 +900,7 @@ test('action: removing a deleted worktree drops the record of its project and th
   expect(getProject(wtDir)).toBe(null);
   expect(getProject(app)).toBe(null);
   expect(existsSync(workspaceDir(app))).toBe(false);
+  expect(asked).toEqual([['mini', 'build.area.drop', { repo: 'wt-0123456789ab' }]]);
 });
 
 test('action: removing a deleted folder registered under a symlink alias reclaims its entry', async () => {

@@ -11,6 +11,10 @@ import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.
 import { updateWorkspaceState } from '../workspace/workspace-state.ts';
 
 const DROP_DEADLINE_MS = 5_000;
+const QUIET_SKIP_MS = 10 * 60_000;
+
+/** Workers that could not be reached or did not answer in time, skipped by this process until the time noted. */
+const quietUntil = new Map<string, number>();
 
 const same = (a: BuildAreaRecord, b: BuildAreaRecord): boolean =>
   a.machine === b.machine && a.repo === b.repo && a.checkout === b.checkout;
@@ -43,7 +47,9 @@ export type BuildAreaDrop = BuildAreaRecord & ({ dropped: true } | { kept: strin
 /**
  * Asks each recorded worker to drop the area of a checkout whose folder is proven gone, in parallel and within one
  * short deadline. Best effort: an unreachable worker, one older than `build.area.drop`, and any refusal or timeout
- * are skipped, and that worker's `server.workerAreaMaxAgeDays` removes the area instead.
+ * are skipped, and that worker's `server.workerAreaMaxAgeDays` removes the area instead. A worker that could not be
+ * reached or did not answer in time is not asked again for 10 minutes, so a gc pass that removes many worktrees waits
+ * for it once.
  */
 export async function dropBuildAreas(
   records: readonly BuildAreaRecord[],
@@ -79,16 +85,24 @@ async function askWorkers(records: readonly BuildAreaRecord[], signal?: AbortSig
     const credential = credentials.find((each) => each.machine === record.machine);
     const serverKey = credential?.serverKey;
     if (!credential || !serverKey) return { ...record, skipped: 'it is no longer paired for builds' };
+    if ((quietUntil.get(record.machine) ?? 0) > Date.now())
+      return { ...record, skipped: 'it did not answer a recent request' };
     const target = await resolveEndpoint(credential, undefined, deadline.signal);
     if (typeof target === 'string') return { ...record, skipped: target };
     const connection = await BuildConnection.open(target, serverKey, DROP_DEADLINE_MS, 'build', deadline.signal);
-    if (!(connection instanceof BuildConnection)) return { ...record, skipped: connection.failure };
+    if (!(connection instanceof BuildConnection)) {
+      if (!connection.refused) quietUntil.set(record.machine, Date.now() + QUIET_SKIP_MS);
+      return { ...record, skipped: connection.failure };
+    }
     try {
       const answer = await Promise.race([
         connection.request('build.area.drop', { repo: record.repo }, DROP_DEADLINE_MS),
         timedOut,
       ]);
-      if (answer === 'deadline') return { ...record, skipped: 'it did not answer in time' };
+      if (answer === 'deadline') {
+        quietUntil.set(record.machine, Date.now() + QUIET_SKIP_MS);
+        return { ...record, skipped: 'it did not answer in time' };
+      }
       if ('error' in answer) return { ...record, skipped: `${answer.error.code}: ${answer.error.message}` };
       const result = isJsonObject(answer.result) ? answer.result : {};
       if (result.dropped === true) return { ...record, dropped: true };
@@ -101,8 +115,11 @@ async function askWorkers(records: readonly BuildAreaRecord[], signal?: AbortSig
     const outcomes = await Promise.all(
       gone.map((record) =>
         Promise.race([drop(record), timedOut]).then(
-          (outcome): BuildAreaDrop =>
-            outcome === 'deadline' ? { ...record, skipped: 'it did not answer in time' } : outcome,
+          (outcome): BuildAreaDrop => {
+            if (outcome !== 'deadline') return outcome;
+            quietUntil.set(record.machine, Date.now() + QUIET_SKIP_MS);
+            return { ...record, skipped: 'it did not answer in time' };
+          },
           (error: unknown): BuildAreaDrop => ({ ...record, skipped: String(error) }),
         ),
       ),

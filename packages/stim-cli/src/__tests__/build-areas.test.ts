@@ -88,7 +88,7 @@ test('asks each worker that built a removed checkout to drop its area, and none 
   expect(closed.toSorted()).toEqual(['mini', 'studio']);
 });
 
-test('skips a worker that is older, closes, cannot be reached, never answers or is no longer paired, within one deadline', async () => {
+test('skips a worker that is older, closes, cannot be reached, never answers or is no longer paired, within one deadline, and a quiet one for a while after', async () => {
   pair('old', 'closing', 'offline', 'silent');
   const gone = join(home, 'gone');
   let asked!: () => void;
@@ -120,4 +120,15 @@ test('skips a worker that is older, closes, cannot be reached, never answers or 
   ]);
   expect(open.mock.calls.map(([target]) => target.host)).not.toContain('unpaired');
   expect(closed).toContain('silent');
+
+  open.mockClear();
+  const again = await dropBuildAreas(['offline', 'silent'].map((machine) => record(machine, gone)));
+  expect(again).toMatchObject([
+    { machine: 'offline', skipped: 'it did not answer a recent request' },
+    { machine: 'silent', skipped: 'it did not answer a recent request' },
+  ]);
+  expect(open).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(10 * 60_000);
+  await dropBuildAreas([record('offline', gone)]);
+  expect(open).toHaveBeenCalledTimes(1);
 });
