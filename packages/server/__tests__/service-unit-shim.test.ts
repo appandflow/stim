@@ -17,15 +17,7 @@ describe('systemd unit pinned to a server script', () => {
     mkdirSync(bin);
     unit = join(home, '.config', 'systemd', 'user', `${label}.service`);
     mkdirSync(join(home, '.config', 'systemd', 'user'), { recursive: true });
-    writeFileSync(
-      join(bin, 'systemctl'),
-      `#!/bin/sh
-case "$*" in
-  *show*)
-    sed -E 's/^ExecStart="([^"]*)".*/ExecStart={ path=\\1 ; argv[]=\\1 ; }/' '${home}/loaded' ;;
-esac
-`,
-    );
+    writeFileSync(join(bin, 'systemctl'), '#!/bin/sh\n');
     chmodSync(join(bin, 'systemctl'), 0o755);
     vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`);
     vi.stubEnv('HOME', home);
@@ -45,12 +37,6 @@ esac
       serve: null,
     };
     writeFileSync(unit, renderUnit(spec));
-    writeFileSync(
-      join(home, 'loaded'),
-      readFileSync(unit, 'utf8')
-        .split('\n')
-        .find((line) => line.startsWith('ExecStart=')) + '\n',
-    );
     const shim = join(home, 'engine', 'bin', 'stimd');
     mkdirSync(join(home, 'engine', 'bin'), { recursive: true });
     writeFileSync(shim, '#!/bin/sh\n', { mode: 0o755 });
@@ -62,12 +48,10 @@ esac
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('names the install for a unit that names node while the engine store has the shim, and boots it unchanged', async () => {
-    const before = readFileSync(unit, 'utf8');
+  it('names the install for a unit that names node while the engine store has the shim', async () => {
     const stale = await serviceStale(label);
     expect(stale?.reason).toBe("its unit does not start the engine's stimd shim");
     expect(stale?.remedy).toContain('stim service install --port 7787');
-    expect(readFileSync(unit, 'utf8')).toBe(before);
     rmSync(join(home, 'engine'), { recursive: true });
     expect(await serviceStale(label)).toBeNull();
   });

@@ -1553,8 +1553,9 @@ toolchain discovery does not find.
 A macOS or Linux service installed while the Stim engine is installed runs the
 engine's \`bin/stimd\`, so it follows the engine (a Windows task runs the build
 it was installed with, #5602). A service installed before the engine keeps
-running the build it names until \`stim service install\` runs once; \`stim
-doctor\` and \`stim service status\` report it as stale with that command.
+running the build it names until \`stim service install\` (or \`stim setup\`)
+runs once; once the engine is installed, \`stim doctor\` and \`stim service
+status\` report it as stale with that command.
 The engine switch then works: \`stim engine update\` there moves it
 to the newest release on the engine's channel and \`stim engine rollback\`
 back to the previous build, each switching once running builds and hosted
@@ -1603,7 +1604,8 @@ list, a \`note\` finding only the doctor report:
                          cannot move onto the engine, or KillMode=, so stimd
                          keeps the successor handover; it names the drop-in
   server-service-stale   note: launchd runs an outdated LaunchAgent definition, or
-                         a systemd unit lacks KillMode=process; run
+                         a systemd unit lacks KillMode=process or names node
+                         while the engine store has the shim; run
                          \`stim service install\` once
   server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so

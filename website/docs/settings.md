@@ -718,8 +718,8 @@ installed (`stim engine install`) runs the engine's `bin/stimd`, so it follows
 the engine on macOS and Linux (a Windows task runs the build it was installed
 with, [#5602](https://github.com/appandflow/stim/issues/5602)). A service
 installed before the engine keeps running the build it names until you run
-`stim service install` there once; `stim doctor` and `stim service status`
-report it as stale with that command. To move the remote machine to another build, run one of these there:
+`stim service install` (or `stim setup`) there once; with the engine installed,
+`stim doctor` and `stim service status` report it as stale with that command. To move the remote machine to another build, run one of these there:
 
 ```bash
 stim engine update          # the newest release on the engine's channel
@@ -779,7 +779,9 @@ launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove server 
 `stim service status` and the reported log when readiness is unavailable.
 launchd reads a LaunchAgent only when it loads it. When a LaunchAgent that
 `stim service install` wrote does not match what install writes now (its
-`ProgramArguments` or `ProcessType`, or the arguments launchd loaded),
+`ProgramArguments` or `ProcessType`, or the arguments launchd loaded), or a
+systemd unit it wrote sets no `KillMode=process` or names node while the engine
+store has the shim,
 `stim service status` adds a `stale:` line with the reason and the
 `stim service install` command that fixes it, and `--json` reports the same
 as `stale` (`{ reason, remedy }`, null otherwise). `stim doctor` reports it as
