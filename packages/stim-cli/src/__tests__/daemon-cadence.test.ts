@@ -178,7 +178,7 @@ test.skipIf(process.platform === 'win32')(
         expect(getExecutor().findExecutable('agent-device')).toBeNull();
       });
       await vi.waitFor(() => expect(createNetThread).toHaveBeenCalled());
-      const netEnv = createNetThread.mock.calls[0]![5];
+      const netEnv = createNetThread.mock.calls[0]![4];
       expect(netEnv?.PATH).toBe(barePath);
       expect(netEnv?.PATH).not.toContain(bin);
     } finally {

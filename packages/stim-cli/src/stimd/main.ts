@@ -1052,10 +1052,6 @@ async function runStimdInner(
       netGone();
     },
     (why) => maybeUpdate(why, ASKED_MS),
-    (why) => {
-      restartWhy ??= why;
-      void checkEngine();
-    },
     (count) => {
       netBusy = count;
       if (count === 0) void checkEngine();

@@ -34,7 +34,6 @@ type FromNet =
   | { type: 'end'; id: number }
   | { type: 'idle' }
   | { type: 'update'; why: string }
-  | { type: 'restart'; why: string }
   | { type: 'statusWorker'; request: StatusWorkerRequest }
   | { type: 'busy'; count: number };
 
@@ -72,7 +71,6 @@ export function createNetThread(
   log: (level: 'info' | 'warn', event: string, msg: string) => void,
   onExit: (failure?: Error) => void,
   onUpdate: (why: string) => void = () => {},
-  onRestart: (why: string) => void = () => {},
   onBusy: (count: number) => void = () => {},
   inheritedEnv: NodeJS.ProcessEnv = process.env,
 ): NetThread {
@@ -176,7 +174,6 @@ export function createNetThread(
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
           } else if (message.type === 'update') onUpdate(message.why);
-          else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'statusWorker') startStatusWorker(message.request);
           else if (message.type === 'busy') onBusy(message.count);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
