@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { existsSync, realpathSync, rmSync } from 'fs';
+import { existsSync, realpathSync, rmSync, statSync } from 'fs';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { exactOwnedEntry } from '../workspace/cargo-target.ts';
@@ -221,8 +221,10 @@ function checkNativeDir(
 
 // Exact's dep-info check (exact2 scripts/cargo-dep-info.mjs) fails every build in a target/ built at another path.
 function exactTargetWithheld(root: string, rel: string): string | null {
+  const target = join(root, rel);
   return basename(rel) === 'target' &&
-    (existsSync(join(root, dirname(rel), 'exact.mjs')) || exactOwnedEntry(join(root, rel)))
+    (existsSync(join(root, dirname(rel), 'exact.mjs')) ||
+      (statSync(target, { throwIfNoEntry: false })?.isDirectory() && exactOwnedEntry(target)))
     ? "Exact refuses a Cargo target/ built in another checkout, so this worktree's first build compiles its own"
     : null;
 }
