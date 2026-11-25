@@ -618,9 +618,9 @@ test('a route rollback failure records the exact removal remedy', async () => {
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
     state: 'failed',
-    fix: 'tailscale serve --https=7449 off',
+    fix: 'tailscale serve --https=7449 --set-path=/ off',
   });
-  expect(f.stdout.join('\n')).toContain('tailscale serve --https=7449 off');
+  expect(f.stdout.join('\n')).toContain('tailscale serve --https=7449 --set-path=/ off');
 });
 
 test.each(['SIGINT', 'close'] as const)(

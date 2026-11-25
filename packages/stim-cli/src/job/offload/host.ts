@@ -1521,10 +1521,10 @@ function areaBuilt(area: string): string[] {
   }
 }
 
-/** Whether a build holds the area's exclusive claim, which `build.start` would refuse on. */
+/** Whether a live holder of the area's claim, exclusive or shared, would make `build.start` refuse. */
 function areaBuilding(area: string): boolean {
   try {
-    return readClaimSet(`${area}.claims`).live.some((holder) => holder.mode === 'exclusive');
+    return readClaimSet(`${area}.claims`).live.length > 0;
   } catch {
     return false;
   }

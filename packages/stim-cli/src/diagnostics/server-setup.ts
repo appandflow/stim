@@ -325,8 +325,8 @@ function overrideFindings(service: InstalledServerService): Finding[] {
       code: 'server-service-override',
       level: 'note',
       title: `A systemd drop-in overrides the command of the ${service.label} service`,
-      detail: `${service.override}, so the service cannot move onto the engine's stimd shim and keeps running the build that command names.`,
-      fix: `Remove ExecStart= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
+      detail: `${service.override}, so the service does not run the engine's stimd shim and keeps running the build that command names.`,
+      fix: `Remove ExecStart= from that drop-in, run \`systemctl --user daemon-reload\`, then run \`stim service install\` with the service's options; Stim never edits a drop-in.`,
     },
   ];
 }

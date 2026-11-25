@@ -57,7 +57,7 @@ vi.mock('node:child_process', async (original) => ({
     const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
     const canonical = JSON.stringify({
       devices: policy.devices.allow.map((device: { serial: string }) => device.serial),
-      commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
+      commands: null,
       capabilities: policy.capabilities.deny,
     });
     const file = join(args[args.indexOf('--state-dir') + 1] ?? '', 'daemon.json');
@@ -207,6 +207,7 @@ test('pins the serial policy and verifies its digest before granting Android con
   expect(parseHostedAgentGrant(routed)).toEqual(routed);
   expect(grant).toMatchObject({ lease: { backend: 'android-instance', deviceKey: `android:mobile:${SERIAL}` } });
   const policy = JSON.parse(readFileSync(join(home, 'agent', 'policy.json'), 'utf8'));
+  expect(policy).not.toHaveProperty('commands');
   expect(policy.devices).toEqual({ allow: [{ serial: SERIAL }] });
   expect(policy.capabilities).toEqual({ deny: ['device-shutdown'] });
   expect(statSync(join(home, 'agent', 'policy.json')).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
@@ -426,6 +427,9 @@ test.each(['heartbeat', 'release'])('accepts the real client lease %s scope and 
 
 test.each([
   { command: 'install' },
+  { command: 'install_source' },
+  { command: 'open', flags: { launchArgs: ['--debug'] } },
+  { command: 'open', input: { osVersion: 'latest' } },
   { command: 'reinstall' },
   { command: 'uninstall' },
   { command: 'shutdown' },

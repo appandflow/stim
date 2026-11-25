@@ -12,7 +12,7 @@ Stim 2.0 is a breaking release. Four mechanisms that carried older builds across
 the one-engine migration are gone, and each unsupported case ends in a refusal
 that names its remedy:
 
-- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42. C32 replaces it below.
+- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42. C32, the refusal below, replaces it.
 - C23, the net thread's probe of port 7787 for a pre-1.43 stim-server.
 - C25, stimd stopping dev server supervisors and device log collectors of
   another engine build at an engine switch.
@@ -34,64 +34,32 @@ the 60-day wait and the field gate are waived and that compatibility code is
 cleaned up in 2.0. The coordinator, not the maintainer, chose to remove the
 release floors and to give the action a missing-`bin/stim.mjs` check.
 
-## A stim-daemon from before 2.0 is taken over
+## A stim-daemon from before 2.0 is refused
 
 stimd holds the daemon claim shared. When a live process holds it exclusively,
 only a stim-daemon from Stim 1.40 to 1.42 does. That daemon does not exit when
 its workspaces stop: it stays until every workspace in the home is dormant,
 `idle.dormantDays` after the last activity (3 days by default in 1.40), and
-any 1.40 command starts it. Refusing it therefore cost up to three days after an
-upgrade (#5620).
+any 1.40 command starts it.
 
-stimd takes over from it before it takes the shared claim (compat C32, ends
-2.1.0), at every stimd start whatever `daemon.mode` says: `off` still starts stimd
-for Metro, the tunnel and device logs, and those need the claim. It acts only when
-the claim is exclusive, its `socket` is this home's pre-2.0 daemon socket, it has a
-`mode` and no `build` (a 2.0 stimd's details carry one), and, in the same
-synchronous step that sends the signal, `inspectProcessIdentity` of the claim's
-owner reads `same`. (A claim file stores no label, so the label `stim-daemon` cannot
-be checked.) It sends SIGTERM, because the old daemon has no stop request: its
-socket answers `hello`, `snapshot`, `tick` and the slot and boot queue operations
-only. The old handler closes the socket, releases the claim at once and exits after
-the tick in progress. stimd logs the signal (`stimd_takeover_signal`, with the pid
-and the identity it read) or why none was sent (`stimd_takeover_skipped`), waits up
-to 3 seconds for that identity to read `gone` or `different`, and logs
-`stimd_takeover`.
+stimd never signals it (compat C32, ends 2.1.0). Its shared claim attempt fails,
+it logs `stimd_claim_held`, and the CLI shows the same text for `stim start` and
+the commands that need Metro or a managed tunnel: the pid, the stop command
+(`kill <pid>`, `taskkill /PID <pid> /F` on Windows) and the update remedy (stim
+2.0.0 or later), with the link to the upgrade guide. `stim serve` prints the same
+text. `stim status` and `stim doctor` name the old daemon and its stop command,
+the STATUS line of `stim guide agent` names it, and the agent migration guide
+(`website/docs/migrate-to-2.md`, #5905) tells an agent to stop
+it, with the user's go, before the first 2.0 command that starts stimd. The old
+daemon owns no child, so dev servers, log collectors and owned devices keep
+running when it stops, and stimd adopts the dev servers as any other.
 
-The old daemon owns no child. It runs `ps`, `lsof` and `git` for a tick and
-starts nothing that outlives it, so dev servers (each with its own supervisor),
-log collectors and owned devices keep running; stimd adopts the dev servers as
-it adopts any other (`adoptMetroChildren`). A takeover stops nothing else.
+Decision: earlier 2.0 release candidates sent SIGTERM to a verified stim-daemon
+and took its place, a choice the coordinator made in the #5620 lane brief. With
+the agent migration guide an agent stops the old daemon first, so the takeover
+was removed (#5906).
 
-When the process still runs after the wait, stimd logs `stimd_takeover_overlap`
-(warn, with the pid) and goes on to its normal claim attempt. That attempt
-succeeds when the old daemon has released the claim, which a real 1.40 daemon does
-at the signal, so stimd runs while the old daemon finishes its tick. The overlap
-is judged harmless from reading 1.40: its tick writes `snapshot.json` (rewritten on
-the next 2.0 tick), per-workspace idle and dormant stages, and the maintenance run,
-which takes `maintenance/run.claims` exclusively in both versions. stimd never
-signals a second time. If the old process still holds the claim, the attempt fails
-and stimd refuses.
-
-stimd signals nothing when the holder's record is not a stim-daemon's. A claim
-whose identity reads `different` is dead and one that reads `unknown` is
-unresolved; neither is a live holder. stimd then refuses or starts as it would
-without them. The refusal logs `stimd_claim_held`, and the CLI shows the same text
-for `stim start` and the commands that need Metro or a managed tunnel: the pid, the
-stop command (`kill <pid>`, `taskkill /PID <pid> /F` on Windows) and the update
-remedy (stim 2.0.0 or later). `stim serve` prints the same text. The wait is below
-the CLI's 5-second wait for stimd, so a command that started stimd does not give up
-before the takeover ends.
-
-Known limit: on Windows `process.kill` ends the process at once and its claim is
-recovered through its dead identity; whether the socket recorded there matches is
-unverified, and a mismatch leaves the refusal.
-
-Decision: the coordinator chose this takeover in the #5620 lane brief, on
-2026-11-12, not the maintainer. It reverses the part of the earlier decision
-here that said stimd never signals a pid read from a claim and that the old
-daemon exits on its own after its workspaces stop; that part rested on a wrong
-reading of the 1.40 code. The maintainer has not stated it.
+Maintainer decision: "I agree lets do this and ur recommendations from prev messages, also lets do the changes now that u flagged as after 2.0 id rather delay than ship what we have", 2026-11-20 (#6025)
 
 ## Dev servers of another build keep running after an engine switch
 
@@ -157,7 +125,8 @@ maintainer has not ruled on these, and the code keeps them:
 - `maintenance.idleStopHours`, which is still a live setting for hosted
   sessions.
 - `stim settings unset <removed key>`, which edits config files and is the only
-  command that clears a leftover key.
+  command that clears a leftover key. It also clears the retired 1.x keys that
+  the STATUS block names (`RETIRED_SETTING_KEYS`), which have no replacement.
 
 ## Agents migrate an upgraded home from the website guide
 
@@ -182,13 +151,13 @@ Maintainer decision: "can u work on a migration guide aimed at agents that maybe
 Maintainer decision: "I would prefer this to keeping too much backwards compat code", 2026-11-18
 Maintainer decision: "I was thinking more have guide on website for agent to go read than in stim command", 2026-11-18
 
-For 2.0 the coordinator, not the maintainer, chose to keep the C32 takeover,
-C29 and the C5 refusals, and to add no version marker beyond `doctorRuns`.
+For 2.0 the coordinator, not the maintainer, chose to keep C29 and the C5
+refusals, and to add no version marker beyond `doctorRuns`.
 
 ## Links
 
-- Issues: #5552, #5620, #5650, #5895.
-- Code: `packages/stim-cli/src/daemon/legacy-daemon.ts` (the takeover),
+- Issues: #5552, #5620, #5650, #5895, #5906.
+- Code: `packages/stim-cli/src/daemon/legacy-daemon.ts` (the holder check),
   `packages/stim-cli/src/stimd/main.ts` (`daemonClaimRefusal`),
   `packages/server/src/cli.ts`, `.github/actions/stim-ci/src/action.ts`,
   `packages/stim-cli/src/guide-status.ts`, `website/docs/migrate-to-2.md`.

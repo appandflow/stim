@@ -21,7 +21,6 @@ export type FromNet =
   | { type: 'end'; id: number }
   | { type: 'idle' }
   | { type: 'update'; why: string }
-  | { type: 'restart'; why: string }
   | { type: 'statusWorker'; request: StatusWorkerRequest }
   | { type: 'busy'; count: number };
 
@@ -74,7 +73,6 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       options,
       () => post({ type: 'idle' }),
       (why) => post({ type: 'update', why }),
-      (why) => post({ type: 'restart', why }),
       (request) => port.postMessage({ type: 'statusWorker', request } satisfies FromNet, [request.port]),
       (count) => post({ type: 'busy', count }),
     );

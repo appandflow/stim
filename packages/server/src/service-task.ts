@@ -27,7 +27,8 @@ interface TaskFile {
 }
 
 export function renderTask(spec: ServiceSpec): string {
-  const environment: Record<string, string> = { ...spec.environment };
+  // libuv reads UV_THREADPOOL_SIZE once, when the pool first starts; stimd in this server process needs 16 threads.
+  const environment: Record<string, string> = { UV_THREADPOOL_SIZE: '16', ...spec.environment };
   for (const [name, value] of environmentValues(spec.env)) environment[name] = value;
   environment[LABEL_VARIABLE] = spec.label;
   const file: TaskFile = {

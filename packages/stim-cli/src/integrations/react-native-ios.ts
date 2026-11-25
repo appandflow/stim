@@ -416,7 +416,7 @@ function reactNativeIosArtifact(
           fail({
             code: result.code || 'STIM_PREBUILD_FAILED',
             message: result.reason || 'expo prebuild failed.',
-            remedy: result.remedy || `See ${logFile} for the transcript.`,
+            remedy: result.remedy,
             lines: (result.lastLines || []).slice(-5),
           });
         }

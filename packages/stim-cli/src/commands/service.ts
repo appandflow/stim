@@ -51,7 +51,10 @@ const service: Op = defineOp({
       description: '',
       options: {
         label,
-        helper: { flags: '--helper', description: 'register the macOS runaway service helper only' },
+        helper: {
+          flags: '--helper',
+          description: 'install Stim Host and register only the macOS runaway service helper',
+        },
         port: { flags: '--port <n>', description: 'server port' },
         serve: { flags: '--serve', description: 'add a tailnet-only Tailscale route' },
         env: { flags: '--env <KEY=VALUE>', description: 'set a server environment variable', repeatable: true },

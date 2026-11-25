@@ -426,14 +426,15 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
       summary: 'Opt-in macOS runaway service helper',
       body: () => `Replace stim with npx stim if it is not installed globally.
 
-stim service install --helper registers only the root helper in an installed,
-Developer ID-signed, notarized Stim Host.app (~/Applications or /Applications).
-Approve Stim Host in System Settings > General > Login Items & Extensions with
+stim service install --helper installs or updates the pinned Developer
+ID-signed, notarized Stim Host.app in ~/Applications (a download when the
+installed version differs), then registers only its root helper. Approve Stim Host in System Settings > General > Login Items & Extensions with
 an administrator password. Desktop preferences has the same toggle and a button
 opening that pane. stim service status (--json too) reports registered,
 requires approval, not registered, unavailable on this OS, Stim Host missing,
-Stim Host too old, status timed out or status error.
-stim service uninstall --helper unregisters only the helper. Do not combine
+Stim Host too old, status timed out or status error; for a missing or too old
+Stim Host, run stim service install --helper.
+stim service uninstall --helper unregisters only the helper and downloads nothing. Do not combine
 --helper with server service options. Linux and Windows refuse these mutations.
 
 The helper has no inbound IPC or configurable thresholds. Once a minute it

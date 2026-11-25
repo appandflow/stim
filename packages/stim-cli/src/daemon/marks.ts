@@ -1,5 +1,5 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { realpathAsync } from '../commands/gc/paths.ts';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import {
@@ -29,6 +29,7 @@ import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
 import { discoveredCargoCandidates, discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
+import { listWorkspaceDirs } from '../commands/gc/workspaces.ts';
 
 export interface CargoMarkScope {
   roots: readonly string[];
@@ -230,7 +231,15 @@ async function authorizedMarks(
       else throw error;
     }
   }
-  const unregistered = marks.filter((mark) => !registered.has(mark.root));
+  if (marks.every((mark) => registered.has(mark.root))) return marks;
+  const recorded = new Set(
+    listWorkspaceDirs().flatMap(({ projectRoot }) =>
+      projectRoot && isAbsolute(projectRoot) ? [resolve(projectRoot)] : [],
+    ),
+  );
+  for (const root of recorded)
+    if ([...registered].some((key) => key === root || key.startsWith(`${root}${sep}`))) recorded.delete(root);
+  const unregistered = marks.filter((mark) => !registered.has(mark.root) && !recorded.has(mark.root));
   if (!unregistered.length) return marks;
   const allowed = new Set(
     (
@@ -269,7 +278,7 @@ async function authorizedMarks(
   );
   const selected: GcMark[] = [];
   for (const mark of marks) {
-    if (registered.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
+    if (registered.has(mark.root) || recorded.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
     else if (cargoHolders.has(mark.root) || discoveredHolders.has(mark.root)) {
       const candidates = cargoHolders.has(mark.root)
         ? mark.candidates.filter(({ kind }) => kind === 'cargo-target')
@@ -290,13 +299,24 @@ async function authorizedMarks(
   return selected;
 }
 
-export async function refreshOutputMarks(config: Config, reading: DeviceReading): Promise<GcMark[]> {
-  const found = await discoverCheckouts(config, listedRoots(), reading.operation);
+export async function refreshOutputMarks(
+  config: Config,
+  reading: DeviceReading,
+  timing?: { refreshDiscoverMs?: number; refreshReadMs?: number; slowestRoot?: string; slowestRootMs?: number },
+): Promise<GcMark[]> {
+  const discoveryStarted = performance.now();
+  let found;
+  try {
+    found = await discoverCheckouts(config, listedRoots(), reading.operation);
+  } finally {
+    if (timing) timing.refreshDiscoverMs = Math.round(performance.now() - discoveryStarted);
+  }
   const roots = new Set([...Object.keys(config.projects), ...found.map(({ path }) => path)]);
   const write = markWriter(config, reading.operation?.signal);
   const refreshed: GcMark[] = [];
   for (const path of roots) {
     reading.operation?.signal.throwIfAborted();
+    const started = performance.now();
     try {
       const root = await answered(path, () => realpathAsync(path), 3_000, reading.operation?.signal);
       const previous = readGcMark(root);
@@ -311,6 +331,15 @@ export async function refreshOutputMarks(config: Config, reading: DeviceReading)
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();
+    } finally {
+      if (timing) {
+        const elapsed = Math.round(performance.now() - started);
+        timing.refreshReadMs = (timing.refreshReadMs ?? 0) + elapsed;
+        if (timing.slowestRootMs === undefined || elapsed > timing.slowestRootMs) {
+          timing.slowestRoot = path;
+          timing.slowestRootMs = elapsed;
+        }
+      }
     }
   }
   return refreshed;

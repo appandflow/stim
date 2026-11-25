@@ -150,6 +150,14 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform === 'win32')('workspace services (skipped on win32)', () => {
+  test('a portless supervised service that exits during startup fails readiness', async () => {
+    declare({ worker: { start: [process.execPath, '-e', 'setTimeout(() => process.exit(3), 300)'] } });
+    expect(await startServices(root, undefined, { operation: ctx() })).toMatchObject([
+      { name: 'worker', outcome: 'failed' },
+    ]);
+    expect(serviceRecords(root).worker).toMatchObject({ state: 'stopped' });
+  }, 30_000);
+
   test('a one-line service is supervised: started with its port as an argument, idle-stopped by signal, revived, then stopped by identity once its folder is gone', async () => {
     declare({
       web: {
@@ -219,6 +227,63 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     expect(await teardownServices(root, { operation })).toMatchObject([{ name: 'db', outcome: 'torn-down' }]);
     expect(await listens(port)).toBe(false);
     expect(existsSync(join(root, 'data'))).toBe(false);
+  });
+
+  test('commands read envFile at each launch while Stim variables stay private and win', async () => {
+    const envFile = join(root, '.service.env');
+    const marker = join(root, 'env-marker');
+    const script = join(scripts, 'env.mjs');
+    writeFileSync(
+      script,
+      `import { writeFileSync } from 'node:fs'; writeFileSync(process.argv[2], JSON.stringify([process.env.SECRET, process.env.DB_PORT]));`,
+    );
+    writeFileSync(envFile, 'SECRET=first\nDB_PORT=1\n');
+    declare({
+      db: {
+        envFile: '.service.env',
+        ports: { pg: 'DB_PORT' },
+        ready: [process.execPath, '-e', ''],
+        start: [process.execPath, script, marker],
+        stop: [process.execPath, script, marker],
+      },
+    });
+    const operation = ctx();
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'started' }]);
+    const port = String(recorded('db').port);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual(['first', port]);
+    expect(serviceRecords(root).db?.envFile).toBe(envFile);
+    expect(recorded('db').env).toEqual({ DB_PORT: port });
+    expect(await servicesEnv(root)).toEqual({ db: { DB_PORT: port } });
+    writeFileSync(envFile, 'SECRET=second\nDB_PORT=1\n');
+    expect(await stopServices(root, undefined, 'command', { operation })).toMatchObject([{ outcome: 'stopped' }]);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual(['second', port]);
+  });
+
+  test('a supervised process gets its envFile variables', async () => {
+    const marker = join(root, 'env-marker');
+    writeFileSync(join(root, '.service.env'), 'SECRET=process\n');
+    declare({
+      worker: {
+        envFile: '.service.env',
+        start: [
+          process.execPath,
+          '-e',
+          `require('fs').writeFileSync(${JSON.stringify(marker)}, process.env.SECRET); setInterval(Object, 1000)`,
+        ],
+      },
+    });
+    expect(await startServices(root, undefined, { operation: ctx() })).toMatchObject([{ outcome: 'started' }]);
+    pids.add(recorded('worker').pid);
+    await expect.poll(() => existsSync(marker) && readFileSync(marker, 'utf8')).toBe('process');
+  }, 30_000);
+
+  test('a missing envFile fails the start and names the file', async () => {
+    declare({
+      broken: { envFile: 'missing.env', start: [process.execPath, '-e', ''], stop: [process.execPath, '-e', ''] },
+    });
+    expect(await startServices(root, undefined, { operation: ctx() })).toMatchObject([
+      { name: 'broken', outcome: 'failed', detail: expect.stringContaining(join(root, 'missing.env')) },
+    ]);
   });
 
   test('a workspace whose folder is gone runs the orphan teardown from the home folder with the service id', async () => {
@@ -369,6 +434,8 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     const { port } = recorded('db');
     await expect(teardownServices(root, { operation })).rejects.toThrow(/run by hand in .*DB_PORT=\d+ .*db\.mjs fail/);
     expect(serviceRecords(root).db?.teardownFailure).toMatch(/exited with status 1/);
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'running' }]);
+    expect(serviceRecords(root).db?.teardownFailure).toBeUndefined();
     expect(getProject(root)?.ports).toEqual({ pg: port });
     expect(await teardownServices(root, { operation, force: true })).toMatchObject([{ outcome: 'torn-down' }]);
     expect(serviceRecords(root)).toEqual({});

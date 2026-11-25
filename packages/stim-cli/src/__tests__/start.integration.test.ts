@@ -1409,7 +1409,12 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     }
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
+    expect(JSON.parse(result.logs[0] ?? '')).toMatchObject({
+      code: 'STIM_REMOTE_METRO_UNREACHABLE',
+      remedy: expect.stringContaining(
+        'set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.',
+      ),
+    });
     expect(stopped).toEqual([expect.objectContaining({ pid: 4242 })]);
   });
 
@@ -1489,7 +1494,12 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
+    expect(JSON.parse(result.logs[0] ?? '')).toMatchObject({
+      code: 'STIM_REMOTE_METRO_UNREACHABLE',
+      remedy: expect.stringContaining(
+        'set metro.tunnel to another provider, or set metro.publicUrl to an existing endpoint.',
+      ),
+    });
   });
 
   test('a dev server that never answers exits 1 with the output tail and its path', async () => {

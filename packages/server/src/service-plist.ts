@@ -160,18 +160,6 @@ function escapeXml(value: string): string {
 const string = (value: string, indent: string) => `${indent}<string>${escapeXml(value)}</string>`;
 const key = (name: string, indent: string) => `${indent}<key>${name}</key>`;
 
-/**
- * `plist`, a LaunchAgent `renderPlist` wrote, with its `ProgramArguments` replaced by `programArguments`; every other
- * key, such as the job's environment, stays as written.
- */
-export function withProgramArguments(plist: string, programArguments: string[]): string {
-  return plist.replace(
-    /(<key>ProgramArguments<\/key>\s*<array>)[\s\S]*?(\n\t<\/array>)/,
-    (_match, open: string, close: string) =>
-      `${open}\n${programArguments.map((argument) => string(argument, '\t\t')).join('\n')}${close}`,
-  );
-}
-
 /** The LaunchAgent plist for `spec`. `StimService` is inert to launchd: it marks the job as one `install` wrote, so `install` and `uninstall` never touch another agent, and records the serve route. */
 export function renderPlist(spec: ServiceSpec): string {
   const lines: string[] = [
@@ -240,11 +228,13 @@ export function serviceInstallCommand(installed: InstalledService): string {
 }
 
 /**
- * Why the systemd unit `text` does not set what `stim service install` writes now, or null. Install writes
- * `KillMode=process`, so stopping or restarting the unit leaves the dev servers stimd hands to the next stimd; a unit
- * without it keeps systemd's `control-group`, and its stimd keeps the successor handover at an engine switch.
+ * Why the systemd unit `text`, which `installed` describes, does not set what `stim service install` writes now, or
+ * null. With `shim`, the engine's `bin/stimd`, install names it, so a unit that names node does not follow the engine.
+ * Install writes `KillMode=process`, so stopping or restarting the unit leaves the dev servers stimd hands to the next
+ * stimd; a unit without it keeps systemd's `control-group`, and its stimd keeps the successor handover at an engine switch.
  */
-export function staleSystemdUnit(text: string): string | null {
+export function staleSystemdUnit(installed: InstalledService, text: string, shim: string | null): string | null {
+  if (shim && installed.node !== null) return "its unit does not start the engine's stimd shim";
   const mode = unitLines(text).findLast((line) => line.section === 'Service' && line.key === 'KillMode')?.value;
   if (mode === 'process') return null;
   return `its unit sets ${mode === undefined ? 'no KillMode=' : `KillMode=${mode}`} where \`stim service install\` writes KillMode=process, so systemd stops the dev servers stimd leaves running whenever the unit stops or restarts`;

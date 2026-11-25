@@ -5,11 +5,9 @@ so the normal path stays short. Come here from the step that failed.
 
 ## The release gate is red, cancelled or missing
 
-RELEASE.md section 4 step 4 checks three `CI` jobs and the merge-queue
-`Merge gate` on the release commit. Read which part failed:
+RELEASE.md section 4 step 4 checks three jobs of the push `CI` run on the
+release commit. Read which part failed:
 
-- `Merge gate` missing: the commit did not land through the merge queue. Do not
-  tag it; land the version through a pull request.
 - No push `CI` run, or `cancelled` gate jobs: a pull request landed on `main`
   before the run finished and the branch's concurrency group cancelled it. This
   is not a failure of the commit. Dispatch `ci.yml` on `release-ci/X.Y.Z` at the

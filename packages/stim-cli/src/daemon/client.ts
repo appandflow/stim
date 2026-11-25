@@ -266,17 +266,12 @@ function waitingChildren(): number[] {
   }
 }
 
-/**
- * The refusal of a command that needs this home's stimd while a stim-daemon from before Stim 2.0 holds the daemon
- * claim. Before stimd has tried, only a holder it will not stop refuses; with `attempted`, any holder does.
- */
+/** The refusal of a command that needs this home's stimd while a stim-daemon from before Stim 2.0 holds the daemon claim. */
 // compat C32 until 2.1.0
-// @ref LLP 0015#a-stim-daemon-from-before-20-is-taken-over -- stimd stops a verified pre-2.0 daemon, and refuses anything else
-export function legacyDaemonRefusal(
-  attempted = false,
-): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
+// @ref LLP 0015#a-stim-daemon-from-before-20-is-refused -- stimd never stops a pre-2.0 daemon; the refusal names the stop command
+export function legacyDaemonRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   const holder = legacyDaemonHolder();
-  if (!holder || (holder.stimDaemon && !attempted)) return null;
+  if (!holder) return null;
   const { pid } = holder.owner;
   return {
     code: 'STIM_DAEMON_UNAVAILABLE',
@@ -491,7 +486,7 @@ async function admitOperation(
   );
   const opToken = admittedOpToken(held);
   if (opToken) return { opToken };
-  const refused = otherBuildRefusal() ?? legacyDaemonRefusal(true);
+  const refused = otherBuildRefusal() ?? legacyDaemonRefusal();
   return { answer: refused ? { op: 'error', ...refused } : null };
 }
 
@@ -775,6 +770,15 @@ export async function stopMetroTree(
       reason: `stimd did not answer; ${after.daemonClaim} still holds this home's stimd`,
       remedy: `Verify no stimd of this home runs, then run ${claimRemoveCommand(after.daemonClaim)}; dev server pid ${pid} still runs.`,
     };
+  const hold = launchError ? null : currentCrashHold();
+  if (hold) {
+    const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
+    return {
+      stopped: false,
+      reason: 'stimd is held after repeated abnormal exits, so no stimd could stop the dev server',
+      remedy: `${crashHoldRemedy(hold, false)} Then run \`stim stop\` again; dev server pid ${pid} still runs.`,
+    };
+  }
   return unresolved(launchError ? `no stimd could adopt the dev server: ${launchError}` : 'stimd did not answer');
 }
 
@@ -1010,7 +1014,7 @@ export async function ensureStimd(
       return true;
     }
     // compat C32 until 2.1.0
-    if (command === 'stim start') {
+    if (command?.startsWith('stim ')) {
       const legacy = legacyDaemonRefusal();
       if (legacy) throw Object.assign(new Error(legacy.message), legacy);
     }
@@ -1069,7 +1073,7 @@ export async function ensureStimd(
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
     // compat C32 until 2.1.0
     if (!taken && command === 'stim start') {
-      const legacy = legacyDaemonRefusal(true);
+      const legacy = legacyDaemonRefusal();
       if (legacy) throw Object.assign(new Error(legacy.message), legacy);
     }
     // compat end

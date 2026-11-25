@@ -2157,7 +2157,8 @@ its applicable named scenarios: ready, loading, empty, error, long text and larg
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
 Settings covers the four configuration scopes, not the App or Connections tabs; **Connections: using this machine** and
-**Connections: this machine uses** show both segments of Connections with fixed connections.
+**Connections: this machine uses** show both segments of Connections with fixed connections; **Connections: machine
+details** shows a machine's Details page with its viewing pairing refused.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,
@@ -2416,6 +2417,7 @@ forwards it; a hosted run with `--remote` takes only the launch arguments). With
 at launch, does not record it as finished and does not offer the viewer setting, for that run only. Tips and
 discovery prompts also stay hidden, because they wait for a finished guide. **Help > Setup
 Guide** still opens it. To test the first-run flow, remove the argument from `.stim.json` for that run.
+`-ApplePersistenceIgnoreState YES` opens the main window at launch instead of the windows macOS saved for that bundle id.
 **Window > SwiftUI Playground** opens the
 in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that

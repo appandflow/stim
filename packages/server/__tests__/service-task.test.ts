@@ -32,6 +32,12 @@ describe('Windows service file', () => {
       script: SPEC.script,
     });
   });
+
+  it('starts the server with a 16-thread libuv pool unless --env sets one', () => {
+    const environment = (spec: ServiceSpec) => JSON.parse(renderTask(spec)).environment;
+    expect(environment(SPEC)).toMatchObject({ UV_THREADPOOL_SIZE: '16', STIM_HOME: SPEC.environment.STIM_HOME });
+    expect(environment({ ...SPEC, env: ['UV_THREADPOOL_SIZE=4'] })).toMatchObject({ UV_THREADPOOL_SIZE: '4' });
+  });
 });
 
 describe('Windows scheduled task', () => {

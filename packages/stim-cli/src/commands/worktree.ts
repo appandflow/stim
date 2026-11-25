@@ -1,9 +1,10 @@
 import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { existsSync, realpathSync, rmSync } from 'fs';
+import { existsSync, realpathSync, rmSync, statSync } from 'fs';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
+import { exactOwnedEntry } from '../workspace/cargo-target.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { brokenPodLinks, inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
 import { iosConfigurationSetting } from './ios/support.ts';
@@ -219,10 +220,11 @@ function checkNativeDir(
 }
 
 // Exact's dep-info check (exact2 scripts/cargo-dep-info.mjs) fails every build in a target/ built at another path.
-// An Exact app inside an enclosing Cargo workspace keeps target/ beside that workspace's Cargo.toml, not beside
-// exact.mjs, and is still carried: Stim does not resolve the Cargo workspace an Exact app belongs to.
 function exactTargetWithheld(root: string, rel: string): string | null {
-  return basename(rel) === 'target' && existsSync(join(root, dirname(rel), 'exact.mjs'))
+  const target = join(root, rel);
+  return basename(rel) === 'target' &&
+    (existsSync(join(root, dirname(rel), 'exact.mjs')) ||
+      (statSync(target, { throwIfNoEntry: false })?.isDirectory() && exactOwnedEntry(target)))
     ? "Exact refuses a Cargo target/ built in another checkout, so this worktree's first build compiles its own"
     : null;
 }
@@ -940,11 +942,18 @@ async function archiveRefusal(
 async function teardownReclaimed(
   keys: readonly string[],
   force: boolean,
+  log: (line: string) => void,
   operation?: StimContext,
 ): Promise<string | null> {
   for (const key of keys) {
     try {
-      await teardownServices(key, { force, ...(operation ? { operation, signal: operation.signal } : {}) });
+      const outcomes = await teardownServices(key, {
+        force,
+        ...(operation ? { operation, signal: operation.signal } : {}),
+      });
+      for (const outcome of outcomes) {
+        if (outcome.detail !== 'torn down') log(`service ${outcome.name}: ${outcome.detail}`);
+      }
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;
@@ -1111,7 +1120,13 @@ function reportRetainedResources(root: string, result: ReclaimAllResult, output:
     if (result.retainedResources.some((resource) => resource.project === kept)) continue;
     output.error(chalk.yellow(`  - retained Stim ownership state for ${kept}`));
   }
-  output.error(chalk.dim('Fix the reported cause, then run `stim worktree remove` again.'));
+  output.error(
+    chalk.dim(
+      result.retainedResources.some((resource) => resource.reason)
+        ? 'Fix the reported cause, then run `stim worktree remove` again.'
+        : 'Run `stim worktree remove` again; if it refuses again, run `stim doctor`.',
+    ),
+  );
   output.fail();
 }
 
@@ -1838,7 +1853,7 @@ async function removeOrRefuse(
             if (archive) await discardWorktreeArchive(archive);
           };
           // @ref LLP 0027#removal-tears-services-down -- the data goes first, so a failure refuses with nothing touched
-          const keptBack = await teardownReclaimed(lockedKeys, opts.force === true, opts.operation);
+          const keptBack = await teardownReclaimed(lockedKeys, opts.force === true, output.error, opts.operation);
           if (keptBack) {
             await discardArchive();
             output.error(chalk.red(`Refusing to remove ${path}: ${keptBack}`));

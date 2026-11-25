@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -40,7 +41,7 @@ const digest = () => {
   if (!policy.devices) return undefined;
   return createHash('sha256').update(JSON.stringify({
     devices: policy.devices.allow.map((device) => device.udid ?? device.serial),
-    commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
+    commands: policy.commands ? { mode: 'allow', names: policy.commands.allow.toSorted() } : null,
     capabilities: policy.capabilities.deny,
   })).digest('hex');
 };
@@ -898,6 +899,31 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
       } catch {}
     }
   });
+
+  test.skipIf(process.getuid?.() === 0)(
+    'a launch whose recordings folder cannot be created still links the state sessions to the daemon directory',
+    async () => {
+      const previous = process.env.TMPDIR;
+      const tmp = join(root, 'tmp');
+      mkdirSync(tmp, { mode: 0o700 });
+      process.env.TMPDIR = tmp;
+      mkdirSync(launchRoot(root), { mode: 0o700 });
+      chmodSync(tmp, 0o555);
+      install(root);
+      const driver = deviceDriverIn(root);
+      try {
+        await driver.start();
+        const launch = readFileSync(join(root, 'state', 'agent-device-launch'), 'utf8').trim();
+        expect(readlinkSync(join(root, 'state', 'sessions'))).toBe(join(launchRoot(root), launch, 'state', 'sessions'));
+        expect(readdirSync(tmp)).toEqual([launchRoot(root).slice(tmp.length + 1)]);
+      } finally {
+        chmodSync(tmp, 0o700);
+        await driver.stop();
+        if (previous === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = previous;
+      }
+    },
+  );
 
   test('after the server dies, stopping its session keeps the claim until agent-device proves the daemon stopped', async () => {
     const { earlier, orphanProxy } = await crashMidSession();

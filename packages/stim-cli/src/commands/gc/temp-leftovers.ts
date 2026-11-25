@@ -201,6 +201,7 @@ async function launchDirs(root: string): Promise<string[]> {
   return dirs;
 }
 
+// compat C34 until 2.1.0
 // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- 2.0.0-rc.3 kept its daemon state in the root itself
 async function legacyPaths(root: string, launches: readonly string[]): Promise<string[] | null> {
   let names: string[];
@@ -213,6 +214,7 @@ async function legacyPaths(root: string, launches: readonly string[]): Promise<s
   const marked = legacy.includes('daemon.json') || legacy.includes('daemon.lock');
   return legacy.length && (marked || launches.length) ? legacy.toSorted().map((name) => join(root, name)) : null;
 }
+// compat end
 
 // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc removes a launch only when agent-device reports its daemon stopped
 async function judgeDaemonState(
@@ -352,12 +354,16 @@ export async function collectTempLeftovers({
     const kind = kindOf(name, stat);
     if (!kind) continue;
     const launches = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await launchDirs(path) : [];
+    // compat C34 until 2.1.0
     const legacy = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await legacyPaths(path, launches) : null;
+    // compat end
     if (launches.length || legacy) {
+      // compat C34 until 2.1.0
       if (legacy) {
         const { bytes, kept } = await judgeDaemonState(legacy, path, now, signal, operation);
         entries.push({ kind, path, bytes, willDelete: kept === null, kept });
       }
+      // compat end
       for (const dir of launches) {
         const { bytes, kept } = await judgeDaemonState([dir], join(dir, 'state'), now, signal, operation);
         entries.push({ kind, path: dir, bytes, willDelete: kept === null, kept });
@@ -412,9 +418,11 @@ export function tempLeftoverSection(
 async function agentDeviceState(path: string, root: string): Promise<{ paths: string[]; stateDir: string } | null> {
   if (dirname(dirname(path)) === root)
     return { paths: (await lstatOrError(path)) ? [path] : [], stateDir: join(path, 'state') };
+  // compat C34 until 2.1.0
   if (dirname(path) !== root || !basename(path).startsWith(AGENT_DEVICE_LAUNCHES)) return null;
   const legacy = await legacyPaths(path, await launchDirs(path));
   return legacy && { paths: legacy, stateDir: path };
+  // compat end
 }
 
 /** Deletes what a fresh `collectTempLeftovers` marks for deletion. Returns the bytes freed and the failures. */
@@ -446,7 +454,9 @@ export async function deleteTempLeftovers(
           continue;
         }
         for (const path of agentDevice.paths) await removeTemporaryEntryAsync(path, options.signal);
+        // compat C34 until 2.1.0
         if (agentDevice.stateDir === entry.path) await rmdir(entry.path).catch(() => {});
+        // compat end
         done.count++;
         done.bytes += entry.bytes;
         continue;

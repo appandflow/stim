@@ -65,7 +65,7 @@ export function gcDetailLines(run: LevelRun): string[] {
 }
 
 /**
- * The plain summary: the level, one line of what was or would be freed, per-category totals with the largest items,
+ * The plain summary: the level, one line of what was or would be removed, per-category totals with the largest items,
  * then every failure and every reason the run could not decide, which a person has to look at.
  */
 export function formatGcSummary(
@@ -85,7 +85,7 @@ export function formatGcSummary(
   const estimate = `${taken.some((action) => action.partial) ? 'at least' : 'about'} ${formatBytes(bytes)}`;
   lines.push(
     act
-      ? `Freed ${estimate} in ${plural(taken.length, 'action')}; kept ${kept.length}; ${failed.length} failed.`
+      ? `Removed ${estimate} in ${plural(taken.length, 'action')}; kept ${kept.length}; ${failed.length} failed.`
       : `Dry run: would take ${plural(taken.length, 'action')}, ${estimate} where measured; ${kept.length} kept. Nothing was deleted.`,
   );
   const groups = new Map<string, LevelRunAction[]>();

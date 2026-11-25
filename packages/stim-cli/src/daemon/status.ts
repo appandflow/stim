@@ -150,7 +150,7 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
   // compat C32 until 2.1.0
   if (status.older)
-    return `Daemon: pid ${status.older.pid} from an older stim holds the daemon claim; it is not this stim's daemon; ${status.older.verified ? `the next command that starts stimd stops it, or run ${status.older.stop}` : `stimd does not stop it, so run ${status.older.stop}`}${claim}`;
+    return `Daemon: pid ${status.older.pid} from an older stim holds the daemon claim; it is not this stim's daemon; stimd does not stop it, so run ${status.older.stop}${claim}`;
   // compat end
   if (status.mode === 'off' && !status.running) return `Daemon: off (daemon.mode); no automatic pass runs${claim}`;
   const tickAt = Date.parse(status.lastTickAt ?? '');
@@ -242,9 +242,7 @@ export function daemonFindings(
       level: 'cost',
       title: 'A stim-daemon from an older Stim holds the daemon claim',
       detail: `pid ${status.older.pid} runs until every workspace in the home has been idle for idle.dormantDays, and while it runs this Stim's stimd cannot start, so no daemon of this version decides idle here.`,
-      fix: status.older.verified
-        ? `Run stim start, ios or android: stimd stops this daemon, or stop it yourself with \`${status.older.stop}\`. The other migration steps are at ${UPGRADE_GUIDE_URL}.`
-        : `stimd does not stop this process because Stim cannot verify it as its own older daemon; stop it with \`${status.older.stop}\` if nothing needs it. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
+      fix: `stimd does not stop it; stop it with \`${status.older.stop}\` once nothing needs it. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
     });
   // compat end
   if (status.claim)

@@ -41,6 +41,19 @@ export function createFakeHandlers(machine, connection) {
         },
       };
     },
+    'device.rename'(params) {
+      if (machine.noDeviceRename) return { error: ['unknown-method', 'Unknown method: device.rename'] };
+      if (typeof params.id !== 'string' || typeof params.name !== 'string')
+        return { error: ['bad-request', 'device.rename takes an object with string id and name.'] };
+      if (params.id !== machine.hello.device.id)
+        return { error: ['forbidden', "device.rename renames only this connection's own record."] };
+      const name = params.name.trim();
+      if (!name || name.length > 64 || /(?!\u200d)[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(name))
+        return { error: ['bad-request', 'The name must be 1 to 64 characters of printable text on one line.'] };
+      machine.hello.device.name = name;
+      machine.onDeviceRename?.(name);
+      return { result: { name } };
+    },
     'workspaces.subscribe'() {
       return stream('workspaces.subscribe', (views, seq) => ({
         event: 'workspaces',

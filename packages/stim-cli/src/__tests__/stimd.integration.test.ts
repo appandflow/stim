@@ -20,7 +20,6 @@ import {
   daemonClaimRoot,
   daemonSnapshotFile,
   listBuildEndMarkers,
-  legacyDaemonSocket,
   daemonNdjsonFile,
   stimdClaimRoot,
   stimdRecordFile,
@@ -37,15 +36,13 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as clonefile from '../clonefile.ts';
 import {
   claimRemoveCommand,
-  exclusiveClaimDir,
   markClaimChildPending,
   readClaimSet,
   releaseClaim,
   setClaimChild,
   tryAcquireClaim,
 } from '../ownership-claim.ts';
-import { captureProcessIdentity, captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
-import { takeOverLegacyDaemon } from '../daemon/legacy-daemon.ts';
+import { captureProcessIdentity } from '../process-identity.ts';
 import { goneClaimOwner } from './_factories.ts';
 import * as engineSwitch from '../daemon/engine-switch.ts';
 import * as engineFollow from '../stimd/engine-follow.ts';
@@ -165,17 +162,14 @@ const LEGACY_DAEMON = `
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { daemonClaimRoot, daemonDir, legacyDaemonSocket } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-const [record, kind, linger] = process.argv.slice(1);
+const [record] = process.argv.slice(1);
 mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-const details = kind === 'stim-daemon' ? { socket: legacyDaemonSocket(), mode: 'on' } : undefined;
-const acquired =
-  kind === 'none'
-    ? null
-    : tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon', details }).acquired;
+const details = { socket: legacyDaemonSocket(), mode: 'on' };
+const acquired = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon', details }).acquired;
 process.on('SIGTERM', () => {
   releaseClaim(acquired);
   appendFileSync(record, 'sigterm\\n');
-  setTimeout(() => process.exit(0), Number(linger ?? 0));
+  process.exit(0);
 });
 appendFileSync(record, 'listening\\n');
 setInterval(() => {}, 1000);
@@ -480,53 +474,6 @@ test('net close failure details reach both refusal and retained-claim records', 
     process.exitCode = oldExit;
   }
 });
-
-test.skipIf(process.platform === 'win32')(
-  'a restart request from the net thread waits for an open command, then stimd exits cleanly and releases its claims',
-  async () => {
-    let restart: (why: string) => void = () => {};
-    const net = vi.spyOn(netThread, 'createNetThread').mockImplementation((_log, _exit, _update, onRestart) => {
-      restart = onRestart ?? restart;
-      return {
-        ensure: async () => ({ listening: false, message: 'unused' }),
-        restart: async () => ({ listening: false, message: 'unused' }),
-        running: () => null,
-        connect: () => false,
-        presence: () => false,
-        close: async () => {},
-      };
-    });
-    let exited = false;
-    const run = runStimd({ tickMs: 60_000, mode: 'on' }).then((result) => {
-      exited = true;
-      return result;
-    });
-    try {
-      await listening();
-      const op = connect(stimdSocket());
-      onTestFinished(() => {
-        op.destroy();
-      });
-      const received = lines(op);
-      op.write(`${frame()}${JSON.stringify({ op: 'op.begin' })}\n`);
-      await vi.waitFor(() => expect(received.join()).toContain('"op":"op.begun"'), { timeout: 10_000, interval: 20 });
-      restart('its service unit now starts the engine shim');
-      await new Promise((done) => setTimeout(done, 300));
-      expect(exited).toBe(false);
-      op.destroy();
-      await run;
-      expect(daemonLog()).toContain('"event":"service_restart"');
-      expect(daemonLog()).not.toContain('abnormal');
-      expect(process.exitCode ?? 0).toBe(0);
-      for (const claimRoot of [stimdClaimRoot(), daemonClaimRoot()])
-        expect(readClaimSet(claimRoot)).toMatchObject({ live: [], unresolved: [] });
-    } finally {
-      net.mockRestore();
-      await run.catch(() => {});
-    }
-  },
-  30_000,
-);
 
 test('stim serve --share against a running stimd asks for a share-only thread and ends when it ends', async () => {
   let netEnded: (failure?: Error) => void = () => {};
@@ -2273,7 +2220,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
   }, 20_000);
 
-  test('an exclusive holder of the daemon claim that is not a stim-daemon is refused with its pid and the remedy, and not signalled', async () => {
+  test('a stim-daemon from an older Stim that holds the daemon claim is refused with its pid and the remedy, and not signalled', async () => {
     const record = join(home, 'legacy.log');
     const legacy = spawnChild(process.execPath, ['--input-type=module', '-e', LEGACY_DAEMON, record], {
       cwd: fileURLToPath(new URL('../..', import.meta.url)),
@@ -2324,104 +2271,6 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(refusal?.msg).toContain(`Process ${legacy.pid} from an older stim`);
     expect(refusal?.msg).toContain(`kill ${legacy.pid}`);
   }, 60_000);
-
-  const spawnLegacy = async (args: string[]) => {
-    const record = join(home, 'legacy.log');
-    const legacy = spawnChild(process.execPath, ['--input-type=module', '-e', LEGACY_DAEMON, record, ...args], {
-      cwd: fileURLToPath(new URL('../..', import.meta.url)),
-      env: { ...process.env },
-      stdio: 'ignore',
-    });
-    const exited = new Promise<number | null>((done) => legacy.once('exit', (code) => done(code)));
-    daemons.push({ child: legacy, exited });
-    await vi.waitFor(() => expect(readFileSync(record, 'utf8')).toContain('listening'), {
-      timeout: 10_000,
-      interval: 20,
-    });
-    assert(legacy.pid);
-    return { legacy, pid: legacy.pid, exited, signals: () => readFileSync(record, 'utf8').trim().split('\n').slice(1) };
-  };
-  const takeoverEvents = () =>
-    daemonLog()
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line));
-
-  test('a stim-daemon from an older Stim is signalled once its identity reads the same, and stimd takes its place', async () => {
-    const old = await spawnLegacy(['stim-daemon']);
-    const successor = startDaemonProcess();
-
-    expect(await old.exited).toBe(0);
-    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_started"'), {
-      timeout: 20_000,
-      interval: 50,
-    });
-    expect(old.signals()).toEqual(['sigterm']);
-    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.mode)).toEqual(['shared']);
-    const events = takeoverEvents();
-    expect(events.find((logged) => logged.event === 'stimd_takeover_signal')?.msg).toContain(`pid ${old.pid}`);
-    expect(events.find((logged) => logged.event === 'stimd_takeover')?.msg).toContain(`pid ${old.pid}`);
-    successor.child.kill('SIGTERM');
-    await successor.exited;
-  }, 60_000);
-
-  test('a stim-daemon that released its claim and finishes its tick does not hold stimd back, and the overlap is logged', async () => {
-    const old = await spawnLegacy(['stim-daemon', '8000']);
-    const successor = startDaemonProcess();
-
-    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_started"'), {
-      timeout: 20_000,
-      interval: 50,
-    });
-    expect(inspectProcessIdentity({ pid: old.pid, processToken: captureProcessToken(old.pid) })).toBe('same');
-    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.mode)).toEqual(['shared']);
-    const overlap = takeoverEvents().find((logged) => logged.event === 'stimd_takeover_overlap');
-    expect(overlap).toMatchObject({ level: 'warn' });
-    expect(overlap?.msg).toContain(`pid ${old.pid}`);
-    expect(overlap?.msg).toContain('has released the daemon claim');
-    expect(await old.exited).toBe(0);
-    successor.child.kill('SIGTERM');
-    await successor.exited;
-  }, 60_000);
-
-  test.each([
-    ['unknown', () => captureProcessToken(process.pid) ?? ''],
-    [
-      'different',
-      (token: string) => {
-        const decoded = JSON.parse(Buffer.from(token.slice('upid1.'.length), 'base64url').toString('utf8'));
-        const [first, rest] = String(decoded.startTime).split(/:(.*)/s);
-        decoded.startTime = `${BigInt(first ?? '0') + 1n}${rest === undefined ? '' : `:${rest}`}`;
-        return `upid1.${Buffer.from(JSON.stringify(decoded)).toString('base64url')}`;
-      },
-    ],
-  ])('a claim whose identity reads %s is never signalled', async (_status, forge) => {
-    const old = await spawnLegacy(['none']);
-    const token = captureProcessToken(old.pid);
-    assert(token);
-    const owner = { pid: old.pid, processToken: forge(token) };
-    expect(inspectProcessIdentity(owner)).toBe(_status);
-    const dir = exclusiveClaimDir(daemonClaimRoot());
-    mkdirSync(dir, { recursive: true });
-    const claimFile = join(dir, '00000000-0000-4000-8000-000000000001.claim');
-    writeFileSync(
-      claimFile,
-      JSON.stringify({
-        claimId: '00000000-0000-4000-8000-000000000001',
-        mode: 'exclusive',
-        owner,
-        startedAt: new Date().toISOString(),
-        details: { socket: legacyDaemonSocket(), mode: 'on' },
-      }),
-    );
-
-    const events: string[] = [];
-    await takeOverLegacyDaemon((_level, event) => events.push(event));
-
-    expect(events).toEqual([]);
-    expect(old.signals()).toEqual([]);
-    rmSync(claimFile, { force: true });
-  });
 
   test('a daemon signalled right after its tick exits at once instead of sleeping through its wait', async () => {
     normalMeasurement();

@@ -7,9 +7,10 @@ export type DaemonLog = (
 
 type StepOutcome = 'finished' | 'threw' | 'aborted';
 
-/** A count a step fills in while it runs, for a loop whose visited items its result does not show. */
+/** A count and extra record fields a step fills in while it runs, for a loop whose visited items its result does not show. */
 export interface StepTally {
   items?: number;
+  fields?: Record<string, number | string>;
 }
 
 const ERROR_MAX = 200;
@@ -65,7 +66,7 @@ export async function watchedStep<T>(log: DaemonLog, step: string, run: () => Pr
  * Runs `run` and writes one `daemon_step` record to the daemon log: when it started, how long it took, how many items
  * it visited and how it ended. It returns `run`'s value, rethrows its error unchanged and changes nothing else; with
  * no `log` it only calls `run`. `items` is read after the step ends, with the result when it finished. While it runs it
- * writes a `daemon_step_running` record every 10 minutes.
+ * writes a `daemon_step_running` record every 10 minutes; tally fields are read when it ends.
  */
 export async function timedStep<T>(
   log: DaemonLog | undefined,
@@ -105,6 +106,7 @@ export async function timedStep<T>(
         'daemon_step',
         `${step}${fields?.rung === undefined ? '' : ` ${String(fields.rung)}`} ${outcome} in ${durationMs}ms${count === undefined ? '' : `; ${count} items`}`,
         {
+          ...Object.fromEntries(Object.entries(tally.fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
           step,
           ...Object.fromEntries(Object.entries(fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
           startedAt: new Date(startedAt).toISOString(),

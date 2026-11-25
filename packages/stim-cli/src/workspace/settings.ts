@@ -185,6 +185,7 @@ const ANDROID_AVD_CONFIG_RULES: Record<string, AndroidAvdConfigRule> = {
 const YES_NO_AVD_RULE: AndroidAvdConfigRule = { help: 'true|false|yes|no', parse: yesNoAvdValue };
 
 for (const key of [
+  'fastboot.forceColdBoot',
   'hw.accelerometer',
   'hw.accelerometer_uncalibrated',
   'hw.audioInput',
@@ -216,7 +217,7 @@ function isSafeAndroidAvdConfigKey(key: string): boolean {
 function normalizedAndroidAvdConfigEntry(key: unknown, value: unknown): [string, string] {
   if (typeof key !== 'string' || key !== key.trim() || !isSafeAndroidAvdConfigKey(key)) {
     throw new Error(
-      `Unsupported android.avdConfig key ${JSON.stringify(key)}. Use a documented safe hardware override; identity, path, storage, image, snapshot, and boot-lifecycle keys are protected.`,
+      `Unsupported android.avdConfig key ${JSON.stringify(key)}. Use a documented safe hardware override; identity, path, storage, image, and other snapshot and boot-lifecycle keys are protected.`,
     );
   }
   if (typeof value === 'string' && /[\r\n\0]/.test(value)) {

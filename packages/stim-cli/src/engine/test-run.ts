@@ -170,7 +170,7 @@ export function vitestVersionFor(
  * `minWorkers` to the cores but one and refuse a lower `--maxWorkers` (vitest-dev/vitest#7974, fixed in 3.2.4), so they
  * also get `--minWorkers=1`; Vitest 4 removed `minWorkers`, and 5 refuses the flag as an unknown option.
  */
-export function vitestWorkerFlags(version: string | null, workers: number): string[] | null {
+function vitestWorkerFlags(version: string | null, workers: number): string[] | null {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? '');
   if (!match) return null;
   const [major = 0, minor = 0, patch = 0] = match.slice(1).map(Number);

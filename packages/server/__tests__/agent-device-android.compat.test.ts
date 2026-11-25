@@ -16,7 +16,7 @@ declare module 'vitest' {
   }
 }
 
-test('the real Android daemon enforces serial inventory, commands and shutdown policy', async () => {
+test('the real Android daemon enforces device pinning and shutdown policy, and the driver refuses harmful commands', async () => {
   const serial = inject('agentDeviceAndroidSerial').trim();
   if (!/^emulator-[0-9]+$/.test(serial))
     throw new Error(
@@ -63,8 +63,6 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     const foreign = serial === 'emulator-5554' ? 'emulator-5556' : 'emulator-5554';
     for (const params of [
       { command: 'open', positionals: ['dev.fixture'], flags: { platform: 'android', serial: foreign } },
-      { command: 'install', positionals: ['/tmp/never-install.apk'], flags: { platform: 'android', serial } },
-      { command: 'logs', flags: { platform: 'android', serial } },
       { command: 'close', flags: { platform: 'android', serial, shutdown: true } },
       {
         command: 'batch',
@@ -86,6 +84,33 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     expect(JSON.stringify(inventory)).not.toMatch(
       new RegExp(`emulator-(?!${serial.slice('emulator-'.length)}\\b)[0-9]+`),
     );
+    const target = await driver.target(session);
+    if (!target) throw new Error('The hosted driver target is unavailable.');
+    const hostedRpc = async (params: object) => {
+      const response = await fetch(`http://127.0.0.1:${target.port}${target.path}/rpc`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'agent_device.command', params }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      return response.json();
+    };
+    for (const params of [
+      { command: 'install', positionals: ['/tmp/never-install.apk'], flags: { platform: 'android', serial } },
+      { command: 'logs', flags: { platform: 'android', serial } },
+      { command: 'close', flags: { platform: 'android', serial, shutdown: true } },
+    ]) {
+      const answer = await hostedRpc(params);
+      expect(answer).toMatchObject({
+        error: {
+          message: expect.stringContaining(params.command === 'close' ? 'shutdown' : params.command),
+          data: { details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule: 'command' } },
+        },
+      });
+    }
+    const hostedInventory = await hostedRpc({ command: 'devices', flags: { platform: 'android' } });
+    expect(hostedInventory).not.toHaveProperty('error');
+    expect(JSON.stringify(hostedInventory)).toContain(serial);
   } finally {
     try {
       await driver.stop();

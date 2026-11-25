@@ -2,7 +2,7 @@ import type { AgentDriverClient, AgentDriverInput, AgentDriverRecoveryInput } fr
 import { AgentDeviceDriver, stopRecorders } from './driver.ts';
 
 export { AgentDeviceDriver, type AgentDeviceDriverOptions } from './driver.ts';
-export { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS, type DeviceCommandRule } from './device-policy.ts';
+export { REFUSED_DEVICE_COMMANDS } from './device-policy.ts';
 
 export const id: string = 'agent-device';
 

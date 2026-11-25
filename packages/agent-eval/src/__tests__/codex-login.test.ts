@@ -85,6 +85,12 @@ describe.skipIf(process.platform === 'win32')('codex login handling', () => {
     expect(readdirSync(dotfiles).some((name) => name.startsWith('auth.json.eval-'))).toBe(true);
   });
 
+  test('the permission profile lets git read the main repository of the linked trial workspace', () => {
+    const { args } = codexDriver.command(paths, 'prompt', { model: null, bin: 'codex' });
+    const profile = args.find((arg) => arg.startsWith('permissions.eval.filesystem='));
+    expect(profile).toContain(`${JSON.stringify(join(paths.base, 'repo', '.git'))} = "read"`);
+  });
+
   test('a missing link does not throw', () => {
     rmSync(join(paths.codexHome, 'auth.json'));
     expect(codexDriver.finish(paths)).toBeNull();

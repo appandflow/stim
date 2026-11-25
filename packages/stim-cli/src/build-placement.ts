@@ -59,6 +59,11 @@ export function podsFailedRemedy(machine: string, reason: string, localCocoapods
   return [`On ${machine}, ${lead}:`, ...commands, `Then ${retry}.`].join('\n');
 }
 
+export function prebuildFailedRemedy(machine: string, reason: string): string | undefined {
+  if (!reason.startsWith('prebuild-failed: ')) return undefined;
+  return `\`stim logs --source build\` shows the \`expo prebuild\` output from ${machine}. Fix what it reports, then run the same command again, or rerun with --remote-build local.`;
+}
+
 export class OffloadRefusal extends Error {
   readonly code = 'STIM_OFFLOAD_REFUSED';
   readonly remedy: string;

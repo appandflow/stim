@@ -132,7 +132,7 @@ describe.skipIf(process.platform === 'win32')('the dev-server helper', () => {
       for (const generation of [`${file}.1`, file])
         for (const line of readFileSync(generation, 'utf8').split('\n').filter(Boolean))
           expect(() => JSON.parse(line)).not.toThrow();
-      expect(readFileSync(`${file}.1`, 'utf8')).toContain('supervisor_started');
+      expect(records().filter((record) => record.event === 'supervisor_started')).toHaveLength(1);
       expect(readFileSync(file, 'utf8')).toContain('line 0');
     } finally {
       await closeMetroChildren();

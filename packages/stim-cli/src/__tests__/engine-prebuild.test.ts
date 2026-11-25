@@ -337,17 +337,20 @@ describe('runPrebuild', () => {
     });
     expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', ...extra]);
     expect(result.failed).toBe(true);
-    expect(result.remedy ?? '').toMatch(clean ? /^$/ : /delete ios\/ and run again/);
+    expect(result.remedy ?? '').toMatch(
+      clean ? /Fix what.*expo prebuild.*stim logs --source build/ : /delete ios\/ and run again/,
+    );
   });
 
-  test('an exit-0 prebuild that produced no native directory is still a failure', async () => {
+  test.each([0, 1])('a fresh prebuild exiting %s without a native directory fails with a remedy', async (code) => {
     installFakeExpoBin();
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
       isExpo: true,
-      spawnFn: () => fakeExpoChild({ lines: ['nothing to do'] }),
+      spawnFn: () => fakeExpoChild({ lines: ['nothing to do'], code }),
     });
     expect(result.failed).toBe(true);
-    expect(result.reason).toMatch(/did not create ios\//);
+    expect(result.reason).toMatch(code === 0 ? /did not create ios\// : /exit code 1/);
+    expect(result.remedy).toMatch(/Fix what.*expo prebuild.*stim logs --source build/);
   });
 
   test('refuses a bare project with no native directory, with a remedy', async () => {

@@ -24,7 +24,7 @@ import { readParked } from '../devices/sim-pool.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { leftoverNoindexCaches } from '../workspace/noindex-folders.ts';
 import { formatBytes, formatSize, measuredDirectorySizeAsync } from '../fs-util.ts';
-import { timedStep } from './step-timing.ts';
+import { timedStep, type StepTally } from './step-timing.ts';
 import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
@@ -381,8 +381,17 @@ async function previewIdleOutputsRung(context: RungContext): Promise<void> {
   }
 }
 
-async function idleOutputsRung(context: RungContext): Promise<void> {
+async function idleOutputsRung(context: RungContext, _causes: Cause[], tally?: StepTally): Promise<void> {
   if (!context.act && context.force) return previewIdleOutputsRung(context);
+  const fields: Record<string, number | string> = tally ? (tally.fields = {}) : {};
+  const time = async <T>(key: string, call: () => Promise<T>): Promise<T> => {
+    const started = performance.now();
+    try {
+      return await call();
+    } finally {
+      fields[key] = Number(fields[key] ?? 0) + Math.round(performance.now() - started);
+    }
+  };
   const sweep = async (marks: GcMark[]) => {
     const ranked = marks
       .flatMap((mark) =>
@@ -394,24 +403,29 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
           (b.candidate.bytes ?? -1) - (a.candidate.bytes ?? -1),
       );
     for (const { mark, candidate } of ranked) {
-      if (context.act) await context.between?.();
+      if (context.act && context.between) await time('queueMs', context.between);
       context.stop?.throwIfAborted();
       context.operation?.signal.throwIfAborted();
       if (context.act && context.between) {
-        const config = loadConfig();
-        // @ref LLP 0001#one-task-runs-every-gc-deletion -- a rewritten registry alias without current discovery proof stays kept
-        if (
-          !config ||
-          (!Object.hasOwn(config.projects, mark.root) &&
-            !(await targetedCheckouts(config, listedRoots(), [mark.root], context.operation)).some(
-              ({ path }) => path === mark.root,
-            ))
-        )
-          continue;
+        const authorized = await time('authorizeMs', async () => {
+          const config = loadConfig();
+          // @ref LLP 0001#one-task-runs-every-gc-deletion -- a rewritten registry alias without current discovery proof stays kept
+          return !(
+            !config ||
+            (!Object.hasOwn(config.projects, mark.root) &&
+              !(await targetedCheckouts(config, listedRoots(), [mark.root], context.operation)).some(
+                ({ path }) => path === mark.root,
+              ))
+          );
+        });
+        if (!authorized) continue;
       }
-      if (!(await context.stillShort())) return;
+      if (!(await time('measureMs', () => context.stillShort()))) return;
       if (context.act && context.between && (!context.force || context.force.measured))
-        context.short = context.volume === undefined ? await shortDevices(context, 'high') : new Set([context.volume]);
+        context.short =
+          context.volume === undefined
+            ? await time('measureMs', () => shortDevices(context, 'high'))
+            : new Set([context.volume]);
       if (!onShort(context, [candidate.path])) continue;
       const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
       if (protectedRoot === mark.root) {
@@ -419,18 +433,28 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         continue;
       }
       const before = context.firstFree?.pending(candidate.device)
-        ? (await readVolumeSpaceAsync([candidate.path], context.operation?.signal))[0]
+        ? (await time('measureMs', () => readVolumeSpaceAsync([candidate.path], context.operation?.signal)))[0]
         : undefined;
-      const result = await clearStoppedOutputs(
-        { path: mark.root },
-        context.config,
-        PRESSURE_IDLE_MS,
-        context.operation,
-        deletable(context),
-        { ...mark, candidates: [candidate] },
-        context,
-        false,
-      );
+      fields.targets = Number(fields.targets ?? 0) + 1;
+      const started = performance.now();
+      const result = await time('clearMs', () =>
+        clearStoppedOutputs(
+          { path: mark.root },
+          context.config,
+          PRESSURE_IDLE_MS,
+          context.operation,
+          deletable(context),
+          { ...mark, candidates: [candidate] },
+          context,
+          false,
+        ),
+      ).finally(() => {
+        const elapsed = Math.round(performance.now() - started);
+        if (fields.slowestTargetMs === undefined || elapsed > Number(fields.slowestTargetMs)) {
+          fields.slowestTarget = candidate.path;
+          fields.slowestTargetMs = elapsed;
+        }
+      });
       if (!result) continue;
       if (context.act && result.outcome === 'kept')
         keepMarkCandidate(mark, candidate, result.detail ?? 'kept at sweep');
@@ -453,13 +477,15 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         before?.device === candidate.device &&
         context.firstFree?.pending(candidate.device)
       ) {
-        const after = (await readVolumeSpaceAsync([candidate.path], context.operation?.signal))[0];
+        const after = (
+          await time('measureMs', () => readVolumeSpaceAsync([candidate.path], context.operation?.signal))
+        )[0];
         if (after?.device === candidate.device && after.freeMb > before.freeMb)
           context.firstFree.observed(candidate.device, Date.now());
       }
     }
   };
-  const known = await outputMarks(context.config, context.operation);
+  const known = await time('marksMs', () => outputMarks(context.config, context.operation));
   await sweep(known);
   if (context.level === 'critical') {
     const marked = new Set(known.map(({ root }) => root));
@@ -470,9 +496,9 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       });
     return;
   }
-  if (!context.act || !(await context.stillShort())) return;
-  if (!context.force && (await context.remeasure()).disk !== 'high') return;
-  await sweep(await refreshOutputMarks(context.config, context));
+  if (!context.act || !(await time('measureMs', () => context.stillShort()))) return;
+  if (!context.force && (await time('measureMs', () => context.remeasure())).disk !== 'high') return;
+  await sweep(await refreshOutputMarks(context.config, context, fields));
 }
 
 /** Rung 2: parked devices, oldest first; at high until the level clears, at critical all of them. */
@@ -1244,7 +1270,7 @@ async function shortDevices(
   return shortVolumeDevices(await measureDisk(context.config, context.operation?.signal), thresholds, level);
 }
 
-const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise<void>> = {
+const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[], tally?: StepTally) => Promise<void>> = {
   0: bootedParkedRung,
   1: idleOutputsRung,
   2: parkedRung,
@@ -1275,7 +1301,7 @@ export async function runLadder(
   const runRung = async (rung: Rung, context: RungContext, causes: Cause[]) => {
     const before = actions.length;
     try {
-      await timedStep(input.log, 'rung', () => RUNG_ACTS[rung](context, causes), {
+      await timedStep(input.log, 'rung', (tally) => RUNG_ACTS[rung](context, causes, tally), {
         signal: input.operation?.signal,
         fields: { rung, pressureLevel: context.level },
         items: () => actions.length - before,

@@ -48,10 +48,6 @@ vi.mock('../src/service-manager.ts', async (original) => ({
     read: async () => (fixture.serve ? { serve: fixture.serve } : null),
   }),
 }));
-vi.mock('../src/service.ts', async (original) => ({
-  ...(await original<typeof import('../src/service.ts')>()),
-  rewriteUnitToShim: async () => false,
-}));
 vi.mock('../src/registry.ts', async (original) => {
   const actual = await original<typeof import('../src/registry.ts')>();
   return {

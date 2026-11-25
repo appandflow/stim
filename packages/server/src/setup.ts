@@ -1066,13 +1066,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       } catch (error) {
         if (routeCreated) {
           try {
-            await deps.createRoute(['serve', `--https=${prepared.record.port}`, 'off']);
+            await deps.createRoute(['serve', `--https=${prepared.record.port}`, '--set-path=/', 'off']);
             output.route.state = 'missing';
           } catch (rollbackError) {
             throw new SetupRefusal(
               `${(error as Error).message}; could not remove the route: ${(rollbackError as Error).message}`,
               false,
-              `tailscale serve --https=${prepared.record.port} off`,
+              `tailscale serve --https=${prepared.record.port} --set-path=/ off`,
             );
           }
         }

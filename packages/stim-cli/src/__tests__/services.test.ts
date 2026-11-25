@@ -95,6 +95,7 @@ test.each<[string, Record<string, unknown>, RegExp]>([
   ['a placeholder that names no port', { web: { start: ['serve', '-l', '{web}'] } }, /names \{web\}/],
   ['shell syntax in a string command', { web: { start: 'serve -l $PORT' } }, /argv array/],
   ['a teardown without a stop command', { web: { start: 'serve', teardown: 'rm -rf data' } }, /without a stop command/],
+  ['an absolute envFile', { web: { start: 'serve', envFile: '/secret.env' } }, /envFile must be a path relative/],
   ['the managed Metro label', { web: { ports: ['metro'], start: 'serve' } }, /exclude metro/],
   ['a port two services own', { a: { ports: ['p'], start: 'a' }, b: { ports: ['p'], start: 'b' } }, /a also owns/],
   ['a dependency on an unknown service', { a: { start: 'a', dependsOn: ['b'] } }, /not another declared service/],
