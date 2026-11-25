@@ -172,16 +172,16 @@ export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal, prese
 export type IdleWorkspaceRun<T> = { ran: true; value: T } | { ran: false; reasons: string[] };
 
 /**
- * Wait up to `ms` while the native-run lock is held by a claim that names no command, such as a daemon pass or a
- * fingerprint evaluation; a claim that names a command (`ios`, `android`, `stop`, `share`, ...) refuses at once.
- * `onWait` is called on every poll of that wait.
+ * Wait while the native-run lock is held by a background pass: a claim that records a purpose and no command, such as
+ * a daemon stage or a fingerprint evaluation. Any other holder refuses at once. `remainingMs` is read once per call, so
+ * one wait can share its time across several workspaces; `onWait` is called on every poll.
  */
 export interface IdleWorkspaceWait {
-  ms: number;
+  remainingMs: () => number;
   onWait: (holder: ClaimHolder) => void;
 }
 
-class HeldByCommand extends Error {}
+class HeldByRun extends Error {}
 
 export async function withIdleWorkspace<T>(
   root: string,
@@ -198,7 +198,7 @@ export async function withIdleWorkspace<T>(
   const onHeld = (held: ClaimHolder): void => {
     holder = held;
     if (!wait) return;
-    if (typeof held.details.command === 'string') throw new HeldByCommand();
+    if (typeof held.details.command === 'string' || typeof held.details.purpose !== 'string') throw new HeldByRun();
     wait.onWait(held);
   };
   try {
@@ -212,13 +212,20 @@ export async function withIdleWorkspace<T>(
         if (reasons.length) return { ran: false, reasons };
         return { ran: true, value: await fn() };
       },
-      { external: true, waitMs: wait?.ms ?? 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation, onHeld },
+      {
+        external: true,
+        waitMs: wait?.remainingMs() ?? 0,
+        ownerPurpose: purpose,
+        signal,
+        declareSpawnsFor: operation,
+        onHeld,
+      },
     );
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
     signal?.throwIfAborted();
-    if (error instanceof HeldByCommand || workspaceProcessLockError(error))
+    if (error instanceof HeldByRun || workspaceProcessLockError(error))
       return {
         ran: false,
         reasons: [

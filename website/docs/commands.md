@@ -2560,6 +2560,10 @@ path; from a subfolder it reclaims only that project and leaves the tree. A bare
 repository directory is refused because it is not a worktree. `--force` permits removal
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
+When a background pass such as a stim-daemon stage or a fingerprint evaluation
+holds the workspace's native-run lock, removal says so on stderr and waits up to
+60 seconds for it; a `stim ios`, `android` or `stop` run holding it keeps the
+workspace at once, and the message names it.
 Once the checkout is gone, each build machine that built it is asked to drop its
 area there ([worker disk](./remote-machines.md#worker-disk)); a machine that does
 not answer within 5 seconds is skipped and the removal still succeeds.

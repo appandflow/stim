@@ -1167,11 +1167,14 @@ test('action: removal waits for a background pass that holds the native-run lock
   expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(true);
 });
 
-test('action: removal refuses at once while a command run holds the native-run lock, naming that run', async () => {
-  const { exec, text } = await removeWhileHeld({ command: 'ios', platform: 'ios' }, null);
+test.each([
+  ['a command run', { command: 'ios', platform: 'ios' }, /`stim ios` \(pid \d+.*\) holds its native-run\.lock/],
+  ['a claim with no purpose', {}, /another Stim run \(pid \d+.*\) holds its native-run\.lock/],
+])('action: removal refuses at once while %s holds the native-run lock, naming it', async (_, details, reason) => {
+  const { exec, text } = await removeWhileHeld(details, null);
 
   expect(text).not.toMatch(/waiting for/);
-  expect(text).toMatch(/`stim ios` \(pid \d+.*\) holds its native-run\.lock/);
+  expect(text).toMatch(reason);
   expect(getProject(wtDir)).not.toBeNull();
   expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
 });

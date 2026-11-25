@@ -1245,7 +1245,14 @@ const REMOVAL_LOCK_WAIT_MS = 60_000;
 function removalLockWait(output: RemovalOutput, enabled = true): IdleWorkspaceWait | undefined {
   if (!enabled) return undefined;
   const notice = nativeRunWaitNotice({ write: (line) => output.error(chalk.dim(phaseLine('lock', line))) });
-  return { ms: REMOVAL_LOCK_WAIT_MS, onWait: (holder) => notice(holder) };
+  let deadline: number | undefined;
+  return {
+    remainingMs: () => {
+      deadline ??= Date.now() + REMOVAL_LOCK_WAIT_MS;
+      return Math.max(0, deadline - Date.now());
+    },
+    onWait: (holder) => notice(holder),
+  };
 }
 
 const REMOVAL_OUTPUT: RemovalOutput = {
