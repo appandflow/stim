@@ -4,70 +4,47 @@ description: 'Move a Stim 1.40 installation, workspaces, and automation to Stim 
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
-
-## Stop workspaces and switch versions
-
-1. With 1.40 still installed, run `stim status` to find your running workspaces. From each workspace, run `stim stop`. Repeat for each Stim home you use. Stopping first also prevents duplicate web logs from a Chrome instance that a 1.x supervisor started.
-2. Upgrade the [CLI](./getting-started.md#install-stim) and any project pins or CI inputs that still select 1.x. Keep the same `STIM_HOME` so 2.0 can read your settings, workspace records, and device ownership. Review [legacy settings](#legacy-settings) before restarting.
-3. Update [Stim Desktop](./desktop.md) and any [remote workers](./remote-machines.md) you use, then run `stim doctor` in each app directory and restart the workspaces you need. Run `stim doctor` only in checkouts whose project code you trust. Verify the connection and the next build on each worker before relying on offload.
+import PromptBox from '@site/src/components/PromptBox';
 
 :::note[Command examples]
 
-Commands use `stim`. Use `npx stim` if you run without a global installation. For step 1, use `npx stim@1.40.0 stop` if your workspace was running 1.40 and you need to invoke it explicitly.
+Commands use `stim`. Use `npx stim` if you run without a global installation.
+For step 1, use `npx stim@1.40.0 stop` if your workspace was running 1.40 and
+you need to invoke it explicitly.
 
 :::
 
-### The resident daemon and engine
+Upgrading from 1.40 takes three steps. Then hand the leftovers to your agent.
 
-The per-home `stimd` runs workspace services such as Metro, managed tunnels, and device logs. `daemon.mode` controls automatic maintenance. Even in `off` mode, a command that needs one of those workspace services can start `stimd`.
+## Upgrade
 
-A 1.40 maintenance daemon can keep its claim after all workspaces stop, and the 2.0 daemon does not stop it. While it holds the claim, `stim start` and `stim serve` refuse with its PID and the command that stops it. Check the reported PID before using the suggested `kill <pid>` or, on Windows, `taskkill /PID <pid> /F`. Retry once the holder has stopped. Metro supervisors, log collectors, and devices already running are separate processes and can outlive the old daemon. `stim start` can adopt a verified dev server. If it reports a port held by another process, stop the old workspace first.
-
-An npm installation can run directly. If you want a managed machine engine, use `stim engine install` once from the upgraded CLI. `stim engine status` shows the active build and channel. On an existing managed engine, `stim engine update` follows its current channel and `stim engine rollback` selects its previous build. See [engine and service updates](./settings.md#machine-settings).
-
-2.0 workers use peer compatibility version 3 and build compatibility version 6. If `stim remote update <machine>` can reach and update the worker, use it. If the old worker cannot negotiate an update, upgrade it locally and reinstall its service with `stim service install`, retaining its service options. On Windows, reinstall the service even after an engine update so the scheduled task runs the new build. If an old server still holds the serving port, stop that server or choose a different port with `stim serve --port <port>` and point the clients at it.
-
-If `stim service install` refuses because a Stim daemon serves the service's port outside the service's job and install cannot prove it belongs to the service, Stim Desktop, `stim serve`, or a Stim build older than this one started that daemon. Stop it once its work drains with the `kill <pid>` it prints, then run the same `stim service install` command again. Stopping it also stops what Stim Desktop or that command is using; its dev servers keep running and the next daemon takes them over.
-
-If `stim service uninstall` reports that the service's daemon is still listening after an engine handoff, the service definition and any route it owns are kept. Let that daemon finish its work, stop the reported daemon, and retry `stim service uninstall --label <label>`. [Ubuntu uninstall check](https://github.com/appandflow/stim/actions/runs/43663535775/job/132657852299)
-
-The live 1.40-to-2.0 upgrade checks kept the existing Metro process and verified the same bundle on macOS, Linux, and Windows. Windows started its first resident daemon while the 1.40 Metro was still running. [Upgrade results](https://github.com/appandflow/stim/issues/5590#issuecomment-6888597398)
-
-Update the phone app alongside Desktop if you use it. Upgrades with paired clients and mixed-version app and engine combinations are still being verified. [App and engine compatibility checks](https://github.com/appandflow/stim/issues/5593)
+1. With 1.40 still installed, run `stim status` to find your running
+   workspaces, and run `stim stop` in each one. Repeat for each Stim home you
+   use.
+2. Upgrade the [CLI](./getting-started.md) and any project pins or
+   CI inputs that still select 1.x. Keep the same `STIM_HOME` so 2.0 reads your
+   settings, workspaces and device ownership.
+3. Update [Stim Desktop](./desktop.md), the phone app and any
+   [remote workers](./remote-machines.md). Run `stim doctor` in each app
+   directory whose project code you trust, then restart the workspaces you
+   need. Check the connection and the next build on each worker before you rely
+   on it.
 
 ## Let an agent migrate
 
-After the upgrade, `stim guide agent` prints a STATUS line while the home or project still holds something an earlier Stim left: settings or environment variables that 2.0 does not read, a daemon from 1.x, a `stim` 1.x or bundled `@stim-cli/*` dependency in `package.json`, or a doctor check last run with 1.x. The line, the refusals for leftover settings and the old daemon, and the matching `stim doctor` findings link the agent to [For agents](#for-agents). The line clears once nothing is left.
+After the upgrade, `stim guide agent` prints a STATUS line while anything from
+1.x is left: old settings or environment variables, a 1.x daemon, a `stim` 1.x
+or `@stim-cli/*` dependency, or a doctor run from 1.x. Paste this:
 
-```text
-Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents to migrate this Stim home and project to the installed Stim. Ask me before you change my shell, CI or service environment, edit ~/.stim/config.json, keep or change a default, reinstall a service, update another machine, or stop a process.
-```
+<PromptBox title="Migrate to Stim 2.0">
+{`Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents to migrate this Stim home and project to the installed Stim. Ask me before you change my shell, CI or service environment, edit ~/.stim/config.json, keep or change a default, reinstall a service, update another machine, or stop a process.`}
+</PromptBox>
 
-## First native build after the upgrade
+The STATUS line clears once nothing is left.
 
-- **Native cache.** The 2.0 fingerprint uses new keys. Expect one cold build per distinct native fingerprint whose only cache entry was made by 1.40. Matching 2.0 builds can reuse the new entry across worktrees. If a worktree warmed by 1.40 reports a lockfile newer than its npm install stamp, run `npm install` in the directory named by the warning so future builds can be cached. [Native artifact cache](./build-caches.md#native-artifact-cache)
-- **Expo-generated native directories.** Preserve manual edits before the first native run. For an untracked `ios/` or `android/` with a readable prebuild record from an older Stim, 2.0 runs Expo prebuild once for that platform in each generated worktree. A local run prebuilds in place. An offload worker can regenerate its own copy with `--clean`. If `STIM_PREBUILD_FAILED` says the record is unreadable, preserve your edits, move only the generated directory named by the error aside, and rerun. Leave tracked and hand-maintained native directories in place. [React Native and Expo inputs](./build-caches.md#react-native-and-expo-inputs)
-- **`fingerprint.config.js` options.** 1.40 passed the file's options to `@expo/fingerprint`, so `preset: 'strict'` hashed the contents of native dependencies. 2.0 applies only `extraSources` (not when `cache.fingerprintInputs` is set) and keys a registry package by its identity. It does not refuse or warn at build time, and `stim doctor` lists each ignored option. If your file sets other options, a native dependency edited in place, such as a hand edit in `node_modules`, reuses a cached build. Move needed inputs to `extraSources` or `cache.fingerprintInputs`, or commit the change as a patch. For a temporary native edit, run `stim ios --no-build-cache --remote-build local` (or `stim android`).
-- **Build credentials.** An offloaded build removes Stim's own access and setup credentials from the worker's build environment. A build whose embedded config or dependency reads a private Stim credential, or that enumerates the project environment while one is present, is uncached. Remove the credential from the build environment to get caching back. Project build tools can still print the environment values they receive.
-- **Owned iOS simulators.** `ios.simslim` now defaults to `on`, including for previously created Stim simulators at their next boot. Set `ios.simslim` to `off` for a project that needs stock simulator services. [Owned devices](./owned-devices.md)
+## Changed defaults
 
-## Change cleanup scripts before running them
-
-**`stim gc` now deletes.** Update scripts that used it to preview, including scripts that parse JSON.
-
-<StimTabs
-code={`stim gc --dry-run
-stim gc --dry-run --json
-stim gc --dry-run --pressure high`}
-/>
-
-- `--delete` is gone. Use plain `stim gc` to apply the measured level after reviewing a dry run.
-- `--cache`, `--older-than`, and `--worktrees` are gone. Review the [maintenance settings](./settings.md#automatic-maintenance) for age and worktree policy. Use `--pressure normal`, `high`, or `critical` to choose a level for one pass.
-- `normal` includes age and dormancy cleanup, such as eligible worktree dependencies, parked devices, and unused iOS simulator runtimes. It can also clear dependencies from a dormant source checkout. `high` also applies pressure cleanup to idle workspaces and trims caches. `critical` can empty shared Stim caches and clean other tools' caches on the default home. An explicit `--pressure critical` runs the last stage even if space is recovered earlier. [Full cleanup rules](./commands.md#gc)
-- `stim worktree remove` and the automatic sweep keep a changed `project.pbxproj` and any `ios/Podfile.lock` change they cannot prove came from `pod install`. The proof is `Pods/Manifest.lock` holding the same text, or, when gc deleted `Pods`, the lock hash gc recorded. `worktree remove` refuses a changed `project.pbxproj`, and a tracked file marked `assume-unchanged` or `skip-worktree`, naming the file. Commit or discard the change, or pass `--force`.
-- Review configured `maintenance.discoverRoots` in the dry run. A root you explicitly configured brings eligible checkouts under the cleanup rules even if the root is in a home dot-folder or the system temp directory. [Discovery scope](./worktrees.md#checkouts-stim-never-ran-in)
-
-If you relied on the 1.40 defaults, review these values. An explicitly configured value still takes precedence.
+2.0 cleans up sooner. An explicitly configured value still wins.
 
 | Setting                     | 1.40  | 2.0  |
 | --------------------------- | ----- | ---- |
@@ -77,82 +54,159 @@ If you relied on the 1.40 defaults, review these values. An explicitly configure
 | `disk.criticalFreeGb`       | 6     | 20   |
 | `ios.simslim`               | `off` | `on` |
 
-These commands keep the 1.40 dormancy and age thresholds.
+To keep the 1.40 dormancy and age thresholds:
 
 <StimTabs
 code={`stim settings set idle.dormantDays 3 --scope machine
 stim settings set maintenance.olderThanDays 7 --scope machine`}
 />
 
+`ios.simslim` `on` also applies to simulators Stim created before the upgrade,
+at their next boot. Set it to `off` for a project that needs stock simulator
+services.
+
+## `stim gc` now deletes
+
+Update any script that ran `stim gc` to preview, including scripts that parse
+its JSON:
+
+<StimTabs
+code={`stim gc --dry-run
+stim gc --dry-run --json`}
+/>
+
+- `--delete` is gone. Plain `stim gc` applies cleanup at the measured pressure
+  level.
+- `--cache`, `--older-than` and `--worktrees` are gone. `--pressure normal`,
+  `high` or `critical` picks the level for one pass, and the maintenance
+  settings set age and worktree policy.
+- `stim worktree remove` refuses a changed `project.pbxproj`, and a tracked
+  file marked `assume-unchanged` or `skip-worktree`. Commit or discard the
+  change, or pass `--force`.
+- Review any configured `maintenance.discoverRoots` in a dry run first. See
+  [checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in).
+
+## First build after the upgrade
+
+- **Cold native cache.** 2.0 uses new cache keys, so expect one cold build per
+  native fingerprint.
+- **Expo `ios/` and `android/`.** An untracked native directory that a 1.x Stim
+  generated is prebuilt again once. Save manual edits first. If
+  `STIM_PREBUILD_FAILED` says the record is unreadable, move only the named
+  directory aside and rerun.
+- **`fingerprint.config.js`.** 2.0 reads only `extraSources` from it (and not
+  when `cache.fingerprintInputs` is set). Other options such as
+  `preset: 'strict'` are ignored without a warning at build time, so a native
+  dependency edited in place in `node_modules` can reuse a cached build.
+  `stim doctor` lists ignored options. Move inputs to `extraSources` or
+  `cache.fingerprintInputs`, or commit the edit as a patch.
+- **Build credentials.** Offloaded builds strip Stim's own credentials from the
+  worker's build environment. A build that reads a private Stim credential is
+  not cached.
+
+## Daemon, engine and services
+
+- A per-home `stimd` now runs Metro, tunnels and device logs. `daemon.mode`
+  controls automatic maintenance; a command that needs `stimd` can start it
+  even when that is `off`.
+- A 1.40 to 1.42 daemon can keep running after its workspaces stop. While it
+  does, `stim start` and `stim serve` refuse and print its PID and the command
+  that stops it. Check the PID before you run that command.
+- A managed engine is optional: `stim engine install` sets one up,
+  `stim engine status` shows it, `stim engine update` follows its channel, and
+  `stim engine rollback` returns to the previous build.
+- 2.0 workers use peer compatibility version 3 and build compatibility
+  version 6. Workers: run `stim remote update <machine>`. A stock 1.40 worker cannot take
+  that update, so on the worker install 2.0 and rerun `stim service install`
+  with its existing options. On Windows, reinstall the service after an engine
+  update too. If an old server still holds the serving port, stop it or pick
+  another port with `stim serve --port <port>` and point clients at it.
+- If `stim service install` refuses because a daemon it does not own holds the
+  port, stop that daemon with the `kill <pid>` it prints once its work drains,
+  then rerun the install.
+- If `stim service uninstall` reports its daemon is still listening, let it
+  finish, stop it, and rerun `stim service uninstall --label <label>`.
+- Upgrades with paired clients and mixed app and engine versions are still
+  being verified.
+
 ## Legacy settings
 
-Use `stim settings` and `stim doctor` to find leftover keys. Old keys can be reported as unknown or inert, and previously exported variables can be ignored. Migrate the setting in the [layer](./settings.md#settings-layers) that defines it. Remove unknown keys from the config file that defines them, and remove old exports from your shell, service, or CI environment.
+`stim settings` and `stim doctor` report leftover keys. Fix each in the layer
+that defines it, and remove old exports from your shell, service or CI
+environment. These names give no hint in the CLI:
 
-### Unknown names
+| Old key                      | Use in 2.0                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| `remote.buildMode`           | `remote.build`: `auto` to `auto`, `force` to `remote`, `off` to `local`.            |
+| `share.webrtc`               | Remove it, and `STIM_WEBRTC_STUN`.                                                  |
+| `devices.reclaimIdleMinutes` | Remove it. Stim reclaims a device idle for two minutes when a run waits for a boot. |
+| `daemon.enabled`             | `daemon.mode`: `true` to `on`, `false` to `off`.                                    |
+| `caches.injectMetroStore`    | `optimizations.metroSharedCache`.                                                   |
 
-The CLI gives no replacement hint for these names.
+The pressure ladder now uses fixed rules. Remove `budget.maxCommittedMemoryGb`,
+`budget.maxLiveWorkspaces`, the old `maintenance.*` tuning keys listed in
+[For agents](#for-agents), and their `STIM_` exports.
 
-| Old key                      | What to use in 2.0                                                                                                                      |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `remote.buildMode`           | `remote.build` / `STIM_REMOTE_BUILD`. Map `auto` to `auto`, `force` to `remote`, and `off` to `local`. Remove `STIM_REMOTE_BUILD_MODE`. |
-| `share.webrtc`               | Only a `next` build could set it, with `STIM_WEBRTC_STUN`; 1.40 had neither. Remove both. Shared web video uses the share socket.       |
-| `devices.reclaimIdleMinutes` | Remove it. While a run waits to boot, Stim can reclaim the longest-idle device of another workspace idle for at least two minutes.      |
-| `daemon.enabled`             | `daemon.mode`. Map `true` to `on` and `false` to `off`.                                                                                 |
-| `caches.injectMetroStore`    | `optimizations.metroSharedCache`.                                                                                                       |
+These names make `start`, `ios`, `android`, `web`, `macos`, `revive` and `gc`
+refuse until you migrate them. The refusal prints the `stim settings` commands
+to run.
 
-The pressure ladder uses fixed rules for the choices below. Remove these keys and any matching `STIM_` exports, such as `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB`, `STIM_BUDGET_MAX_LIVE_WORKSPACES`, and `STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES`.
+| Old key or environment variable                                             | Replacement                                                     |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `metro.idleStopMinutes`, `devices.idleShutdownMinutes`                      | `idle.minutes` stops the dev server and owned devices together. |
+| `maintenance.deviceIdleDays` / `STIM_MAINTENANCE_DEVICE_IDLE_DAYS`          | `idle.dormantDays`.                                             |
+| `budget.minFreeDiskGb` / `STIM_BUDGET_MIN_FREE_DISK_GB`                     | `disk.minFreeGb` / `STIM_DISK_MIN_FREE_GB`.                     |
+| `budget.hardFloorDiskGb` / `STIM_BUDGET_HARD_FLOOR_DISK_GB`                 | `disk.hardFloorGb` / `STIM_DISK_HARD_FLOOR_GB`.                 |
+| `maintenance.criticalFreeDiskGb` / `STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB` | `disk.criticalFreeGb` / `STIM_DISK_CRITICAL_FREE_GB`.           |
+| `maintenance.mode` / `STIM_MAINTENANCE`                                     | `daemon.mode` / `STIM_DAEMON`, same `on`, `report` or `off`.    |
 
-- `budget.maxCommittedMemoryGb`, `budget.maxLiveWorkspaces`
-- `maintenance.pressureCheckMinutes`, `maintenance.sizeCheckMinutes`, `maintenance.maxLoadPerCore`, `maintenance.memoryPressureLevel`, `maintenance.memoryWarningMinutes`, `maintenance.minAvailableMemoryGb`, `maintenance.capTargetPercent`, `maintenance.idleCheckMinutes`, `maintenance.urgentFreeDiskGb`, `maintenance.pressureProtectMinutes`
+`maintenance.idleStopHours` stays: hosted device sessions still read it.
 
-### Names that can still block a command
+## Scripts, packages and code
 
-`start`, `ios`, `android`, `web`, `macos`, `revive`, and `gc` refuse when a removed environment variable in the table is set to a nonempty value. Set the replacement and remove the old export. They also refuse when old config sets `maintenance.mode` to `off` or `report`, or sets either old local idle timeout to `0`. On these config refusals, follow the printed `stim settings` steps to preserve the intended behavior.
-
-| Old key or environment variable                                             | Replacement                                                                  |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `metro.idleStopMinutes`, `devices.idleShutdownMinutes`                      | `idle.minutes` stops the dev server and owned devices together.              |
-| `maintenance.deviceIdleDays` / `STIM_MAINTENANCE_DEVICE_IDLE_DAYS`          | `idle.dormantDays`.                                                          |
-| `budget.minFreeDiskGb` / `STIM_BUDGET_MIN_FREE_DISK_GB`                     | `disk.minFreeGb` / `STIM_DISK_MIN_FREE_GB`.                                  |
-| `budget.hardFloorDiskGb` / `STIM_BUDGET_HARD_FLOOR_DISK_GB`                 | `disk.hardFloorGb` / `STIM_DISK_HARD_FLOOR_GB`.                              |
-| `maintenance.criticalFreeDiskGb` / `STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB` | `disk.criticalFreeGb` / `STIM_DISK_CRITICAL_FREE_GB`.                        |
-| `maintenance.mode` / `STIM_MAINTENANCE`                                     | `daemon.mode` / `STIM_DAEMON`. Keep the same `on`, `report`, or `off` value. |
-
-`maintenance.idleStopHours` still applies to hosted device sessions. `stim doctor` can warn about an old `0` setting because local workspace dormancy now follows `idle.dormantDays`. Review both values if you used it to disable local cleanup.
-
-## Update CLI automation and integrations
-
-Every command now runs from one operation registry. A subcommand refuses an option it does not define, for example `stim pairings grant <id> --json`. The 1.40 `stim-server pair` and `stim-server devices` commands are now `stim pair` and `stim pairings` (`list`, `grant`, `revoke`), and `stim-server log` is `stim pairings log`. Remove the option from scripts that passed one.
-
-The server and CI runner ship in `stim`. Use `stim serve` in place of `stim-server`. Use `stim pair`, `stim pairings`, `stim service`, and `stim setup` for those workflows, and replace `stim-ci` with `stim ci`. For the [GitHub Action](./ci.md#github-actions), set `version` to 2.0.0 or later, or stay on an older action ref with its supported version. If `cli-path` points into a Stim checkout, build it and use `packages/stim-cli/bin/stim.mjs`.
-
-### Packages that stop publishing
-
-`@stim-cli/core`, `cache`, `agent-driver`, `agent-driver-agent-device`, `metro`, `expo-build-cache`, `ci`, `transport`, `transport-tailscale`, `transport-local` and `server` are bundled into `stim` and no longer publish. Versions already on npm stay installable but get no updates, and the `stim-server` and `stim-ci` binaries are gone. `@stim-cli/cache-s3` stays published. If your code imports one of these packages, import from `stim`, `stim/ci` or `stim/plugin` instead.
-
-- **`@stim-cli/metro`.** Remove `sharedCacheStores` and the package from `metro.config.js` and your dependencies. Stim sets Metro's shared transform store itself when it starts Metro; `optimizations.metroSharedCache` controls it.
-- **`@stim-cli/expo-build-cache`.** Remove it from your dependencies and from the Expo `buildCacheProvider` config. Stim's engine no longer reads a cache it wrote. Build with `stim ios` and `stim android`.
+- `stim-server` is now `stim serve`, `stim pair` and `stim pairings` (`list`,
+  `grant`, `revoke`, `log`). `stim-ci` is now `stim ci`.
+- Subcommands refuse options they do not define, for example
+  `stim pairings grant <id> --json`.
+- For the [GitHub Action](./ci.md), move to a 2.x ref and set
+  `version` to 2.0.0 or later in the same change.
+- `@stim-cli/core`, `cache`, `agent-driver`, `agent-driver-agent-device`,
+  `metro`, `expo-build-cache`, `ci`, `transport`, `transport-tailscale`,
+  `transport-local` and `server` are bundled into `stim` and no longer publish.
+  Import from `stim`, `stim/ci` or `stim/plugin`. `@stim-cli/cache-s3` stays
+  published; upgrade it to 2.x.
+- Remove `@stim-cli/metro` and `sharedCacheStores` from `metro.config.js`; Stim
+  sets Metro's shared store itself (`optimizations.metroSharedCache`).
+- Remove `@stim-cli/expo-build-cache` from dependencies and from Expo's
+  `buildCacheProvider` config.
 
 ### JavaScript and TypeScript
 
-| 1.40                      | 2.0                                                                                                                                                                                                                                                                |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `StimOptions.buildCache`  | `buildCacheDir` for the directory passed to `createStim`; also use it in `stim/ci` options. The run/build `buildCache` boolean stays. `stim ci --build-cache <path>` sets a directory. `stim ios` and `stim android` keep `--no-build-cache` to skip a cache read. |
-| Run option `wait`         | `waitSeconds` accepts a positive whole number or `false`. Omit it to use the default.                                                                                                                                                                              |
-| `diagnostics({ errors })` | `diagnostics({ errorsOnly })` with the same boolean.                                                                                                                                                                                                               |
-| `gc()`                    | `previewGarbage()` for a preview. Call `collectGarbage()` to apply cleanup.                                                                                                                                                                                        |
+| 1.40                      | 2.0                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------- |
+| `StimOptions.buildCache`  | `buildCacheDir`. The run and build `buildCache` boolean stays.                        |
+| Run option `wait`         | `waitSeconds`: a positive whole number or `false`.                                    |
+| `diagnostics({ errors })` | `diagnostics({ errorsOnly })`.                                                        |
+| `gc()`                    | `previewGarbage()` to preview, `collectGarbage()` to apply. Both take `{ pressure }`. |
 
-Update every call site. A temporary compatibility check (C33) refuses the old spellings with `STIM_BAD_ARG` and names the replacement. Both garbage methods take `{ pressure }` in place of `olderThan`, `cache`, `worktrees`, and `delete`. `previewGarbage()` returns the report directly, with `actions` and `blocked` describing the preview and an empty `results` array. `collectGarbage()` returns `{ report, exitCode }`. Read `report.results` for the outcomes of actions it applied. [Programmatic API](./programmatic-api.md)
-
-`StimLogsOptions.sources` and `minLevel` now use the `LogSource` and `LogLevel` unions. Treat operation errors as rejected promises. Import supported functions from `stim` or `stim/ci`. The bundled server's `stim/internal/*` paths and APIs marked `@internal` have no public stability guarantee. Replace deep imports like `stim/api-self` and `stim/engine-state` with public operations where available. If you register cache entries with `stim/cache-manifest`, use `register(entry)` and `unregister(dir)`. The manifest readers and custom manifest path argument were removed.
+The old spellings refuse with `STIM_BAD_ARG` and name the replacement.
+`collectGarbage()` returns `{ report, exitCode }`. `StimLogsOptions.sources`
+and `minLevel` use the `LogSource` and `LogLevel` unions. Operation errors are
+rejected promises. `stim/internal/*` and `@internal` APIs carry no stability
+guarantee; replace deep imports such as `stim/api-self` with public operations.
+`stim/cache-manifest` keeps only `register(entry)` and `unregister(dir)`.
 
 ### Plugins
 
-The stable 2.x plugin contract is `cache-provider`. A provider declares the kind integer in its package manifest and exports `CacheProviderModule.apiVersion`. Make `builds.resolve` and `builds.store` return promises to satisfy the 2.0 types. Stim still awaits synchronous results at runtime.
+The stable 2.x plugin contract is `cache-provider`. A provider declares its
+kind in its package manifest and exports `CacheProviderModule.apiVersion`;
+`builds.resolve` and `builds.store` return promises. `transport` and
+`agent-driver` are experimental and bundled. Replace
+`cacheProviderContractChecks` with `runCacheProviderContract` or
+`runContract`, and remove `CacheProvider.metro`. See
+[plugins](./programmatic-api.md#plugins).
 
-`transport` and `agent-driver` are experimental and bundled. Use the public types, contract kits, and `loadCacheProvider` from `stim/plugin`. Replace `cacheProviderContractChecks` with `runCacheProviderContract` or `runContract`, and remove `CacheProvider.metro`. The transport and agent-driver host loaders, their internal helpers, and cache-tier utilities are gone from `stim/plugin`. [Plugin contracts and testing](./plugins.md)
-
-## For agents
+## For agents {/* #for-agents */}
 
 Follow this section when `stim guide agent` prints `Not migrated from an earlier Stim`, or when a refusal or a `stim doctor` finding links here. Work through the steps in order. A step marked **Ask first** changes the user's machine, environment, defaults or another machine: describe the change and wait for the user's answer. When you are done, run `stim guide agent` again; its STATUS line clears once nothing is left.
 

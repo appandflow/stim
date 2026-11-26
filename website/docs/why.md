@@ -37,24 +37,16 @@ waits for that result.
 
 ## Parallel work without collisions
 
-Normal React Native tools assume one developer controls one port and one device.
-That assumption fails when several coding agents share a machine.
-
-Stim gives every workspace a separate port and device. An agent can create a
-worktree, run the app, and verify a change without using another agent's Metro
-server or simulator. Parallel tasks remain independent while they share the
-expensive caches.
+React Native tools assume one developer, one port and one device. That breaks
+when several agents share a machine. Stim gives every workspace its own port
+and device, while all of them share the build caches.
 
 ## An interface designed for agents
 
-Stim never prompts. Plain output streams the current phase and ends with the
-device, app, Metro, cache, launch, and log facts. Build failures show the useful
-compiler diagnostic and a log path. They do not place a full build transcript
-in the agent context.
-
-Every command also supports structured output where it is useful. The agent can
-query `stim logs --errors` after a change instead of scraping a terminal. Less
-noise means less waiting and fewer tokens.
+Stim never prompts. Output ends with the device, app, cache, launch and log
+facts. A failed build shows the useful compiler error and a log path, not the
+whole transcript. The agent reads `stim logs --errors` instead of scraping a
+terminal, so it spends fewer tokens and waits less.
 
 ## Owned resources and cleanup
 
@@ -66,8 +58,7 @@ is leased for the run and never added to the owned-device registry.
 `stim stop` releases an active environment without deleting its local device.
 `stim worktree remove` reclaims the worktree environment. `stim gc`
 removes orphaned resources. This ownership model makes cleanup safe after an
-agent exits early. [Getting started](./getting-started.md#terms) defines these
-terms.
+agent exits early.
 
 Beyond its own resources, Stim watches CPU, memory and disk for the whole
 machine. It sets concurrency limits so builds, devices and test runs wait their

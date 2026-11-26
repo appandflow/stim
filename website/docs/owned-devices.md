@@ -1,7 +1,7 @@
 ---
 title: 'Devices and cleanup'
 sidebar_position: 3
-description: 'Owned devices, physical-device leases, and cleanup'
+description: 'Owned devices, phones, slots, and what Stim deletes'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -14,7 +14,9 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 :::
 
-Stim creates a simulator or emulator for your workspace and reuses it on later runs. It boots and deletes devices that it can verify it owns. A name starting with `stim-` by itself does not prove ownership.
+Each workspace gets its own simulator or emulator, which Stim creates, reuses
+and cleans up. Stim boots and deletes only devices it can verify it created. A
+device named `stim-...` that Stim did not record is not touched.
 
 <StimTabs
 code={`stim ios
@@ -22,538 +24,143 @@ stim android
 stim status`}
 />
 
-Use the command for your platform. With Stim Desktop installed, its workspace viewer is the default on macOS. Use `stim settings set iosSimulatorApp xcode` or `stim settings set androidEmulatorApp emulator` to open the platform's own viewer. [Settings](./settings.md)
+With Stim Desktop installed, devices open in its viewer. To use the platform's
+own window instead, set `iosSimulatorApp` to `xcode` or `androidEmulatorApp` to
+`emulator`.
 
-For a connected phone, use `stim ios --device [udid]` or `stim android --device [serial]`. Stim leases physical devices for the run. Use `stim device lock` to keep one leased across runs. A physical iPhone needs a development profile that lists it. [Provision an iPhone](./commands.md#device-provision)
+## Several devices in one workspace
 
-Stim Desktop and the phone app can view a leased Android phone or control it with permission. A physical iPhone is view-only and must be unlocked, trusted and connected by USB. On the Mac, allow Camera access if asked.
-
-## Multiple devices with slots
-
-Use `--slot <name>` to keep multiple targets in one workspace: phone and tablet
-simulators, several devices of the same model, Android emulators, and connected
-hardware. There is no fixed number of slots; available host resources and any
-configured device caps still apply. Omitting the flag uses `default`, including
-assignments created before slots were supported.
+A slot is a named device in the same workspace. Slots share one Metro server
+and the build cache.
 
 <PromptBox title="Test a change on multiple devices">
 {`Use Stim to test this change on an iPhone simulator, an iPad simulator, and my connected iPhone in this workspace. Use slots named phone, tablet, and hardware. Reuse those slots on later runs. Check the UI and errors on each target, report what you verified, and leave the devices running for me.`}
 </PromptBox>
 
-The agent should select installed simulator models and identify the connected
-phone before running. A physical iPhone needs a signed development build that
-covers its UDID. If several phones are connected, name the one you want.
-
-### Run and reuse targets
-
-For example, with the named iPad model installed:
+The agent runs something like:
 
 <StimTabs
-code={`stim start
-stim ios --slot phone
+code={`stim ios --slot phone
 stim ios --slot tablet --device-type "iPad Pro 13-inch (M5)"
 stim ios --slot hardware --device
-stim status`}
-/>
-
-Repeat the same slot and device selectors to reuse an assignment. Choose an
-installed model reported by `xcrun simctl list devicetypes`;
-replace the iPad model above when needed. Use `--device <udid>` when selecting
-among connected iPhones. Android supports the same pattern with
-`stim android --slot phone`, `stim android --slot fold --device-profile pixel_fold`
-or `stim android --slot hardware --device <serial>`.
-Slot names are case-sensitive, 1–64 letters, digits, underscores or hyphens,
-and must begin with a letter or digit; prototype-related reserved names and
-`web`, which `stim stop --slot web` uses for the owned Chrome, are rejected. A name is scoped to its platform within the workspace.
-
-Slots share one Metro server and compatible native build caches. Native runs
-serialize changes to shared build output; the devices can remain running
-together afterward. A Debug launch counts a Metro bundle delivery only when it
-can tell that its own device requested it. An iOS simulator slot proves its own
-launch: on macOS, Stim looks up which simulator app process opened the bundle
-request. Android and physical-device requests carry no device identity, nor
-does a simulator request whose process lookup failed, so they prove a launch
-only while no other slot of the same platform is running (a booted owned
-device, a log collector or a device lease; `stim stop --slot <name>` ends all
-three).
-Otherwise the launch reports `unverified`, and you should inspect the intended
-device and its logs before claiming success. `reload` remains platform-wide, and named
-slots are not supported for remote sessions. Local runs using an
-[EAS development build](./eas-builds.md) can use slots.
-
-### Inspect and stop one slot
-
-<StimTabs
-code={`stim logs --slot tablet --errors
+stim logs --slot tablet --errors
 stim stop --slot tablet`}
 />
 
-The slot filter selects that target's attributed records plus the shared Metro
-and app client output, windowed by that slot's own launch, so another slot's
-relaunch does not hide the tablet's JS errors there. `status` lists the named assignments and leases.
-`stop --slot tablet` stops that slot's owned devices and collectors and releases
-its leases, while keeping Metro and sibling slots running. The assignment stays
-available for another run. Plain `stim stop` handles every slot in the workspace.
-`stop --slot default` stops only the workspace's default device the same way,
-leaving named slots and Metro up.
+`stop --slot <name>` stops one device and keeps Metro and the other slots.
+Plain `stim stop` stops all of them. With more than one device of a platform
+running, Stim cannot always prove which device loaded the bundle, so the launch
+can report `unverified`.
 
-Physical-device leases are separate per slot, but two slots cannot hold the
-same physical device at once. `device lock --slot hardware` can retain a lease
-across runs; use the platform and device selector shown in the
-[command reference](./commands.md#device-lock-and-device-unlock).
+## Choose the device
 
-All slots participate in workspace removal and garbage collection. Parked
-models share each platform's pool limit: an infrequently reused iPad can be
-evicted as the oldest parked simulator when that pool fills. Upgrades preserve
-existing ownership state; do not erase it. Use a slot-aware CLI consistently
-while named assignments exist, because older versions cannot manage them.
+By default `stim ios` creates the newest numbered iPhone on the newest
+installed runtime, and `stim android` the newest installed system image for
+your CPU, with the `pixel_6` profile. When no system image is installed, Stim
+installs one with `sdkmanager`. Pick a model with `--device-type` and
+`--runtime` (iOS) or `--system-image` and `--device-profile` (Android), or set
+them in `.stim.json`. A workspace that already owns a different model refuses
+instead of replacing it; use a new `--slot` for the second model.
 
-### Keep simulators running when Device Hub quits
+## Physical phones
 
-Stim never changes Apple preferences. The commands below are optional, you run
-them yourself, and Stim does not check or depend on them.
+Run on a connected phone with `stim ios --device [udid]` or
+`stim android --device [serial]`. Stim leases the phone for the run so two
+workspaces never install on it at once. `stim device lock ios|android` holds
+the lease for a set time, 5 minutes by default and 30 at most.
 
-**Device Hub quit.** Siniulator's setup notes document this private,
-machine-wide Xcode preference, and report testing it with Xcode 27.0. Apple does not document
-it, and its effect can change between Xcode releases.
+A physical iPhone needs a development signing profile that lists it; see
+`stim device provision`. Stim Desktop and the phone app can watch a leased
+Android phone and control it with permission. A physical iPhone is view only,
+and must be unlocked, trusted and connected by USB.
 
-```sh
-defaults write com.apple.dt.Devices shutdownStartedDevicesOnQuit -bool false
-```
+Stim never deletes or erases a physical device.
 
-It is meant to stop Device Hub from shutting down the simulators it started when
-you quit it. Whether it covers simulators Device Hub never displayed, and
-whether it holds on every Xcode build, is not confirmed. On one Mac running
-macOS 27 with Xcode 27.1 beta the write failed with `Could not write domain`.
-On a Mac with Xcode 27.0 the write and readback succeeded, but no Device Hub
-quit was tested, so the command may not work everywhere. Keep treating a Device Hub quit as
-unsafe, and stop only your own workspaces with `stim stop`.
+## Stop and idle shutdown
 
-To undo it, delete the key:
+`stim stop` shuts down the workspace's devices and never deletes them. The
+device stays assigned, so the next run only pays a boot. An owned iOS simulator
+stays booted for `pool.bootedGraceMinutes` (15 by default) while memory allows,
+so a quick restart skips the boot. Set it to `0` to shut down at once.
 
-```sh
-defaults delete com.apple.dt.Devices shutdownStartedDevicesOnQuit
-```
-
-**Xcode Run and Stop for native iOS development.** Xcode may shut down an
-unbooted simulator target when you press Stop. This Xcode preference may help;
-its effect has not been verified with Stim:
-
-```sh
-defaults write com.apple.dt.Xcode DVTiPhoneSimulatorAlwaysLaunchInCoreSimulatorSession -bool true
-```
-
-Quit Xcode before you set it, and boot the exact target with Stim before you
-press Run in Xcode. It applies to iOS simulators only, not to native macOS
-development. To undo it, quit Xcode and delete the key:
-
-```sh
-defaults delete com.apple.dt.Xcode DVTiPhoneSimulatorAlwaysLaunchInCoreSimulatorSession
-```
-
-Neither preference changes which devices Stim owns or stops. `stim stop` still
-shuts down only the owned devices of the workspace you stop.
-
-## Local devices
-
-`stim ios` selects the newest installed runtime that offers a regular numbered
-iPhone model (for example "iPhone 18 Pro"), and the newest such model on it, by
-default. It falls back to a special model (no generation number, such as
-"iPhone Duo") only when no installed runtime offers a numbered one. `stim
-android` selects the newest installed system image matching the host
-architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. When none is installed,
-or `--system-image` names one that is not, it installs that image (or
-`system-images;android-36;google_apis;<host ABI>`) with the SDK's own
-`sdkmanager --install` first; see
-[`android.installImages`](./settings.md#installing-a-missing-android-system-image). Set `.stim.json`
-defaults or use `ios --device-type`, `ios --runtime`, `android --system-image`,
-and `android --device-profile` for a specific target. These flags choose the
-device Stim creates. When the workspace already owns a device of another model
-or version, `stim ios` and `stim android` refuse rather than boot it. The one
-exception is `--system-image`, which replaces an emulator that never finished
-booting. Pass `--slot <name>` to create the requested device beside the current
-one. Android AVDs use the
-`pixel_6` hardware profile unless `android.deviceProfile` or
-`--device-profile` names another one, such as `pixel_tablet` or `pixel_fold`.
-
-`stim stop` shuts down an owned local device but does not delete it. The command
-assumes that the caller finished all device automation for that Stim session.
-It does not block on other processes attached to the owned device.
-
-An owned iOS simulator is the exception: while macOS memory pressure is normal,
-a device slot is free and `daemon.mode` is `on`, `stim stop` leaves it booted for
-`pool.bootedGraceMinutes` (15 by default). `stop` still ends Metro, the app and
-agent-device sessions, and the simulator stays assigned to the workspace. The
-next `stim ios` uses the booted simulator with no boot, and `stim worktree
-remove` parks it booted. The stim-daemon shuts it down when the grace period
-passes or when memory pressure is not normal. `stop` prints how long it stays
-booted; to shut it down now run `STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop`,
-and set `pool.bootedGraceMinutes` to `0` to turn the deferral off. A repeated
-`stop` keeps the first expiry. Android emulators, and any simulator stopped with
-`--slot`, are shut down at once.
-
-Android creation records an owned reservation before running native tools.
-Other workspaces can update Stim config during creation, while GC and teardown
-keep that reservation. An interruption leaves an incomplete record; retry
-`stim android` to reconcile it through owned-device cleanup. If a per-AVD claim
-under `~/.stim/avd-locks` is live or unresolved, cleanup refuses. Wait for live
-work to finish. Before removing an unresolved claim, verify that neither Stim
-nor its native child is still using the AVD, and remove only the named claim.
-Keep the AVD data and follow `stim guide errors STIM_CLAIM_REFUSED`.
-
-## Slim simulators and memory pressure
-
-Stim slims every iOS simulator it owns by default: it disables background
-system services (push, StoreKit, universal links, Spotlight, Siri, iCloud,
-Contacts, Calendar, Reminders, the Photos library, HealthKit, HomeKit, widgets,
-Wallet and others) through launchd overrides, which cuts the memory of each
-simulator several times over. Nothing is installed; Stim does this itself.
-Run `stim guide lifecycle simslim` for the full list of what each category
-turns off.
-
-An app that needs one of those features keeps it with `ios.simslimProfile`, a
-JSON file under the app with an `except` list of categories and a `keep` list of
-individual services that stay enabled. `ios.simslim` set to `off` in a project
-opts that app out and restores stock services.
-
-When the app asks a slim simulator for a service of a feature slimming turned
-off, Stim writes a warning to the device log that names the service, the
-feature and the category to keep, once per feature per app launch. Lookups of
-services no listed feature depends on, which system frameworks make in every
-app, are recorded at debug level without a remedy. When a system feature
-misbehaves on the simulator, look for the warning:
-
-```bash
-stim logs --source device --level warn --grep "slimming turned off"
-```
-
-Copy this prompt to have an agent check:
-
-```text
-A system feature (push, StoreKit, Contacts, HealthKit...) does not work in my
-app on the Stim simulator. Run `stim logs --source device --level warn --grep
-"slimming turned off"` and, if a record names the feature, add its category to the
-`except` list of an `ios.simslimProfile` (see `stim guide lifecycle simslim`).
-```
-
-Stim writes the overrides while the simulator is shut down, then boots it
-once, already slim. A new, stopped, or parked and adopted simulator is slimmed
-as part of its boot. A simulator that is already running and that Stim never
-slimmed keeps stock services until its next shut-down boot. A running simulator
-Stim already slimmed whose overrides differ (a changed profile, or
-`ios.simslim off`) is shut down, rewritten and booted once on the next
-`stim ios`; one that already matches is left alone. After the boot Stim
-reads the overrides back. Overrides persist only on iOS 18.5 and newer, so on
-an older runtime, or when the simulator does not honour them, Stim prints one
-line and runs stock services.
-Hosted simulators on a named Mac are muted like local ones but never slimmed.
-
-Each boot of an owned iOS simulator writes `ios_boot` records to the workspace's
-device log: boot requested (adopted, created, existing or restart), bootstatus
-done, SpringBoard started with its pid, and viewer opened. When
-SpringBoard is missing after boot, Stim also copies the simulator's recent
-`SpringBoard-*.ips` crash reports from `~/Library/Logs/DiagnosticReports` into
-the workspace logs directory before it restarts the simulator once, because macOS
-deletes them after about two days. Read the records with
-`stim logs --source device --grep "ios boot"` and `--grep "SpringBoard crash report"`.
-
-A simulator can report Booted and show SpringBoard while process startup is
-stalled. Stim checks a bounded process spawn before installation and bounds
-local launch calls. When macOS reports elevated memory pressure, diagnostics
-recommend freeing memory before retrying. A timeout or existing swap usage
-alone does not establish OOM. Stop only workspaces you own and have finished
-using; ask before closing other agents' simulators or heavy apps. Slim simulators
-reduce resource use but are not a guaranteed fix for a stalled host.
-
-During a slow local iOS boot, Stim reports the simulator name, elapsed time, last boot
-output, current memory pressure, and highest observed pressure roughly every
-15 seconds. Recovery advice appears when pressure first reaches warning or
-critical, and again only when the level changes. Boot failures retain the highest pressure and the number of
-unavailable readings. Unknown readings are not treated as normal, and pressure
-does not prove the cause of a timeout. The boot deadline remains ten minutes
-and also covers SpringBoard finishing its startup after `simctl bootstatus`
-returns, so a slow host spends that time in the boot step, where the last boot
-output reads `waiting for SpringBoard`, rather than in the app launch.
-Synchronous CLI work can delay observations, progress, and timeout handling.
-Diagnostics report observation gaps over 30 seconds; pressure during those gaps
-is unobserved, even when surrounding readings are normal.
-
-When `simctl boot` itself exits 22 (EINVAL), Stim checks the simulator's
-state. It continues the boot wait when the simulator is Booting or Booted and
-boots once more after two seconds when it is Shutdown. If the boot is still
-refused, the failure keeps the exit code and does not recommend memory relief
-unless the highest observed pressure was warning or critical.
-
-An agent should stop unused slots in workspaces it owns, reduce concurrent
-builds, and retry after pressure falls. Ask before closing another agent's
-simulator or a user's app. Repeated reboots under unchanged pressure can repeat
-the stall.
-
-Local Android emulator boots also print a memory phase line when macOS reports
-warning or critical pressure. If boot times out under that pressure, Stim
-extends the wait once by up to 240 seconds while the process it started is
-still alive. It waits on the same emulator and never launches a duplicate.
-New-device preparation waits 120 seconds initially; the later boot check uses
-240 seconds. Normal or unavailable pressure, an exited process, or unavailable
-process liveness does not trigger the extra wait. adb probes are bounded.
-
-Timeout remedies include observed pressure and the running Stim-owned device
-count when available. Device count alone does not prove memory pressure or
-trigger the extra wait. Specific emulator log errors keep their own remedies.
-Stop an unneeded device with `stim stop` only in a workspace you own, then rerun
-`stim android` with the same build options. Read
-`stim guide errors STIM_NO_DEVICE` for recovery details.
-
-### Abnormally large processes
-
-Memory pressure often comes from one process that leaked, not from the
-simulators and emulators. `stim doctor`, and the iOS and Android boot messages
-under warning or critical pressure, name any process whose physical footprint is
-abnormal. Stim reads it from macOS `top`, which counts compressed and swapped
-memory (`ps` RSS leaves them out) and can read root-owned daemons. Abnormal means
-at least a quarter of physical memory and at least 8 GiB, or 2 GiB for
-`fseventsd` and Watchman, which are normally far smaller.
-
-For a process that is safe to restart, Stim prints the command. It never runs
-the command itself.
-
-| Process                 | Command                   | Effect                                         |
-| ----------------------- | ------------------------- | ---------------------------------------------- |
-| `fseventsd`             | `sudo killall fseventsd`  | launchd restarts it; file watchers rescan once |
-| Watchman                | `stim gc --pressure high` | stops it once no workspace uses it             |
-| Gradle or Kotlin daemon | `stim gc --pressure high` | stops idle daemons; the next build starts one  |
-
-Any other abnormal process is named with its size only; ask before quitting it.
-Boot does not wait for the `top` read: the pressure message prints at once and the
-named processes follow on a second memory line when `top` finishes.
-Doctor skips this check when `STIM_HOME` is set, because processes are
-machine-global.
-While pressure stays elevated, the automatic maintenance check also records the
-processes in `stim status --json` under `maintenance.pressure.memory.culprits`,
-and Stim Desktop shows them under **Machines > This Mac > Resource Usage** with
-a copy button for each command.
-
-## Idle shutdown
-
-After 15 minutes of inactivity by default, Stim can stop Metro and shut down owned devices. Change `idle.minutes` for a workspace or machine. Set it to `0` to disable idle stop. App logs alone do not keep a workspace active. A build, device control, lease or live share can keep it up.
+After `idle.minutes` (15 by default) with no activity, Stim stops Metro and
+shuts down the workspace's devices. App logs alone do not count as activity.
+Set it to `0` to turn idle stop off:
 
 <StimTabs code="stim settings set idle.minutes 60 --scope machine" />
 
-When a run is waiting on a full device pool, Stim can shut down another eligible device after two idle minutes. Run `stim revive`, `stim ios` or `stim android` to use the workspace again. [Idle stop](./dev-server-and-logs.md#idle-stop)
+Run `stim revive`, `stim ios` or `stim android` to use the workspace again.
 
-## Remote devices
+## Memory
 
-Stim supports two optional remote backends:
+A booted iOS simulator uses roughly 1 to 2 GB of RAM and an Android emulator 2
+to 3 GB. Stim slims every iOS simulator it owns: it turns off background system
+services such as push, StoreKit, Spotlight, Siri and iCloud, which cuts each
+simulator's memory several times over. Slimming needs iOS 18.5 or newer.
 
-- `proxy` connects through an Agent Device daemon that already owns a session.
-- `eas` creates and owns an EAS simulator session.
+If your app needs one of those features, keep it with an `ios.simslimProfile`,
+or set `ios.simslim` to `off` for the project. When the app asks for a service
+slimming turned off, Stim logs a warning that names the category to keep.
 
-A named `--remote-build` refuses physical and `--remote` cache misses with
-`STIM_OFFLOAD_REFUSED`. Use `auto` or `local` for those builds; an existing
-cache hit with a listed paired name needs no worker. Unlisted or unpaired
-names refuse at setup before checking the cache. See [machine settings](./settings.md#machine-settings).
-
-The app builds locally by default; `--eas-profile` can instead download an
-[EAS development build](./eas-builds.md). `stim start --remote` creates the
-Metro route required by the remote device. Remote EAS sessions can incur cost
-independently of the build source. Stim has EAS stop every session it creates
-after `remote.easMaxDurationMinutes` (machine setting, default 30), which ends a
-session whose workspace was deleted by hand; the next run replaces an expired
-session. EAS rejects a value above the account plan's session limit. Stim prepares the app before it creates or
-reconnects the session, so a failed build starts no session and the install
-follows the connection directly.
-
-An iOS remote build compiles a single simulator architecture. With `proxy`, Stim
-reads the host architecture from the daemon's `/health` response (`hostArch`).
-It uses `arm64` when the daemon does not report one or does not answer within
-3 seconds, and always with `eas`, whose hosts are Apple silicon.
-
-EAS and proxy adapters cannot verify a release or native process launch, so
-`launched` stays `"unverified"` and the output says process verification is
-unavailable. These adapters collect no device logs or native crash reports.
-
-Workspaces can hold EAS sessions at the same time, but only one session starts
-at a time on a machine. A `--remote eas` run that finishes its build while
-another workspace is starting a session waits for that start. It prints a
-`lock  waiting for EAS remote start (pid …, in <workspace>, running for …)`
-line right away and a `still waiting` line every 30 seconds. If one holder
-keeps the lock longer than the slowest EAS session start (39 minutes), the run
-refuses with `STIM_LOCK_TIMEOUT`, names that process, and installs nothing.
-
-### From Windows or Linux
-
-From a host without Xcode, iOS runs either on a paired Mac with
-`stim ios --remote <mac> --remote-build <mac>` (see
-[Remote machines](./remote-machines.md#requirements)) or through EAS with
-`--remote eas`. `stim doctor --platform ios` on such a host points at both
-instead of at CocoaPods and simulators. Install `eas-cli` 21.6.0 or later and `agent-device`, plus `ngrok` or
-`cloudflared` for the Metro tunnel, then:
-
-```bash
-stim start --remote
-stim ios --remote eas --eas-profile ios-simulator
-stim logs --errors
-stim stop
-```
-
-The profile is the simulator profile from [EAS builds](./eas-builds.md#choose-a-profile):
-the EAS Simulator runs simulator binaries, so it must set `ios.simulator: true`.
-The build must already exist on EAS; a miss prints the `eas build` command and
-never starts one. `stim status` lists the running session with its browser
-preview URL, and Stim Desktop shows that page as a device tile. `stim stop`
-ends the session and the tunnel.
-
-An install or launch failure leaves the session running and billed. The remedy
-names the session: rerun the command to reuse it, or run `stim stop` to end it.
-
-### Metro on your tailnet
-
-For a remote device or an agent-device proxy on the same tailnet, install
-Tailscale and sign in on both hosts, then:
-
-```bash
-stim settings set metro.tunnel tailscale --scope workspace
-stim start --remote
-stim status
-```
-
-`tailscale` is an explicit `metro.tunnel` choice; `auto` never selects it.
-Stim runs a foreground `tailscale serve --https=<metro port>
-http://127.0.0.1:<metro port>` process. It never enables Funnel. The printed
-URL is `https://<tailnet-name>:<metro port>`, and status reports the recorded
-provider and URL. The device must be on the same tailnet, so the `eas` backend
-refuses it; the host may not
-reach its own tailnet name, so Stim skips the public bundle probe for its
-recorded Tailscale tunnel.
-
-`stim stop` and `stim worktree remove` verify and stop only the process Stim
-recorded. Ending the foreground process removes its route; a route Stim did
-not create is never touched. If the Metro port already has a serve route,
-Tailscale refuses and Stim prints Tailscale's error message.
-`tailscale serve status --json` lists foreground sessions under the top-level
-`Foreground` key; plain `tailscale serve status` does not list them.
-
-<PromptBox title="Expose Metro on your tailnet">
-{`Set metro.tunnel to tailscale for this workspace and start Metro for my remote agent-device proxy on the same tailnet. Show me its URL with stim status, then use stim stop when finished.`}
+<PromptBox title="Fix a feature slimming turned off">
+{`A system feature such as push, StoreKit or Contacts does not work in my app on the Stim simulator. Check stim logs for a warning that slimming turned it off, and if one names the feature, add its category to the except list of an ios.simslimProfile.`}
 </PromptBox>
 
-## Typing from a viewer
+Under memory pressure, `stim doctor` and slow boots name any process with an
+abnormal footprint, such as a leaked `fseventsd`, Watchman or Gradle daemon,
+and print the command to restart it. Stim never runs that command itself. Stim
+Desktop lists them under **Machines > This Mac > Resource Usage**.
 
-When Stim Desktop controls an owned iOS simulator, or stim-server sends it
-input, Stim puts the simulator in hardware-keyboard mode, the setting behind
-Simulator.app's Connect Hardware Keyboard. The on-screen keyboard stays hidden
-and the keys of the viewer's keyboard type into the focused field. Nothing turns
-the mode off when the viewer leaves, so the simulator stays without an on-screen
-keyboard until an XCTest run, including agent-device on an iOS simulator, detaches
-it and brings the keyboard back. The next input from a viewer after two idle
-seconds attaches it again. An Android emulator keeps its on-screen keyboard: its
-keyboard is built in to the emulator, so Android's "Use on-screen keyboard"
-setting does not apply.
+## Replay
 
-## Control from the phone viewer
+`stim-server` records owned devices and the owned Chrome page while an agent
+drives them or the phone app watches them. It keeps the last 15 minutes per
+device. Scrub back in Stim Desktop or the phone app to see what an agent did.
+Recordings stay on your machine and go only to Stim Desktop and paired phones.
+Turn them off with:
 
-A phone granted control can use the compact bottom toolbar for Keyboard,
-Home on iOS or Back on Android and web, and both rotation directions. **More** (the ellipsis button)
-opens a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. **Device Frame** in the app's Settings shows a simulator's or
-emulator's housing when matching artwork is available; an iPhone Duo has its own
-**Device Frame** entry in More, usable without a control lease. **Full Screen** in the
-title bar hides the title bar and agent actions so the screen grows; the toolbar keeps
-**Exit Full Screen**. The bar stays below the screen in portrait and landscape
-and fits its common controls within the available width. An iOS simulator turns with
-the device, so a portrait-only app shows sideways in a turned frame; on an emulator the
-app in front still needs to support the requested orientation. Physical devices rotate
-only in hand.
+<StimTabs code="stim settings set recording.enabled false --scope machine" />
 
-Tapping Control starts control at once, while an agent drives the device or
-another person controls it too: everyone's input reaches the device, and a
-finger already down keeps the touch pointer until it lifts. A device another
-workspace leases offers **Take Over** instead, and so does a device someone else
-drives on a stim-server older than shared control. Viewing replay remains read-only.
+When Stim Desktop or a viewer types into an owned iOS simulator, Stim turns on
+its hardware keyboard, so the on-screen keyboard stays hidden until an XCTest
+run, such as agent-device, brings it back.
 
-## Replay device screens
+## What Stim deletes
 
-`stim-server` records owned simulators, emulators and the Stim-owned Chrome
-page while an agent or automation tool drives them, or while the phone app
-watches them. It keeps the last 15 minutes of footage per device, so you can
-see what an agent did while you were away.
+| Action                        | What happens                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `stim stop`                   | Shuts down the workspace's devices and releases its leases. Deletes nothing.                                                 |
+| `stim worktree remove`        | Reclaims the workspace and parks its owned devices for reuse, unless disk pressure is critical.                              |
+| `stim gc --dry-run`           | Shows what `stim gc` would delete. Deletes nothing.                                                                          |
+| `stim gc`                     | Deletes stale owned devices, devices of workspaces idle for `idle.dormantDays` (1 day), unused simulator runtimes, and more. |
+| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                                                    |
 
-In Stim Desktop the device viewer shows a replay bar under the screen; in the
-phone app the replay controls sit over the bottom of the screen and fade out
-until you tap it:
+Each platform parks up to three devices by default (`pool.iosParkedMax`,
+`pool.androidParkedMax`), and Stim clears the previous app's data before
+reusing one. `stim gc` deletes a simulator runtime only when no simulator on
+the machine uses it and simctl marks it deletable. It keeps the only installed
+runtime, the newest one when none is used, and any runtime a project pins with
+`ios.runtime`. Stim never touches simulators you created or physical devices.
 
-- **Scrub.** Drag to show the frame at that time.
-- **Markers.** Tap one to land just before an agent action or an app error.
-- **Play.** Play at 1x or 2x, then tap **Live** to return.
-- **Step.** In the phone app, jump to the previous or next agent action, and
-  see the device's last agent actions under the screen.
+## Devices on other machines
 
-Control is off while you look at the past. Time when nothing was recorded, such
-as after `stim stop`, shows as a gap, and a stopped device's last footage stays
-replayable.
+- **Another Mac.** `stim ios --remote <mac>` runs on an approved Mac with Metro
+  kept here. A person at that Mac approves the `device-host` grant, which lets
+  your machine run native code there, so approve only clients you expect. See
+  [Remote machines](./remote-machines.md).
+- **EAS Simulator.** `stim ios --remote eas --eas-profile <profile>` runs a
+  downloaded EAS build on an EAS cloud simulator. Sessions are billed by EAS.
+  Stim ends each session it creates after `remote.easMaxDurationMinutes` (30 by
+  default), and `stim stop` ends it sooner. A failed install leaves the session
+  running and billed until you rerun or stop. This also works from Windows or
+  Linux with `eas-cli` 21.6.0 or later, `agent-device`, and `ngrok` or
+  `cloudflared` for the Metro tunnel. See [EAS development builds](./eas-builds.md).
+- **Your tailnet.** Set `metro.tunnel` to `tailscale` and run
+  `stim start --remote` to serve Metro to a device on the same tailnet. Stim
+  never enables Funnel.
 
-Recordings stay on your machine and are served only to paired phones and Stim
-Desktop. Turn them off for the whole machine in the phone's Settings or in Stim
-Desktop's Advanced settings, or on the Mac, where a repository or workspace can
-also be set on its own:
+## Agent detail
 
-```bash
-stim settings set recording.enabled false --scope machine
-```
-
-See [Device recordings](./settings.md#device-recordings) for scopes and
-`STIM_RECORDING`, and
-[Inspect and clean caches](./build-caches.md#device-recordings) for cleanup.
-
-Try it with an agent:
-
-```text
-Run this app with stim ios, then drive it with agent-device for a minute:
-open a few screens and fill a form. Tell me when you are done so I can scrub
-back through it in the Stim phone app.
-```
-
-## Cleanup behavior
-
-| Action                        | What happens                                                                                                                                                                 |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stim stop`                   | Stops this workspace and releases leases. It keeps its owned device assignments for later.                                                                                   |
-| `stim worktree remove`        | Reclaims the workspace and parks eligible owned devices for reuse, unless disk pressure is critical.                                                                         |
-| `stim gc --dry-run`           | Previews what `stim gc` would delete and shows disk use. It deletes nothing.                                                                                                 |
-| `stim gc`                     | Removes verified stale resources, the owned devices of workspaces idle for `idle.dormantDays` and unused simulator runtimes, and at high or critical deletes parked devices. |
-| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                                                                                                    |
-
-Each platform parks up to three local devices by default. Stim clears the previous app's data before reusing a parked device. `stim worktree remove` parks devices unless disk pressure is critical, and disk pressure can shorten a parked device's lifetime. The dormant stage can delete owned devices from an inactive workspace after `idle.dormantDays` (one day by default). Simulator runtimes are not Stim-owned, but `stim gc` deletes an unused one with `xcrun simctl runtime delete <identifier>` at every level, only when simctl marks the image deletable and no simulator on the machine, user-created ones included, uses it. It keeps the only installed runtime, the newest when none is used, a runtime a project's `ios.runtime` pins, every runtime with the major version of the active Xcode's simulator SDK, and every runtime used within `maintenance.olderThanDays` or with no use recorded by simctl. If the SDK version, a registered project's path or its `.stim.json` cannot be read, it deletes no runtime and reports why. It deletes an owned simulator whose runtime is gone through teardown only when no registered workspace records it, never touches a user-created unavailable simulator, and never runs `simctl delete unavailable`. Physical devices stay outside Stim's device cleanup. [Disk pressure](./build-caches.md#disk-pressure)
-
-If teardown fails, Stim keeps the ownership record for a retry. For pool settings, reuse rules and recovery, run the version-matched guide.
-
-<StimTabs code="stim guide lifecycle pool" />
-
-## Run iOS on another Mac
-
-After [hosting approval](#paired-mac-hosting-approval), choose the worker and one of its installed runtimes.
-
-<StimTabs
-code={`stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
-stim status
-stim reload ios
-stim stop`}
-/>
-
-Metro stays on this machine. If a port conflict is reported, run `stim stop` and retry without starting Metro first, or choose a port free on both Macs. Use `--remote-build` separately to place the build. Run `stim stop` before changing hosts. A named host is strict and reports the reason if it cannot take the run.
-
-Open the device in Stim Desktop to view or control it. To drive it with an agent, set `hosting.agentDriver=agent-device` on the host and use agent-device 0.21.30 or later on both machines.
-
-<StimTabs
-code={`stim agent-device open <bundleId>
-stim agent-device snapshot
-stim agent-device click <ref>`}
-/>
-
-[Remote machines](./remote-machines.md) · [Agent-device commands](./commands.md#agent-device)
-
-## Paired Mac hosting approval
-
-Add the worker with `stim remote add <machine>` or use the [Desktop wizard](./remote-machines.md#use-the-desktop-wizard). A person at the worker approves `device-host` using the generated setup command. Approve only an expected client, since hosting lets it run native code on that Mac. Build and viewer access have separate grants.
-
-On the worker, run `stim pairings` to list approvals or `stim pairings revoke <id>` to remove one. [Hosted sessions](./remote-machines.md#hosted-parking-and-restart)
+The agent reads the version-matched rules with `stim guide lifecycle pool`,
+`stim guide lifecycle lease`, `stim guide lifecycle simslim` and
+`stim guide cleanup gc`.

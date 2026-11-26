@@ -4,14 +4,25 @@ title: Continuous integration
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import PromptBox from '@site/src/components/PromptBox';
 
-`stim ci` builds an app once, then installs and launches it through Stim,
-runs your test command if you give one, and stops the workspace. It supports iOS, Android, macOS,
-and web through the same public API that can be imported from `stim`.
+`stim ci` builds your app once, installs and launches it on a clean owned
+simulator or emulator, runs your test command, and cleans up. It works for
+iOS, Android, macOS and web.
 
-Install the app's dependencies and native tools first. Give each concurrent
-run its own checkout; cleanup stops the selected workspace. Keep your
-developer checkout out of CI jobs.
+<PromptBox
+title="Run tests in CI"
+response={`Added a CI job: stim ci build, then stim ci run with pnpm test:e2e.
+A deliberate failure kept its exit code; result.json and diagnostics were saved and the device was cleaned up.`}
+
+>
+
+{`Use stim ci to run this app's existing e2e test command in CI. Build with stim ci build, then run with stim ci run and an artifacts directory. Use the exact target in STIM_CI_RUN_RESULT, and check cleanup on both success and a deliberate test failure.`}
+</PromptBox>
+
+## Build, then run
+
+Install the app's dependencies and native tools first.
 
 <Tabs groupId="installation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -33,105 +44,82 @@ npx --yes stim ci run --platform ios --project ./app --artifacts ./test-results 
 </TabItem>
 </Tabs>
 
-## Build
+- `stim ci build` is the only step that compiles. It records the app; add
+  `--export <path>` to also write an APK or a `tar.gz`.
+- `stim ci run` installs the last recorded build and never builds. With no
+  recorded build it refuses and prints the build command to run.
+- The command after `--` gets the device and app in `STIM_CI_*` variables,
+  including `STIM_CI_RUN_RESULT`, the exact target to test.
+- stdout holds one JSON result. With `--artifacts`, results and diagnostics
+  are also saved to that directory, which must be empty.
+- A failed test keeps its exit code. A timeout exits 124, a cancellation 130.
+  Leave at least 70 seconds between `--timeout` and your provider's hard
+  timeout so cleanup can finish.
 
-`stim ci build` is the only step that compiles. It needs no test command or
-device and preserves existing workspace sessions. It compiles the app, or
-restores it from the native artifact cache, and records it for this checkout,
-platform and selectors (iOS scheme and configuration, Android variant) in
-Stim's workspace state. Nothing else is written: `build` exports no file and
-collects no logs unless you ask.
+## What a run deletes
 
-```sh
-stim ci build --platform android --project ./app
-stim ci build --platform ios --project ./app --export ./app.tar.gz
+Every iOS and Android `run` starts the app from clean state on the workspace's
+own simulator or emulator. Before it installs, it uninstalls every other user
+app on that device except XCUITest runners, clears the app's data, and on iOS
+resets the simulator keychain. It refuses a simulator or emulator Stim does
+not own, and refuses a physical device.
+
+## Isolation
+
+- Give each concurrent job its own checkout and its own Stim home. Keep your
+  developer checkout out of CI jobs.
+- On GitHub-hosted runners the home and build cache are job-local
+  automatically. Elsewhere, pass the same `--home` to `build` and `run`.
+- Persist only build cache entries between jobs, never the Stim home.
+- `build` targets this machine's architecture. When `run` can land on another
+  machine or on EAS, build with `--arch all` (iOS) or `--abi all` (Android).
+
+## GitHub Actions
+
+The repository ships a [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci)
+that runs `ci build` and `ci run` in one step, uploads results and writes the
+job summary. It runs on macOS and Linux runners, not Windows. Pin it to a
+commit and pass an exact published `stim` version:
+
+```yaml
+- uses: appandflow/stim/.github/actions/stim-ci@<commit>
+  with:
+    version: <stim version>
+    platform: ios
+    project: apps/mobile
+    command: pnpm test:e2e
+    artifacts: stim-ci-results
+    timeout: '1800'
 ```
 
-`--export <path>` also writes the app: an APK for Android, a `tar.gz` that
-preserves executable modes and symlinks for iOS and macOS. Archiving takes
-several seconds even on a cache hit, so export only what something consumes.
-`--artifacts <dir>` adds `result.json`, `build.json` and `diagnostics.json`.
-`--eas-profile <name>` (iOS and Android) downloads a completed EAS development
-build instead of compiling; Stim never starts an EAS build.
+`command` is Bash source, like a `run:` step. Pass untrusted event values
+through environment variables, never by interpolating them into `command`.
 
-Both `build` and `run` accept `--scheme` and `--configuration` for iOS and
-`--variant` for Android; `run` finds the recorded app by them. `build` also
-accepts `--arch` (`arm64`, `x86_64`, `all`) for iOS and `--abi` (`arm64-v8a`,
-`armeabi-v7a`, `x86`, `x86_64`, `all`) for Android; the last build for the
-selectors is the one `run` installs. Without selectors, each project's normal
-build settings apply. GitHub-hosted steps automatically share the job's
-temporary home and cache. Pass the same `--home` to `build` and `run` elsewhere.
-iOS outputs target the simulator; distribution archives and web compilation
-are outside this command.
+Build only, without a device or test:
 
-```ts
-import { buildCI } from 'stim/ci';
-const result = await buildCI({ projectRoot: '/checkout/app', build: { platform: 'ios' } });
-process.exitCode = result.exitCode;
+```yaml
+- uses: appandflow/stim/.github/actions/stim-ci@<commit>
+  with:
+    version: <stim version>
+    platform: android
+    project: apps/mobile
+    build-only: 'true'
+    export: out/app.apk
 ```
 
-## Run and test
+The action sets outputs such as `app-path`, `export-path`, `cache-hit`,
+`device-id` and `exit-code`. Its README lists every input and output.
 
-`stim ci run` never builds or replaces the app's JavaScript. It installs and
-launches the app the last matching `build` recorded and trusts it, so rebuild
-after changing the project. A Debug app still gets Metro from `run`. With no
-recorded build, `run` refuses with `STIM_NO_RECORDED_BUILD` before touching a
-device, and the failure's `remedy` names the `stim ci build ...` command to run
-first. macOS and web are unchanged: macOS `run` builds its app itself.
+## EAS Workflows
 
-A CI job retains its selected engine until it ends. Work on the current engine
-defers its promotion while the job is active. An engine that predates attached CI
-hosting refuses with `STIM_ENGINE_HOST_UNAVAILABLE`; run `stim engine update`.
+The [Mobile workflow](https://github.com/appandflow/stim/blob/main/apps/mobile/.eas/workflows/stim-ci.yml)
+in this repository runs `stim ci` in an EAS custom Android job and uploads
+diagnostics with `eas/upload_artifact`. Copy it as a starting point. EAS
+Workflows usage counts toward your Expo plan's compute allowance.
 
-Every iOS and Android `run` on this machine starts the app from clean state on
-the workspace's own simulator or emulator, including when the device already
-has this build.
-Before it installs, `run` uninstalls every other user app except XCUITest
-runner apps, such as the ones agent-device installs, so test tools do not
-reinstall them on each run. On iOS it also clears the app's defaults and data
-container and resets the simulator keychain; on Android it runs `pm clear` on
-the app. Simulator-wide settings such as privacy grants are kept. A local
-simulator or emulator Stim does not own refuses with `STIM_BAD_ARG` instead of
-skipping the cleanup. A run that `ios.remote` or `android.remote` places on
-another machine or on EAS is not cleaned, and a physical device is refused.
-`build` always compiles on this machine and ignores `remote.build`. By default
-it compiles an iOS app, and an Android Debug app, for this machine's
-architecture only, so when `run` can
-land on another machine or on EAS, build for that device too with `--arch all`
-(iOS) or `--abi all` (Android). Plain `stim ios` and `stim android` keep app data between
-runs and clean only a simulator or emulator they adopt from the parked pool.
+## JavaScript
 
-The command after `--` is an argument vector. Use an explicit shell when you
-need shell syntax. Without `--`, `run` installs and launches the app, writes the
-same `run` facts, then stops the workspace with exit code 0 and `test: null`, so a
-later step can drive a Release app on that device after booting it again. Cleanup
-also stops Metro, so a Debug app has no bundler then. An explicit
-`--` with nothing after it is refused. Progress and test output go to stderr; stdout contains the
-structured outcome, also saved as `result.json` when `--artifacts` is set. A failed test keeps
-its exit code even if diagnostics or cleanup also fail. Timeout returns 124;
-cancellation returns 130, including cancellation during cleanup when the test
-has not already failed. Progress callback failures are retained in
-`reportingError` and cannot interrupt cleanup. Leave at least 70 seconds between
-this timeout and the provider's hard timeout for diagnostics and cleanup.
-A failure's `code` is one of `STIM_CI_SETUP_FAILED`, `STIM_CI_TEST_FAILED`,
-`STIM_CI_BUILD_FAILED`, `STIM_CI_ARTIFACT_FAILED` (`ci build` built the app but
-could not pack or copy it), `STIM_CI_TIMEOUT` or `STIM_CI_CANCELLED`, unless the
-run or build failed with a more specific `STIM_` code. `cleanup.error` uses
-`STIM_CI_CLEANUP_FAILED`, `diagnostics.error` uses `STIM_CI_DIAGNOSTICS_FAILED`,
-and `reportingError` uses `STIM_CI_REPORT_FAILED`. `stim guide errors ci` lists them.
-Without `--artifacts` no result, test or diagnostic file is written and no logs
-are copied. An artifacts directory must be empty; choose a new one for each run.
-
-The command receives `STIM_CI_DEVICE_ID`, `STIM_CI_APP_ID`, and
-`STIM_CI_METRO_PORT` when those facts apply, plus `STIM_CI_PLATFORM`,
-`STIM_CI_ARTIFACTS_DIR`, and `STIM_CI_RUN_RESULT`. The last two are empty without
-`--artifacts`; otherwise `STIM_CI_RUN_RESULT` points to
-`run.json`, written before tests start, with exact `{ platform, facts }` from
-Stim. Tests must use that exact target and implement app-specific readiness;
-`launched` can be `bundling` or `unverified`.
-
-The [package reference](https://github.com/appandflow/stim/tree/main/packages/ci)
-documents the library, result schema, artifacts, cancellation, and cache rules.
+The same flow is available as `buildCI` and `runCI` from `stim/ci`:
 
 ```ts
 import { runCI } from 'stim/ci';
@@ -143,140 +131,9 @@ const result = await runCI({
   artifactsDir: '/job/results',
   timeoutMs: 30 * 60 * 1000,
 });
-
 process.exitCode = result.exitCode;
 ```
 
-On GitHub-hosted runners, home and cache paths are automatic:
-`$RUNNER_TEMP/stim-ci/home` and `$RUNNER_TEMP/stim-ci/build-cache`. Repeated steps
-reuse the job's paths. Detection requires `GITHUB_ACTIONS=true`,
-`RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_TEMP`.
-
-An explicit `--home` or `STIM_HOME` keeps the selected home and normal cache
-configuration; `--build-cache` or `STIM_BUILD_CACHE` overrides the cache path.
-From `runCI` and `buildCI`, the matching options are `home` and `buildCacheDir`.
-Self-hosted runners and local runs retain their normal Stim home and capacity
-limits. For other disposable providers, set job-local paths explicitly.
-Persist only compatible cache entries, never runtime state or device ledgers.
-Independent Stim homes must not write one shared filesystem cache.
-
-`CI=true` does not disable ownership, locking, or cleanup checks. Capacity
-admission is already skipped when its limits are unset; there is no measured
-reason yet to bypass the remaining coordination.
-
-## GitHub Actions
-
-The repository includes a thin [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci).
-It maps workflow inputs to `stim ci`, runs `ci build` and then `ci run` in one step
-(iOS and Android always build; macOS only with `export`; web never), forwards
-cancellation, and writes the job summary. It installs the pinned `stim`
-once per runner and version and reuses it for both commands. Native tools and app dependencies must be installed first.
-The bundled TypeScript action uses GitHub's Node.js 24 runtime and supports
-macOS and Linux runners with Bash. Windows is refused; self-hosted runners
-need support for Node.js 24 JavaScript actions.
-
-For dogfood against a built Stim checkout:
-
-```yaml
-- uses: ./.github/actions/stim-ci
-  with:
-    cli-path: packages/stim-cli/bin/stim.mjs
-    platform: ios
-    project: apps/mobile
-    command: node ../../scripts/ci/app-smoke.mjs
-    home: ${{ runner.temp }}/stim-home
-    artifacts: stim-ci-results
-    timeout: '1800'
-    artifact-name: stim-ci-ios
-    retention-days: '7'
-```
-
-Once released, consumers can pin the action to a commit and supply `version`
-with an exact published `stim` version instead of `cli-path`. The
-command input is Bash source, like a workflow `run:` step. Pass untrusted
-event values through environment variables, not interpolation into `command`.
-
-Set `build-only: 'true'` to build iOS, Android or macOS without installing,
-launching, starting Metro or running a test command. macOS builds even without
-`export`; web and `command` are refused. The combined build/run flow remains the default.
-
-```yaml
-- uses: ./.github/actions/stim-ci
-  with:
-    cli-path: packages/stim-cli/bin/stim.mjs
-    platform: android
-    project: apps/mobile
-    build-only: 'true'
-    export: out/app.apk
-    artifacts: stim-ci-build-results
-```
-
-Build-only records the app for the same workspace/home, sets app/export/cache/exit
-outputs without device outputs, and uses the same diagnostic upload and summary
-path. `build.json` stays local because uploaded `result.json` includes the build facts.
-Exported bytes alone are not a supported cross-job import into a fresh home.
-Leave `command` out to only build, install and launch the app from clean state,
-then stop it; a later step can drive it with the outputs below.
-
-The `scheme`, `configuration` and `variant` inputs select the build and go to both
-commands; `arch`, `abi` and `eas-profile` go to `build` only. For example,
-`configuration: Release` builds and runs a Release simulator app.
-
-The action also sets step outputs from the results: `app-id`, `app-path`, `export-path`,
-`cache-hit`, `device-id`, `device-name` and `exit-code`. A later step can use the exported
-app (`export-path`), or boot the same iOS simulator again by `device-id`; the step shuts
-devices down when it ends, and an Android emulator does not outlive it.
-
-Nothing is collected or uploaded unless `artifacts` is set; `export` writes the built
-app to a path. With `artifacts`, use a new, empty directory for each invocation. Leave at least 70
-seconds for cleanup after the action timeout, plus time for artifact upload.
-With `artifacts`, the Action uploads result, test and diagnostic/compiler logs on
-success and failure. It exposes `artifact-id` and `artifact-url` after upload,
-while `result` and `artifacts` remain local paths for later steps in the job.
-A custom `artifact-name` must be unique across invocations in the workflow run.
-`upload-artifacts` applies only when `artifacts` is set; set it to `'false'` to opt out or use another transport, including
-on GitHub Enterprise Server where the toolkit service is unavailable. An
-upload failure preserves an earlier nonzero CI exit code, otherwise it fails
-the Action. Uploads exclude app binaries, caches, symlinks and arbitrary test
-files. Raw log copying depends on the selected package version.
-Hard provider termination can prevent cleanup and uploads from completing.
-
-## EAS Workflows
-
-The checked-in [Mobile workflow](https://github.com/appandflow/stim/blob/main/apps/mobile/.eas/workflows/stim-ci.yml)
-runs the same package in an EAS custom Android job, using a runner with nested
-virtualization and `eas/upload_artifact` for diagnostics. It is manually
-triggered. EAS Workflows usage counts toward the Expo plan's compute allowance.
-
-Provider configuration contains only environment preparation, invocation and
-artifact upload; lifecycle and test execution remain in `stim/ci`.
-
-## Stim app coverage
-
-The GitHub dogfood workflow builds once, then installs, launches, probes and stops Mobile on iOS
-and Android and Desktop on macOS. It then repeats with the job's warm build
-state. It runs nightly on `main`, on manual dispatches, and on relevant pull
-requests carrying the `e2e-smoke` label.
-
-These checks prove that the exact installed native app process stays alive
-for five seconds. They do not assert screen rendering, navigation, or a
-successful server connection. App unit tests and the broader native fixture
-tests remain separate.
-
-To try it with an agent:
-
-> Use stim ci to run this app's existing test command on a dedicated
-> checkout. Use the exact target in STIM_CI_RUN_RESULT, save result.json and
-> diagnostics, and verify cleanup on both success and a deliberate test failure.
-
-Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
-
-If Stim cannot verify that a Metro, tunnel, or maintenance child and its descendants stopped, or the server worker
-fails to confirm cleanup or is forced to exit, it retains ownership
-claims and refuses new work in that home. Verify that the named process tree has stopped, then remove the exact claims
-listed in the refusal. On Windows, a naturally exited Metro or tunnel leader does not prove its descendants stopped,
-so this can require manual reconciliation.
-An attached daemon killed unexpectedly, including during startup or forced shutdown, also leaves claims for manual
-reconciliation.
-When startup times out or is cancelled, Stim allows up to 10 seconds for the daemon to clean up before forcing it to
-exit.
+The [package README](https://github.com/appandflow/stim/tree/main/packages/ci)
+documents the result schema, artifacts and cache rules. `stim ci run --help`
+lists every flag, and `stim guide errors ci` lists the failure codes.
