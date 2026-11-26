@@ -443,11 +443,19 @@ export async function cloneIgnoredEntries({
   if (!guard.known) throw new Error("Could not list the destination's tracked files.");
   const nested = await nestedWorktreePaths(target, reads);
   const carryable = await listCarryableIgnoredEntries(root, patterns, reads);
+  const keptReason = (rel: string): string | null =>
+    guard.covers(rel)
+      ? 'tracked'
+      : overlapsNestedWorktree(rel, nested)
+        ? 'nested worktree'
+        : missingDestinationReason(target, rel);
   let destinationIgnored: Set<string> | undefined;
   if (carryable.length) {
     try {
       const paths = await Promise.all(
-        carryable.map(async (rel) => ((await lstat(join(root, rel))).isDirectory() ? `${rel}/` : rel)),
+        carryable
+          .filter((rel) => keptReason(rel) === null)
+          .map(async (rel) => ({ entry: rel, path: (await lstat(join(root, rel))).isDirectory() ? `${rel}/` : rel })),
       );
       const checkIgnored = async (entries: string[]): Promise<Set<string>> => {
         let output: string;
@@ -462,39 +470,30 @@ export async function cloneIgnoredEntries({
         }
         return new Set(output.split('\0').filter(Boolean));
       };
-      const ignored = await checkIgnored(paths);
-      const directories = await Promise.all(
-        paths
-          .filter((path) => path.endsWith('/') && !ignored.has(path))
-          .map(async (path) => ({
-            path,
-            children: (await readdir(join(root, path), { withFileTypes: true })).map(
-              (child) => `${path}${child.name}${child.isDirectory() ? '/' : ''}`,
-            ),
-          })),
-      );
-      const children = directories.flatMap((directory) => directory.children);
-      if (children.length) {
-        const ignoredChildren = await checkIgnored(children);
-        for (const directory of directories) {
-          if (directory.children.length && directory.children.every((child) => ignoredChildren.has(child))) {
-            ignored.add(directory.path);
+      const clean = new Set(paths.map(({ entry }) => entry));
+      let pending = paths;
+      for (let depth = 0; pending.length && depth <= 8; depth++) {
+        const ignored = await checkIgnored(pending.map(({ path }) => path));
+        const next: typeof pending = [];
+        for (const { entry, path } of pending) {
+          if (!clean.has(entry) || ignored.has(path)) continue;
+          if (!path.endsWith('/') || depth === 8) {
+            clean.delete(entry);
+            continue;
+          }
+          for (const child of await readdir(join(root, path), { withFileTypes: true })) {
+            next.push({ entry, path: `${path}${child.name}${child.isDirectory() ? '/' : ''}` });
           }
         }
+        pending = next.filter(({ entry }) => clean.has(entry));
       }
-      destinationIgnored = new Set([...ignored].map((rel) => rel.replace(/\/$/, '')));
+      destinationIgnored = clean;
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;
       operation.signal.throwIfAborted();
     }
   }
-  const keptReason = (rel: string): string | null =>
-    guard.covers(rel)
-      ? 'tracked'
-      : overlapsNestedWorktree(rel, nested)
-        ? 'nested worktree'
-        : missingDestinationReason(target, rel);
   const checks = new Map<string, Promise<string | null>>();
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
