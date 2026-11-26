@@ -406,6 +406,12 @@ stim settings set server.devicesPaused true`} />
 - **Unreachable:** run `stim doctor`, or open the machine in Desktop, to see where
   the connection fails. If a worker refuses tailnet connections, run
   `stim serve --tailnet` on it once so it always listens on the tailnet.
+- **`outdated`:** `stim doctor` reports a worker whose stim-server predates
+  protocol 2. Run `stim remote update <machine>` here, or `stim engine update`
+  there, then `stim remote add <machine>` here. A stock 1.40 worker cannot take
+  that update; follow
+  [Services and remote machines](./migrate-to-2.md#6-services-and-remote-machines)
+  on the worker itself.
 - **Slow or skipped:** `stim logs --source placement` shows why each machine was
   picked or skipped.
 - **The worker itself:** run `stim doctor` and `stim service status` there.
