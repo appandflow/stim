@@ -445,7 +445,10 @@ export async function cloneIgnoredEntries({
   operation: StimContext;
   /** For an entry that needs a check before it is carried, a promise of the reason to leave it out, or of null to carry it. */
   withhold?: (rel: string) => Promise<string | null> | null;
-  /** `target` was cloned whole from `root`, so an entry already there is the carried copy and is not copied again. */
+  /**
+   * `target` was cloned whole from `root`, so an entry already there is the carried copy and is not copied again,
+   * unless `withhold` checks it: that copy was made outside the claim the check holds, and is replaced under it.
+   */
   precloned?: boolean;
 }): Promise<CloneResult> {
   const options = {
@@ -508,7 +511,9 @@ export async function cloneIgnoredEntries({
           withheld.push({ file: rel, reason: withholding });
           continue;
         }
-        if (!present(reason)) {
+        const reused = present(reason) && !checks.has(rel);
+        if (present(reason) && !reused) await removeTemporaryEntryAsync(to, operation.signal);
+        if (!reused) {
           await mkdir(dirname(to), { recursive: true });
           copying = true;
           const copiedWith = async (file: string, args: string[]): Promise<boolean> => {

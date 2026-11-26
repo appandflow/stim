@@ -117,6 +117,7 @@ import {
   discardWorktree,
   endsOperation,
   pruneUncarried,
+  runPostCheckout,
 } from '../workspace/worktree-add.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
@@ -716,6 +717,7 @@ export async function addWorktreeTarget(opts: {
     const source = await cloneSource(root, path, operation);
     let slow = 'reason' in source ? source.reason : null;
     let refresh: Promise<unknown> | null = null;
+    let head = '';
     if (!('reason' in source)) {
       const branches = new Set(
         (
@@ -727,7 +729,6 @@ export async function addWorktreeTarget(opts: {
       );
       await add('--no-checkout');
       let gitDir = '';
-      let head = '';
       let ref = '';
       try {
         [gitDir = '', head = '', ref = ''] = (
@@ -735,7 +736,7 @@ export async function addWorktreeTarget(opts: {
         ).split('\n');
         await withWarmClaim(
           { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
-          () => cloneCheckout({ root, target: realpathSync(path), helper: source.helper, head, operation }),
+          () => cloneCheckout({ root, target: realpathSync(path), helper: source.helper, operation }),
         );
         // @ref LLP 0029#the-index-is-refreshed-before-the-command-returns -- a refresh left running holds index.lock
         refresh = gitAsync(path, ['update-index', '-q', '--refresh'], git).catch(() => null);
@@ -765,26 +766,32 @@ export async function addWorktreeTarget(opts: {
     );
     const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
     let carried: string[] = [];
+    let hook: string | null = null;
+    let exitCode: 0 | 1 = 1;
     try {
-      const { exitCode } = await warmWorktreeTarget({
+      ({ exitCode } = await warmWorktreeTarget({
         cwd: existsSync(inside) ? inside : target,
         operation,
         precloned: slow === null,
         carried: (copied) => {
           carried = copied;
         },
-      });
-      return { exitCode, path: target };
+      }));
     } finally {
       await refresh;
-      if (slow === null)
+      if (slow === null) {
         await pruneUncarried(
           target,
           carried,
           operation,
           operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
         );
+        // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
+        if (!operation.signal.aborted) hook = await runPostCheckout(target, head, operation);
+        if (hook !== null) out(chalk.red(phaseLine('worktree', `the post-checkout hook failed: ${hook}`)));
+      }
     }
+    return { exitCode: hook === null ? exitCode : 1, path: target };
   } finally {
     state.draining = wasDraining;
   }

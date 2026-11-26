@@ -2944,7 +2944,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   tracked files that differ from the commit, so the worktree shares its disk
   blocks with the source checkout until a file changes. The source checkout's
   uncommitted edits, staged changes and untracked files do not come along,
-  submodule folders are empty as git leaves them, and \`post-checkout\` runs.
+  submodule folders are empty as git leaves them, and \`post-checkout\` runs
+  last; a failing hook exits 1 and leaves the worktree.
   Anywhere else, or when cloning fails, git creates the worktree and the warm
   copies into it; a failed clone first removes the worktree and the branch it
   made. Either way the files are the same. The worktree's ignored files are

@@ -68,13 +68,11 @@ export async function cloneCheckout({
   root,
   target,
   helper,
-  head,
   operation,
 }: {
   root: string;
   target: string;
   helper: string;
-  head: string;
   operation: StimContext;
 }): Promise<void> {
   const read = gitOptions(operation);
@@ -111,12 +109,24 @@ export async function cloneCheckout({
   }
   // git-clean(1): only a second -f removes an untracked directory that holds a git repository.
   await gitAsync(target, ['clean', '-q', '-ffd'], write);
-  // git-worktree(1) runs post-checkout after a checkout, with the null object as the previous HEAD; --no-checkout
-  // skipped it.
-  await gitAsync(
+}
+
+/**
+ * Runs `post-checkout` in the cloned worktree `target`, as `git worktree add` does after its checkout, and returns
+ * the failure of a hook that fails.
+ */
+export async function runPostCheckout(target: string, head: string, operation: StimContext): Promise<string | null> {
+  // git-worktree(1) runs post-checkout with the null object as the previous HEAD; --no-checkout skipped it.
+  return gitAsync(
     target,
     ['hook', 'run', '--ignore-missing', 'post-checkout', '--', '0'.repeat(head.length), head, '1'],
-    write,
+    gitOptions(operation, true),
+  ).then(
+    () => null,
+    (error: unknown) => {
+      if (endsOperation(error, operation)) throw error;
+      return error instanceof Error ? error.message : String(error);
+    },
   );
 }
 

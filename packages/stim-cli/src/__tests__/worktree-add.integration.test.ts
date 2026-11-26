@@ -18,6 +18,8 @@ import { createStim } from '../api.ts';
 import { runCli } from '../cli/define-op.ts';
 import { addOp, removeOp, warmOp } from '../commands/worktree.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { processContext } from '../cli-operation.ts';
+import { cloneIgnoredEntries } from '../workspace/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
 
 const clones = process.platform === 'darwin';
@@ -263,6 +265,23 @@ test.skipIf(process.platform === 'win32')(
 
     const first = git(root, 'rev-parse', 'HEAD~1');
     expect(readFileSync(log, 'utf-8')).toBe(`${join(base, 'added')} ${'0'.repeat(first.length)} ${first} 1\n`);
+
+    write(root, '.worktreeexclude', 'cache\n');
+    write(
+      root,
+      '.git/hooks/post-checkout',
+      `#!/bin/sh\necho hook > .env\nmkdir -p cache && echo hook > cache/made-by-hook\necho again >> '${log}'\nexit 1\n`,
+    );
+    const failing = await run(addOp, root, ['-b', 'failing', '../failing']);
+    expect(failing.code).toBe(1);
+    expect(failing.stderr).toContain('the post-checkout hook failed');
+    expect(readFileSync(log, 'utf-8').match(/again/g)).toHaveLength(1);
+    expect(git(join(base, 'failing'), 'status', '--porcelain')).toBe('');
+    expect(tree(join(base, 'failing'))).toMatchObject({
+      '.env': 'hook\n',
+      'cache/made-by-hook': 'hook\n',
+      'node_modules/pkg/index.js': 'package\n',
+    });
   },
   60_000,
 );
@@ -292,6 +311,27 @@ test('a warm that refuses leaves the new worktree with no ignored files, as git 
   expect(added.code).toBe(1);
   expect(git(join(base, 'added'), 'status', '--porcelain', '--ignored')).toBe('');
   expect(readFileSync(join(base, 'added/src/kept.txt'), 'utf-8')).toBe('second\n');
+}, 60_000);
+
+test('an entry the warm checks before carrying is copied again under that check', async () => {
+  const path = join(base, 'added');
+  git(root, 'worktree', 'add', '-q', '-b', 'added', path);
+  write(root, 'build/output.bin', 'what the check approved\n');
+  write(path, 'build/output.bin', 'an earlier clone\n');
+  write(path, 'node_modules/pkg/index.js', 'an earlier clone, not checked\n');
+
+  const result = await cloneIgnoredEntries({
+    root,
+    target: path,
+    patterns: [],
+    operation: processContext(path),
+    precloned: true,
+    withhold: (rel) => (rel === 'build' ? Promise.resolve(null) : null),
+  });
+
+  expect(result.copied.toSorted()).toEqual(['.env', 'build', 'node_modules']);
+  expect(readFileSync(join(path, 'build/output.bin'), 'utf-8')).toBe('what the check approved\n');
+  expect(readFileSync(join(path, 'node_modules/pkg/index.js'), 'utf-8')).toBe('an earlier clone, not checked\n');
 }, 60_000);
 
 test('git refusing the worktree fails the command without a second attempt', async () => {

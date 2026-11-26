@@ -38,11 +38,13 @@ helper available, the command does not check files out:
    leaves it.
 5. `git clean -ffd` removes what the target commit neither tracks nor ignores,
    including a nested repository.
-6. `post-checkout` runs with the arguments `git worktree add` gives it, since
-   `--no-checkout` skipped it.
-7. The warm runs with the entries already in place counted as carried.
-8. Every ignored entry the warm did not carry is removed.
-9. `git update-index --refresh` records the cloned files' stat data.
+6. The warm runs with the entries already in place counted as carried.
+7. Every ignored entry the warm did not carry is removed.
+8. `git update-index --refresh` records the cloned files' stat data.
+9. `post-checkout` runs with the arguments `git worktree add` gives it, since
+   `--no-checkout` skipped it. It runs last so the ignored files it writes
+   stay. A hook that fails is reported, the command exits 1 and the worktree
+   stays, as with `git worktree add`.
 
 Reason: a checkout writes every tracked file again, and the warm then clones
 the dependency folders beside them. A clone shares the source's disk blocks, so
@@ -65,6 +67,12 @@ carried ones is removed. This runs whether the warm succeeds, refuses or is
 interrupted, so a refused warm leaves the worktree as `git worktree add` alone
 does.
 
+An entry the warm checks under a claim before carrying it, such as an Expo
+`ios/` whose prebuild record it compares while holding the source's native-run
+claim, is deleted and copied again under that claim. The first clone ran
+outside it, so a prebuild in the source checkout could have been rewriting the
+folder.
+
 A submodule folder is emptied by removing files, and no git command runs inside
 it. Submodules are supported, not refused.
 
@@ -73,7 +81,7 @@ it. Submodules are supported, not refused.
 Git creates the worktree and the normal warm fills it when the platform is not
 macOS, the new path is on another volume, the helper cannot be compiled, the
 source index marks a file assume-unchanged or skip-worktree, or any step from 2
-to 6 fails. `git reset --hard` keeps both index flags, so a copied index would
+to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
 After a failed step the command removes the worktree and the branch that call
 created, never a branch that existed before, and runs `git worktree add` again
