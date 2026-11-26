@@ -1,6 +1,6 @@
 {
   "name": "stim",
-  "version": "2.0.0-rc.6",
+  "version": "2.0.0-rc.7",
   "description": "Stim: run React Native, Expo and native apps for coding agents, in parallel, on every device and machine you have",
   "keywords": [
     "agent",
