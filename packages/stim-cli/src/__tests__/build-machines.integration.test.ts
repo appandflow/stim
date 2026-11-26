@@ -339,6 +339,7 @@ describe('inspectBuildMachines', () => {
         state: 'outdated',
         diagnosis: expect.objectContaining({
           message: `peer-too-old: mini runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update mini, or on mini run: npm i -g stim@9.9.9 && stim service install`,
+          remedy: expect.stringMatching(/^Run `stim remote update mini`/),
         }),
       }),
     ]);

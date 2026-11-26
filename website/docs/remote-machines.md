@@ -452,7 +452,8 @@ cannot authenticate this machine, and `stim remote update` cannot reach it.
 `stim doctor` reports it as `outdated` and names the fix on the worker itself:
 install the Stim this machine runs and reinstall its service, as
 [Services and remote machines](./migrate-to-2.md#6-services-and-remote-machines)
-describes, then run `stim remote add <machine>` here. A worker that speaks
+describes, then approve this machine as doctor shows, or run
+`stim remote add <machine>` here. A worker that speaks
 protocol 2 on an older peer version is `outdated` too; for it doctor names
 `stim remote update <machine>` to run here.
 
