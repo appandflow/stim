@@ -273,6 +273,25 @@ test.each([
   }
 });
 
+test('the claim records the report mode a leftover maintenance.mode holds stimd at', async () => {
+  vi.stubEnv('STIM_DAEMON', undefined);
+  vi.stubEnv('CI', undefined);
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ version: 2, projects: {}, repos: {}, maintenance: { mode: 'report' } }),
+  );
+  const before = new Set(process.listeners('SIGTERM'));
+  const run = runStimd({ tickMs: 60_000, mode: 'on' });
+  try {
+    await listening();
+    expect(readClaimSet(stimdClaimRoot()).live[0]?.details.mode).toBe('report');
+    expect(daemonStatus({})).toMatchObject({ mode: 'report' });
+  } finally {
+    process.listeners('SIGTERM').find((listener) => !before.has(listener))?.('SIGTERM');
+    await run;
+  }
+});
+
 test.each([false, true])('watch discovery cleanup is supervised during shutdown=%s', async (ending) => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   const before = new Set(process.listeners('SIGTERM'));

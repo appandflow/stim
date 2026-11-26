@@ -30,7 +30,7 @@ const DAY_MS = 86_400_000;
 
 /**
  * The daemon's mode, whether it runs, and its last tick. A running daemon reports the mode it runs in, from its last
- * tick or else its claim, since it keeps the mode the command that started it resolved.
+ * tick or else the mode its claim recorded at start.
  */
 export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus {
   const leftover = leftoverDaemonCap(env);
@@ -147,7 +147,11 @@ function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function daemonLine(status: DaemonStatus, now: number = Date.now()): string {
+export function daemonLine(
+  status: DaemonStatus,
+  now: number = Date.now(),
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
   // compat C32 until 2.1.0
   if (status.older)
@@ -160,7 +164,7 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
     : 'no tick yet';
   const resolves = status.setting ? `; daemon.mode resolves to ${status.setting} here` : '';
   const leftover =
-    status.mode === 'report' && leftoverDaemonCap() ? '; a leftover maintenance.mode holds it at report' : '';
+    status.mode === 'report' && leftoverDaemonCap(env) ? '; a leftover maintenance.mode holds it at report' : '';
   const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode}${leftover}${resolves})`;
   const pressure = status.pressure
     ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
