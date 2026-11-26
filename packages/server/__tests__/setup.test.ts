@@ -327,7 +327,7 @@ test('a setup claim blocks another run and names its exact removal command', asy
     expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
     expect(f.actions).toEqual([]);
     expect(f.stderr.join('\n')).toContain('setup.claims');
-    expect(f.stderr.join('\n')).toContain('rm -f');
+    expect(f.stderr.join('\n')).toContain(process.platform === 'win32' ? 'Remove-Item -Force -LiteralPath' : 'rm -f');
     expect(readSetupJournal(options.journal)).toBeNull();
   } finally {
     release();

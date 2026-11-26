@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { claimFilesRemoveCommand } from '../ownership-claim.ts';
 import { configDir } from '@stim-cli/core';
 import {
   archiveDir,
@@ -384,9 +385,7 @@ test('the records plan reports an unresolved build slot as blocked, naming its o
   expect(blocked[0]).toMatch(/^build slot 0 is unresolved: /);
   expect(blocked[0]).toContain(`its owner pid ${owner.pid} (claimed `);
   expect(blocked[0]).toContain(`is no longer running; the claim is at ${claim}.`);
-  expect(
-    blocked[0]?.endsWith(`If nothing is using it, run: rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`),
-  ).toBe(true);
+  expect(blocked[0]?.endsWith(`If nothing is using it, run: ${claimFilesRemoveCommand(claim)}`)).toBe(true);
 });
 
 test('a pass that stimd aborts while it lists devices plans no device action and ends at once', async () => {

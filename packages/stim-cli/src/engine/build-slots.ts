@@ -11,6 +11,7 @@ import {
   claimFilesRemoveCommand,
   claimProblemText,
   claimRemoveCommand,
+  joinRemoveCommands,
   readClaimSet,
   type ClaimProblem,
 } from '../ownership-claim.ts';
@@ -134,7 +135,7 @@ export function unresolvedBuildSlotClaims(
     ];
     const unattributed =
       shared && engineClaims.length
-        ? `; it also holds the engine claims ${engineClaims.map(({ path }) => path).join(', ')}, which name no build; once every build of owner pid ${problem.owner?.pid} has stopped, run: ${engineClaims.map(({ path }) => claimFilesRemoveCommand(path)).join(' && ')}`
+        ? `; it also holds the engine claims ${engineClaims.map(({ path }) => path).join(', ')}, which name no build; once every build of owner pid ${problem.owner?.pid} has stopped, run: ${joinRemoveCommands(engineClaims.map(({ path }) => claimFilesRemoveCommand(path)))}`
         : '';
     return [
       {
@@ -142,10 +143,10 @@ export function unresolvedBuildSlotClaims(
         unresolved: `the offloaded build ${job} of ${repo} for ${client}: ${claimProblemText(problem)}${
           others.length ? `; the same owner holds the ${others.join(' and the ')}` : ''
         }${unattributed}`,
-        removeCommand: [
+        removeCommand: joinRemoveCommands([
           claimRemoveCommand(join(area, 'fingerprint-work', job)),
           ...[...repoClaims, problem, ...(shared ? [] : engineClaims)].map(({ path }) => claimFilesRemoveCommand(path)),
-        ].join(' && '),
+        ]),
       },
     ];
   });

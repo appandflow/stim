@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -164,21 +165,32 @@ export class ClaimUnavailableError extends Error {
   }
 }
 
-/**
- * The command that clears one surveyed claim: targeted at the claim's own file when the path names one,
- * and quoted, because this text is printed for a human to copy into a shell and a path with a space in
- * it would otherwise name several targets.
- */
+const powershellPath = (path: string): string => `'${path.replaceAll(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
+
+/** A shell-quoted removal command for one claim or child file, or recursively for a directory; PowerShell on Windows. */
 export function claimRemoveCommand(path: string): string {
   const onlyThisFile = path.endsWith(CLAIM_SUFFIX) || path.endsWith(CHILD_SUFFIX);
+  if (process.platform === 'win32') {
+    return `Remove-Item ${onlyThisFile ? '' : '-Recurse '}-Force -LiteralPath ${powershellPath(path)}`;
+  }
   return `rm ${onlyThisFile ? '-f' : '-rf'} ${quotedPath(path)}`;
 }
 
-/** `claimRemoveCommand` that, for a claim file, also names its child file. */
+/** `claimRemoveCommand` that, for a claim file, also names its child file (on Windows, only when it exists). */
 export function claimFilesRemoveCommand(path: string): string {
+  if (process.platform === 'win32') {
+    return path.endsWith(CLAIM_SUFFIX) && existsSync(childPath(path))
+      ? `Remove-Item -Force -LiteralPath ${powershellPath(path)}, ${powershellPath(childPath(path))}`
+      : claimRemoveCommand(path);
+  }
   return path.endsWith(CLAIM_SUFFIX)
     ? `rm -f ${quotedPath(path)} ${quotedPath(childPath(path))}`
     : claimRemoveCommand(path);
+}
+
+/** Removal commands run one after another: `&&` in a POSIX shell, `;` in PowerShell, where `Remove-Item` fails on an absent path. */
+export function joinRemoveCommands(commands: readonly string[]): string {
+  return commands.join(process.platform === 'win32' ? '; ' : ' && ');
 }
 
 /** An unresolved claim as one clause: why, who held it (pid, claim time and whether it still runs), and where it is. */

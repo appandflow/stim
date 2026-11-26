@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claimRemoveCommand } from '../ownership-claim.ts';
+import { claimFilesRemoveCommand, claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import {
@@ -161,7 +161,7 @@ test('status names an unresolved test slot with its claim, owner and the command
     { details: { index: 0 } },
   );
   const usage = testSlotUsage(1);
-  const removeCommand = `rm -f '${path}' '${path.replace(/\.claim$/, '.child')}'`;
+  const removeCommand = claimFilesRemoveCommand(path);
   expect(usage.holders).toMatchObject([
     { slot: 0, unresolved: true, claim: { unresolved: expect.stringContaining('its owner pid 4242'), removeCommand } },
   ]);
