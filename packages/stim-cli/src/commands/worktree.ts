@@ -774,11 +774,16 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
 }
 
 function powershellQuoted(path: string): string {
-  return `'${path.replaceAll("'", "''")}'`;
+  return `'${path.replaceAll(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
 }
 
 function quoteWorktree(path: string): string {
-  return /^[\w@%+=:,./-]+$/.test(path) || path === '<worktree>' ? path : `'${path.replaceAll("'", `'\\''`)}'`;
+  if (path === '<worktree>') return path;
+  if (process.platform === 'win32') {
+    if (/^[\w./\\:-]+$/.test(path)) return path;
+    return /[$`"\u201c\u201d\u201e]/.test(path) ? powershellQuoted(path) : `"${path}"`;
+  }
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", `'\\''`)}'`;
 }
 
 export function removalRemedy(
@@ -1412,7 +1417,7 @@ async function printRemovalRefusal(
   for (const blocker of blockers) output.error(chalk.red(`  - ${blocker}`));
   if (inspection.timedOut) {
     output.error(chalk.dim('Git did not answer in time, so Stim cannot tell whether the worktree holds unsaved work.'));
-    output.error(chalk.dim(`Retry once git responds; check with: git -C ${path} status`));
+    output.error(chalk.dim(`Retry once git responds; check with: git -C ${quoteWorktree(path)} status`));
     output.fail();
     return;
   }
@@ -1704,7 +1709,7 @@ async function removeOrRefuse(
         if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
           throw error;
         output.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
-        output.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
+        output.error(chalk.dim(`Retry with: stim worktree remove ${quoteWorktree(path)}`));
         output.fail();
       }
       return;
@@ -1804,7 +1809,9 @@ async function removeOrRefuse(
   path = entry.path;
   if (entry.locked) {
     output.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
-    output.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
+    output.error(
+      chalk.dim(`Unlock it, then retry: git -C ${quoteWorktree(source.path)} worktree unlock ${quoteWorktree(path)}`),
+    );
     output.fail();
     return;
   }
@@ -2087,7 +2094,7 @@ async function removeOrRefuse(
                     phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
                   ),
                 );
-                output.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
+                output.error(chalk.dim(`  Retry: stim worktree remove ${quoteWorktree(path)}`));
                 output.fail();
                 finish();
                 return;
@@ -2097,7 +2104,9 @@ async function removeOrRefuse(
                   chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)),
                 );
                 output.error(
-                  chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
+                  chalk.dim(
+                    `  Switch that worktree to another branch, then retry: stim worktree remove ${quoteWorktree(path)}`,
+                  ),
                 );
                 output.fail();
                 finish();
@@ -2115,7 +2124,11 @@ async function removeOrRefuse(
                 output.error(
                   chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
                 );
-                output.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
+                output.error(
+                  chalk.dim(
+                    `  Retry with: git -C ${quoteWorktree(branchDeleteCwd)} branch -D -- ${quoteWorktree(branch)}`,
+                  ),
+                );
                 output.fail();
                 finish();
                 return;
