@@ -323,9 +323,9 @@ stim worktree add -b <branch> <path> [<commit-ish>]
 stim worktree add <path> [<commit-ish>]
 ```
 
-Creates a linked worktree and warms it. The arguments are those of
-`git worktree add`: the path, an optional `-b <branch>` to create, and the
-commit to start at. Stim runs `git worktree add` with them from the current
+Creates a linked worktree and warms it. It takes three arguments of
+`git worktree add` and no other option of it: the path, an optional
+`-b <branch>` to create, and the commit to start at. Stim runs `git worktree add` with them from the current
 directory, so the result is an ordinary Git worktree.
 
 On macOS, when the new path is on the same APFS volume as the source checkout,

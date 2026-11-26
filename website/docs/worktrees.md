@@ -29,7 +29,7 @@ code={`stim worktree add -b feature-x ../feature-x HEAD
 cd ../feature-x`}
 />
 
-`stim worktree add` takes the arguments of `git worktree add` and creates an
+`stim worktree add` takes the path, `-b <branch>` and commit of `git worktree add` and creates an
 ordinary Git worktree that is already warm. On macOS, with the new path on the
 source checkout's APFS volume, it clones the source checkout, so the new
 worktree takes almost no disk space until its files change. It always starts

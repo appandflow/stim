@@ -9,8 +9,9 @@
 ## One command creates a warmed worktree
 
 `stim worktree add [-b <branch>] <path> [<commit-ish>]` creates a linked
-worktree and warms it. It runs `git worktree add` with the same arguments from
-the current directory, so a relative path, a default `HEAD` and Git's branch
+worktree and warms it. It takes the path, `-b <branch>` and commit of
+`git worktree add`, no other option of it, and runs `git worktree add` with
+them from the current directory, so a relative path, a default `HEAD` and Git's branch
 guessing behave as they do in Git, and the result is an ordinary Git worktree.
 The source checkout is the one `stim worktree warm` copies from. `worktree warm`
 stays for a worktree something else created. The path is required: Stim has no
@@ -38,13 +39,14 @@ helper available, the command does not check files out:
    leaves it.
 5. `git clean -ffd` removes what the target commit neither tracks nor ignores,
    including a nested repository.
-6. The warm runs with the entries already in place counted as carried.
-7. Every ignored entry the warm did not carry is removed.
-8. `git update-index --refresh` records the cloned files' stat data.
+6. `git update-index --refresh` starts, to record the cloned files' stat data.
+7. The warm runs with the entries already in place counted as carried.
+8. Every ignored entry the warm did not carry is removed.
 9. `post-checkout` runs with the arguments `git worktree add` gives it, since
    `--no-checkout` skipped it. It runs last so the ignored files it writes
    stay. A hook that fails is reported, the command exits 1 and the worktree
-   stays, as with `git worktree add`.
+   stays, as with `git worktree add`. On the plain path git runs the hook, and
+   a worktree git created before failing is warmed the same way.
 
 Reason: a checkout writes every tracked file again, and the warm then clones
 the dependency folders beside them. A clone shares the source's disk blocks, so
@@ -66,6 +68,11 @@ a recorded prebuild, an Exact `target/`. Then every ignored entry outside the
 carried ones is removed. This runs whether the warm succeeds, refuses or is
 interrupted, so a refused warm leaves the worktree as `git worktree add` alone
 does.
+
+The command holds one shared warm claim on the source checkout from the clone
+until the warm has checked what it carried, so a `stim worktree warm
+--refresh` cannot fast-forward and reinstall the source between the two and
+have the warm compare an older clone with the newer source.
 
 An entry the warm checks under a claim before carrying it, such as an Expo
 `ios/` whose prebuild record it compares while holding the source's native-run

@@ -66,7 +66,7 @@ The client has `build`, `run`, `start`, `reload`, `stop`, `plan`,
 
 - `build()` only compiles, or restores from the cache. It never boots a device.
 - `addWorktree({ path, branch, commitish })` creates a linked worktree with
-  the arguments of `git worktree add` and warms it, like `stim worktree add`.
+  the path, branch and commit of `git worktree add` and warms it, like `stim worktree add`.
   It returns the new worktree's `path`.
 - `removeWorktree({ force: true })` discards uncommitted work, like
   `stim worktree remove --force`.

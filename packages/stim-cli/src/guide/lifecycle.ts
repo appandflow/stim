@@ -62,8 +62,8 @@ branch so every worktree warmed from it starts current. Here the source checkout
 is infrastructure, not a workspace, and every rule below about its fitness as
 a seed belongs to this workflow.
 
-  # 1. Create a linked worktree, already warmed. The arguments are git
-  #    worktree add's: a branch to create, the path, and the commit to start at.
+  # 1. Create a linked worktree, already warmed, with git worktree add's
+  #    branch to create, path, and commit to start at; no other option of it.
   stim worktree add -b app/412 ../app-412 HEAD
   cd ../app-412
 

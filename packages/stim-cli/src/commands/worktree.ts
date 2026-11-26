@@ -392,7 +392,10 @@ export async function warmWorktreeTarget(opts: {
   refresh?: boolean;
   operation: StimContext;
   beforeWarm?: (workspace: string) => void;
-  /** `stim worktree add` cloned the worktree whole from the source checkout; see `cloneIgnoredEntries`. */
+  /**
+   * `stim worktree add` cloned the worktree whole from the source checkout, and still holds the source's warm claim;
+   * see `cloneIgnoredEntries`.
+   */
   precloned?: boolean;
   carried?: (copied: string[]) => void;
 }): Promise<{ exitCode: 0 | 1 }> {
@@ -644,16 +647,18 @@ export async function warmWorktreeTarget(opts: {
       }
       if (exitCode) return { exitCode };
     }
-    await withWarmClaim(
-      {
-        repositoryRoot: root,
-        phase: 'copy',
-        out,
-        signal: operation.signal,
-        declareSpawnsFor: operation,
-      },
-      (hold) => copy(hold.wait),
-    );
+    if (opts.precloned) await copy(null);
+    else
+      await withWarmClaim(
+        {
+          repositoryRoot: root,
+          phase: 'copy',
+          out,
+          signal: operation.signal,
+          declareSpawnsFor: operation,
+        },
+        (hold) => copy(hold.wait),
+      );
   } catch (error) {
     exitCode = 1;
     throw error;
@@ -666,6 +671,10 @@ export async function warmWorktreeTarget(opts: {
 }
 
 const CLEANUP_TIMEOUT_MS = 30_000;
+
+function lastLine(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).trim().split('\n').at(-1) ?? '';
+}
 
 /**
  * `git worktree add` from `cwd` with the same arguments, then the warm. Where the source checkout can be cloned, git
@@ -710,14 +719,54 @@ export async function addWorktreeTarget(opts: {
       { ...git, signal: operation.signal },
     );
   const bounded = () => ({ ...git, signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS) });
+  const warm = async (cloned: { head: string } | null, slow: string | null, failed: string | null) => {
+    const target = realpathSync(path);
+    out(
+      chalk.dim(
+        phaseLine(
+          'worktree',
+          cloned
+            ? `created ${target} as a clone of ${root}`
+            : `created ${target} with git worktree add, because ${slow}`,
+        ),
+      ),
+    );
+    // @ref LLP 0029#the-index-is-refreshed-before-the-command-returns -- a refresh left running holds index.lock
+    const refresh = cloned ? gitAsync(target, ['update-index', '-q', '--refresh'], git).catch(() => null) : null;
+    const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
+    let carried: string[] = [];
+    let exitCode: 0 | 1 = 1;
+    try {
+      ({ exitCode } = await warmWorktreeTarget({
+        cwd: existsSync(inside) ? inside : target,
+        operation,
+        precloned: cloned !== null,
+        carried: (copied) => {
+          carried = copied;
+        },
+      }));
+    } finally {
+      await refresh;
+      if (cloned) {
+        await pruneUncarried(
+          target,
+          carried,
+          operation,
+          operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
+        );
+        // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
+        if (!operation.signal.aborted) failed = await runPostCheckout(target, cloned.head, operation);
+      }
+      if (failed !== null) out(chalk.red(phaseLine('worktree', `post-checkout failed: ${failed}`)));
+    }
+    return { exitCode: failed === null ? exitCode : 1, path: target };
+  };
   const state = operationState(operation);
   const wasDraining = state.draining;
   state.draining = true;
   try {
     const source = await cloneSource(root, path, operation);
     let slow = 'reason' in source ? source.reason : null;
-    let refresh: Promise<unknown> | null = null;
-    let head = '';
     if (!('reason' in source)) {
       const branches = new Set(
         (
@@ -728,70 +777,49 @@ export async function addWorktreeTarget(opts: {
         ).split('\n'),
       );
       await add('--no-checkout');
-      let gitDir = '';
-      let ref = '';
-      try {
-        [gitDir = '', head = '', ref = ''] = (
-          await gitAsync(path, ['rev-parse', '--absolute-git-dir', 'HEAD', '--symbolic-full-name', 'HEAD'], bounded())
-        ).split('\n');
-        await withWarmClaim(
-          { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
-          () => cloneCheckout({ root, target: realpathSync(path), helper: source.helper, operation }),
-        );
-        // @ref LLP 0029#the-index-is-refreshed-before-the-command-returns -- a refresh left running holds index.lock
-        refresh = gitAsync(path, ['update-index', '-q', '--refresh'], git).catch(() => null);
-      } catch (error) {
-        await discardWorktree({
-          cwd: opts.cwd,
-          target: path,
-          gitDir,
-          created: ref.startsWith('refs/heads/') && !branches.has(ref) ? { ref, sha: head } : null,
-          git: bounded,
-        });
-        if (endsOperation(error, operation)) throw error;
-        slow = `cloning failed (${(error instanceof Error ? error.message : String(error)).split('\n')[0]})`;
-      }
-    }
-    if (slow !== null) await add();
-    const target = realpathSync(path);
-    out(
-      chalk.dim(
-        phaseLine(
-          'worktree',
-          slow === null
-            ? `created ${target} as a clone of ${root}`
-            : `created ${target} with git worktree add, because ${slow}`,
-        ),
-      ),
-    );
-    const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
-    let carried: string[] = [];
-    let hook: string | null = null;
-    let exitCode: 0 | 1 = 1;
-    try {
-      ({ exitCode } = await warmWorktreeTarget({
-        cwd: existsSync(inside) ? inside : target,
-        operation,
-        precloned: slow === null,
-        carried: (copied) => {
-          carried = copied;
+      // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- one source claim from the clone to the warm's checks
+      const added = await withWarmClaim(
+        { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
+        async () => {
+          let gitDir = '';
+          let head = '';
+          let ref = '';
+          try {
+            [gitDir = '', head = '', ref = ''] = (
+              await gitAsync(
+                path,
+                ['rev-parse', '--absolute-git-dir', 'HEAD', '--symbolic-full-name', 'HEAD'],
+                bounded(),
+              )
+            ).split('\n');
+            await cloneCheckout({ root, target: realpathSync(path), helper: source.helper, operation });
+          } catch (error) {
+            await discardWorktree({
+              cwd: opts.cwd,
+              target: path,
+              gitDir,
+              created: ref.startsWith('refs/heads/') && !branches.has(ref) ? { ref, sha: head } : null,
+              git: bounded,
+            });
+            if (endsOperation(error, operation)) throw error;
+            slow = `cloning failed (${lastLine(error)})`;
+            return null;
+          }
+          return warm({ head }, null, null);
         },
-      }));
-    } finally {
-      await refresh;
-      if (slow === null) {
-        await pruneUncarried(
-          target,
-          carried,
-          operation,
-          operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
-        );
-        // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
-        if (!operation.signal.aborted) hook = await runPostCheckout(target, head, operation);
-        if (hook !== null) out(chalk.red(phaseLine('worktree', `the post-checkout hook failed: ${hook}`)));
-      }
+      );
+      if (added) return added;
     }
-    return { exitCode: hook === null ? exitCode : 1, path: target };
+    const existed = existsSync(path);
+    const failed = await add().then(
+      () => null,
+      (error: unknown) => {
+        // git-worktree(1) keeps the worktree it created when post-checkout fails, and exits with the hook's status.
+        if (endsOperation(error, operation) || existed || !existsSync(join(path, '.git'))) throw error;
+        return lastLine(error);
+      },
+    );
+    return await warm(null, slow, failed);
   } finally {
     state.draining = wasDraining;
   }

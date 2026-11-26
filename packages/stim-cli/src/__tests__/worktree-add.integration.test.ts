@@ -19,6 +19,8 @@ import { runCli } from '../cli/define-op.ts';
 import { addOp, removeOp, warmOp } from '../commands/worktree.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { processContext } from '../cli-operation.ts';
+import { warmClaimPath } from '../engine/warm-claim.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { cloneIgnoredEntries } from '../workspace/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
 
@@ -274,7 +276,7 @@ test.skipIf(process.platform === 'win32')(
     );
     const failing = await run(addOp, root, ['-b', 'failing', '../failing']);
     expect(failing.code).toBe(1);
-    expect(failing.stderr).toContain('the post-checkout hook failed');
+    expect(failing.stderr).toContain('post-checkout failed');
     expect(readFileSync(log, 'utf-8').match(/again/g)).toHaveLength(1);
     expect(git(join(base, 'failing'), 'status', '--porcelain')).toBe('');
     expect(tree(join(base, 'failing'))).toMatchObject({
@@ -282,6 +284,14 @@ test.skipIf(process.platform === 'win32')(
       'cache/made-by-hook': 'hook\n',
       'node_modules/pkg/index.js': 'package\n',
     });
+
+    git(root, 'update-index', '--assume-unchanged', 'src/kept.txt');
+    const plainPath = await run(addOp, root, ['-b', 'plain-path', '../plain-path']);
+    expect(plainPath.code).toBe(1);
+    expect(plainPath.stderr).toContain('with git worktree add, because');
+    expect(plainPath.stderr).toContain('post-checkout failed');
+    expect(readFileSync(log, 'utf-8').match(/again/g)).toHaveLength(2);
+    expect(tree(join(base, 'plain-path'))).toEqual(tree(join(base, 'failing')));
   },
   60_000,
 );
@@ -333,6 +343,28 @@ test('an entry the warm checks before carrying is copied again under that check'
   expect(readFileSync(join(path, 'build/output.bin'), 'utf-8')).toBe('what the check approved\n');
   expect(readFileSync(join(path, 'node_modules/pkg/index.js'), 'utf-8')).toBe('an earlier clone, not checked\n');
 }, 60_000);
+
+test.skipIf(!clones)(
+  'the source checkout stays claimed from the clone until the warm has checked what it carried (APFS clonefile; darwin only)',
+  async () => {
+    const real = getExecutor();
+    const readers: number[] = [];
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file === 'git' && (args.includes('update-index') || args.includes('--untracked-files=normal')))
+          readers.push(readClaimSet(warmClaimPath(root)).live.length);
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+
+    expect((await run(addOp, root, ['-b', 'added', '../added'])).code).toBe(0);
+
+    expect(readers).toEqual([1, 1]);
+    expect(readClaimSet(warmClaimPath(root)).live).toEqual([]);
+  },
+  60_000,
+);
 
 test('git refusing the worktree fails the command without a second attempt', async () => {
   git(root, 'branch', 'taken');
