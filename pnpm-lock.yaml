@@ -496,8 +496,8 @@ importers:
         specifier: ^7.0.6
         version: 7.0.6
       real-size:
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.3.0
+        version: 0.3.0
       unique-pid:
         specifier: 0.1.1
         version: 0.1.1
@@ -10543,8 +10543,8 @@ packages:
     resolution: {integrity: sha512-hOS089on8RduqdbhvQ5Z37A0ESjsqz6qnRcffsMU3495FuTdqSm+7bhJ29JvIOsBDEEnan5DPu9t3To9VRlMzA==}
     engines: {node: '>=8.10.0'}
 
-  real-size@0.2.0:
-    resolution: {integrity: sha512-0mnFJ+I9CZluyZ6kUy5yEMr12nl4WhI9RM6txSFUnvje11EEqTBEuwp9N3zYQTEMz9tGLtT0Kn9CrOo8hs2rjw==}
+  real-size@0.3.0:
+    resolution: {integrity: sha512-ukRtZZIxXcbR2qXN4rHP2/x7+dJ5GRhmtMxHqmPXDoBYdU5/2Bc1RHEGvobO4TPRBWLUYigGpDiWm3s6Ffo0yQ==}
     engines: {node: ^20.19.4 || >=22.12.0}
     os: [darwin, linux, win32]
     hasBin: true
@@ -24412,7 +24412,7 @@ snapshots:
     dependencies:
       picomatch: 2.3.2
 
-  real-size@0.2.0: {}
+  real-size@0.3.0: {}
 
   recma-build-jsx@1.0.0:
     dependencies:
