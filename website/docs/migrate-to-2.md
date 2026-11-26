@@ -130,8 +130,9 @@ stim gc --dry-run --json`}
   then rerun the install.
 - If `stim service uninstall` reports its daemon is still listening, let it
   finish, stop it, and rerun `stim service uninstall --label <label>`.
-- Upgrades with paired clients and mixed app and engine versions are still
-  being verified.
+- A phone app from before the 2.0 protocol is refused with a prompt to update
+  Stim Mobile, and the current phone app shows an update card for a machine
+  that still runs 1.40. Update Stim Desktop together with `stim`.
 
 ## Legacy settings
 
