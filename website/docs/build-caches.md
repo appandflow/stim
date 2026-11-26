@@ -195,7 +195,7 @@ worktrees. It is on by default outside CI. To see what it would do first:
 <StimTabs code="stim settings set daemon.mode report --scope machine" />
 
 [How cleanup works](./maintenance.md) has the phases, the disk pressure levels,
-every deletion rule and the settings that change them. Run
+what automatic cleanup deletes at each and the settings that change it. Run
 `stim logs --source gc` to see what cleanup removed.
 
 The agent gets the full cache, fingerprint and cleanup rules from

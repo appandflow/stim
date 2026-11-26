@@ -150,7 +150,7 @@ disk-usage cache rather than in the scan's list, so stale sizes never drive a
 cap trim. The per-target volume check, the Cargo step's isolation from cache
 failures and the persisted sizes followed the first review of #6029.
 
-The full table lives in `website/docs/maintenance.md` and in
+A summary table lives in `website/docs/maintenance.md` and the full one in
 `stim guide cleanup`; this document records why the levels are shaped this
 way, not the table.
 

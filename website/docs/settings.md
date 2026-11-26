@@ -140,8 +140,8 @@ stim settings set concurrency.maxDevices 4 --scope machine
   worktrees whose branch or pull request finished.
 
 [How cleanup works](./maintenance.md) lists the phases, the idle and dormant
-days, the disk thresholds, the caps and every other setting that changes what
-Stim deletes.
+days, the disk thresholds, the caps and the other settings that change what
+Stim deletes by itself.
 
 ```bash
 stim settings set daemon.mode report --scope machine   # see what it would delete first

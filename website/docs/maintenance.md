@@ -1,7 +1,7 @@
 ---
 title: 'How cleanup works'
 sidebar_label: 'How cleanup works'
-description: 'What Stim deletes or stops by itself, when, and how to see or change it'
+description: 'What Stim stops and deletes by itself, when, and the settings that change it'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -14,252 +14,153 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 :::
 
-Each Stim home has one background process, `stimd`, which `start`, `ios`,
-`android`, `web`, `macos` and `revive` start. Every minute (every 5 when
-quiet) it measures free
-disk and memory, stops what has been idle, and deletes what can be rebuilt.
-`stim gc` runs the same pass on demand, even with automatic cleanup off, which
-is the default in CI. Everything Stim deletes is regenerable, archived first,
-or one of the exceptions below.
+Stim's background process, `stimd`, stops what is idle and deletes what can be
+rebuilt: build outputs, caches, the simulators and emulators it created, and
+worktrees whose work is merged. Your source, unpushed commits and anything in
+use stay. It is on by default and off in CI. Preview what it would do now:
 
 <StimTabs code="stim gc --dry-run" />
 
-## What it never touches
-
-- Your source: tracked files, and untracked files git does not ignore,
-  unless you run `stim worktree remove --force`.
-- Commits that are not pushed.
-- Anything building, driven by an agent or leased.
-- A workspace pinned with `maintenance.keep`: no idle or dormant stage, and
-  its build outputs, owned devices and worktree stay. Log trimming, recording
-  retention, the idle stop of a device hosted on another Mac, and the
-  shutdown of a booted device when a run waits for a device slot still apply.
-- A worktree locked with `git worktree lock`: never removed, and its
-  dependencies stay. The idle stage still stops it and deletes its build
-  outputs, and the dormant stage deletes its owned devices.
-- Simulators and emulators you created, and physical devices, except that a
-  run uninstalls and reinstalls its own app when the installed copy conflicts:
-  a different signing team on an iPhone, or an Android install conflict in a
-  release run.
-- Checkouts no `stim` command ran in, unless
-  [discovery](#which-checkouts-it-maintains) reaches them.
-- A `node_modules` or Pods folder with hand edits, and `ios/build`.
-- Xcode DerivedData outside Stim, except Xcode's own compilation cache,
-  emptied at critical disk pressure.
-
-## Exceptions
-
-- **Finished worktrees are removed.** A linked worktree whose branch merged
-  or whose pull request merged or closed goes two hours after it was last used
-  or finished, and so does a clean one with no commits of its own.
-  Uncommitted and untracked changes are archived first, for 30 days. A
-  git-ignored file the main checkout lacks or holds differently, outside
-  dependency and build folders, keeps the worktree; ignored files identical
-  to the main checkout's go with it. Its
-  [workspace services](./dev-server-and-logs.md#workspace-services) are torn
-  down first, **which deletes their data**; so are the services of a project
-  whose folder is gone. The branch goes too when Stim created it.
-- **The main checkout's `node_modules` and Pods** go after 7 idle days.
-- **Machine-wide files**: iOS simulator runtimes no simulator uses, Gradle
-  versions in `~/.gradle` no registered project pins, Jest's default cache,
-  and Instruments (`xctrace`) and SwiftPM temporary folders in `TMPDIR`. At
-  critical disk pressure only: the npm, Yarn, pnpm, CocoaPods, Gradle and
-  SwiftPM caches and Xcode's compilation cache.
-- **Processes it stops**: idle Gradle and Kotlin daemons, a Watchman that
-  nothing uses over 2 GiB (1 GiB under memory pressure), and orphaned EAS
-  cloud sessions: in `stim gc`, and in an `ios` or `android` run that could not
-  finish setting up the `--remote eas` session it created (a cancelled or
-  timed-out create, no agent-device endpoint, a failed connect, or state it
-  could not record). Besides an idle workspace's own dev server, services and
-  devices, it shuts down the longest-idle booted device of
-  another workspace idle 2 minutes when a run waits for a device slot.
-- **Reusing a parked device clears it.** Before a workspace takes a parked
-  simulator or emulator, Stim uninstalls every other user app on it (iOS keeps
-  XCUITest runners) and clears the kept app's data. A reused iOS simulator,
-  local or hosted, also has its privacy grants and keychain reset. An Android
-  emulator has its caches trimmed, and its user data wiped when `/data` is
-  still short.
-- **`cleanAppState` runs** (`stim-ci run`, and the run API option) do the same
-  sweep on every run: other user apps uninstalled, the app's data cleared, and
-  on iOS the keychain reset. See [CI](./ci.md#what-a-run-deletes).
-- **`daemon.mode off`** still stops the dev server and devices of an idle
-  workspace whose dev server `stimd` runs.
-
-## When you run `stop` or `worktree remove`
-
-- `stim stop` stops the dev server, its tunnel and log collectors, shuts the
-  owned devices down (an iOS simulator may stay booted for
-  `pool.bootedGraceMinutes`), closes the owned Chrome, quits the macOS app, or
-  ends its session on another Mac, which deletes the app's preferences, data
-  and installed copies there, ends an EAS session, cancels a running
-  `ios` or `android` run, ends web shares, releases device leases and removes
-  adb reverses. It deletes no local device. A device hosted on another Mac is
-  parked there, or deleted when the host parks none or parking fails.
-- `stim worktree remove` does the same, runs each service's `teardown`, parks
-  the owned devices (deletes them at critical disk pressure, with parking set
-  to `0`, or when parking fails), deletes the owned Chrome profile and
-  archives the logs, then deletes the workspace's folder in the Stim home,
-  build outputs included, frees the Metro port, and removes the worktree and
-  the branch when Stim created it. With `--force` it discards uncommitted and
-  untracked work without archiving it.
-
 ## Phases
 
-### A workspace over time
+A workspace moves through these as it sits unused:
 
-1. **In use**: nothing is touched.
-2. **Idle** after `idle.minutes` (15), when something of it runs: the dev
-   server and services stop with their ports kept, the owned devices shut
-   down, and its build outputs and Metro cache are deleted. `stim revive`
-   resumes it. With a device on another Mac it stops after
-   `maintenance.idleStopHours` (6) instead.
-3. **Dormant** after `idle.dormantDays` (1): its owned devices are deleted,
-   its logs archived, and a linked worktree's `node_modules` and Pods deleted
-   when they hold 256 MB of their own or are not measured yet (a copy-on-write
-   clone stays).
-   The next Stim command restores them with `stim worktree warm`.
-4. **Main checkout dependencies** go after `idle.sourceDormantDays` (7).
-5. **Finished** linked worktrees go after `gc.worktreeGraceMinutes` (120),
-   whatever the stage.
+| Phase    | Starts                                                                                       | Setting (default)               |
+| -------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
+| Idle     | 15 minutes without activity                                                                  | `idle.minutes` (15)             |
+| Dormant  | 1 day without activity                                                                       | `idle.dormantDays` (1)          |
+| Finished | 2 hours after last use, for a linked worktree that is merged or whose pull request has ended | `gc.worktreeGraceMinutes` (120) |
 
 Activity is a Stim command, a build, a Metro request, an agent-device command
-or input to a device, and for dependencies also a file or git write. App logs
-do not count. Separately, the daily age sweep removes build outputs, cache
-entries and parked devices unused for `maintenance.olderThanDays` (3), and an
-hourly check trims what is over its cap.
+or input to a device; for dormant, also a file or git write or a process in
+the checkout. App logs do not count. A clean linked worktree with no commits of
+its own counts as finished.
 
-### The machine
+The machine has one level, set every minute from memory and the free disk of
+every volume Stim writes to:
 
-`stimd` sets one level a minute from memory and the free disk of every volume
-it writes to:
+| Level    | When                                                                                                           |
+| -------- | -------------------------------------------------------------------------------------------------------------- |
+| high     | free disk under `disk.minFreeGb` (40 GB), a macOS memory warning for 10 minutes, or under 10% of RAM available |
+| critical | free disk under `disk.criticalFreeGb` (20 GB), or critical memory on macOS                                     |
+| refuse   | free disk under `disk.hardFloorGb` (5 GB) after cleanup ran                                                    |
 
-| Level    | When                                                                                                           | What runs                                                                                    |
-| -------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| normal   | otherwise                                                                                                      | the phases and schedule above                                                                |
-| high     | free disk under `disk.minFreeGb` (40 GB), a macOS memory warning for 10 minutes, or under 10% of RAM available | the pressure ladder                                                                          |
-| critical | free disk under `disk.criticalFreeGb` (20 GB), or critical memory on macOS                                     | the ladder at shorter idle times, plus rungs 8 and 9                                         |
-| refuse   | free disk under `disk.hardFloorGb` (5 GB) after the ladder ran                                                 | `start`, `ios`, `android` fail with `STIM_LOW_DISK`; free space or run `stim gc`, then retry |
-
-The ladder runs its rungs in this order, checks again before each, acts only
-on the short volume, and stops once the level is normal. `stim gc` and the
-daemon log use these numbers:
-
-- **0**: parked simulators kept booted shut down.
-- **2**: parked devices deleted, at high oldest first until the level clears,
-  at critical all.
-- **3**: Stim's shared caches trimmed to half their caps (critical: emptied,
-  with the fingerprint index),
-  then Cargo `target/` folders lose stale profiles and incremental data.
-- **1**: the idle stage, at 2 minutes under memory pressure; stopped
-  workspaces idle 2 minutes lose their build outputs.
-- **4**: workspaces idle 10 minutes (critical: 2) lose their owned devices
-  and archive their logs.
-- **6**: idle Gradle, Kotlin and Watchman daemons stop; unpinned Gradle
-  versions, `TMPDIR` leftovers and the worktree trash go.
-- **8**, critical: device recordings not being written, and archived logs,
-  recordings and agent actions.
-- **9**, critical, if still short: other tools' caches.
-- **5 and 7** only report, in `stim gc`: dependencies and worktrees.
-
-The ladder itself deletes no `node_modules`, Pods or worktree; the dormant and
-finished-worktree rules above still apply at every level. Memory pressure
-alone runs rungs 0, 1 and 6. High-level cleanup also runs above 40 GB before a
-native build that may not fit, and when a volume fills fast.
+Above normal, cleanup works down a ladder, cheapest to rebuild first, on the
+short volume only, and stops once the level is normal. Memory pressure alone
+only stops things. At refuse, `start`, `ios` and `android` fail with
+`STIM_LOW_DISK`: free space or run `stim gc`, then retry.
 
 ## Deletion rules
 
-Defaults in parentheses; "sweep" is the daily age sweep.
+Caps are checked hourly, finished worktrees every 15 minutes, and unused things
+daily. High and critical add to the rows above them.
 
-| What                                                                                                                                                                                                                                                                                                          | When                                                                                                                                                                                                                      | Done                                                                      | Setting                                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Dev server and owned devices of a workspace                                                                                                                                                                                                                                                                   | idle; 2 min under memory pressure; a booted device of a workspace idle 2 min when a run waits for a device slot                                                                                                           | stopped, shut down                                                        | `idle.minutes` (15)                                                           |
-| Workspace services Stim started (`stim services`)                                                                                                                                                                                                                                                             | idle                                                                                                                                                                                                                      | stopped, data kept                                                        | `idle.minutes` (15)                                                           |
-| Workspace with a device hosted on another Mac                                                                                                                                                                                                                                                                 | idle 6 h, `maintenance.keep` or not; the host also ends the session after 6 h without its client                                                                                                                          | stopped                                                                   | `maintenance.idleStopHours` (6)                                               |
-| Build outputs: Stim's derived data and Gradle output, `android/build`, `android/app/build`, `android/.gradle`, `.build`, `.cxx`, a `.dd` DerivedData, an Exact or tagged Cargo `target/`, the app's Metro cache                                                                                               | idle; dormant; over the cap; unused 3 days; at high or critical when stopped 2 min, a Cargo `target/` excepted                                                                                                            | deleted                                                                   | `maintenance.workspaceOutputsMaxGb` (20), `maintenance.olderThanDays` (3)     |
-| Owned simulators and emulators of a workspace                                                                                                                                                                                                                                                                 | dormant; idle 10 min at high, 2 min at critical; a finished worktree kept for its changes, idle 2 h                                                                                                                       | deleted                                                                   | `idle.dormantDays` (1), `gc.worktreeGraceMinutes` (120)                       |
-| Workspace logs                                                                                                                                                                                                                                                                                                | Metro, client and device logs rotate at 8 MiB, keeping one older file, in every `daemon.mode`; a file over 16 MiB is cut to its newest 8 MiB; dormant, archived                                                           | rotated, trimmed, archived                                                | `archive.enabled` (true)                                                      |
-| `node_modules` and Pods of a linked worktree, 256 MB of their own or not measured yet                                                                                                                                                                                                                         | dormant                                                                                                                                                                                                                   | deleted, restored by warm                                                 | `idle.dormantDays` (1)                                                        |
-| `node_modules` and Pods of a main checkout                                                                                                                                                                                                                                                                    | idle 7 days                                                                                                                                                                                                               | deleted                                                                   | `idle.sourceDormantDays` (7)                                                  |
-| Finished linked worktree (merged, pull request merged or closed), or a clean one with no commits of its own                                                                                                                                                                                                   | 2 h after last use; checked every 15 min                                                                                                                                                                                  | removed, changes archived first; its services torn down                   | `maintenance.removeFinishedWorktrees` (true), `gc.worktreeGraceMinutes` (120) |
-| Clean, pushed, unmerged worktree, with its git-ignored files                                                                                                                                                                                                                                                  | unused 3 days                                                                                                                                                                                                             | removed                                                                   | `maintenance.removeIdleWorktrees` (false)                                     |
-| Parked simulators and emulators                                                                                                                                                                                                                                                                               | the oldest at once when parking one more would pass the cap; unused 3 days; high, oldest first; critical, all                                                                                                             | deleted                                                                   | `pool.iosParkedMax`, `pool.androidParkedMax` (3)                              |
-| Parked simulator kept booted, or one `stim stop` left booted                                                                                                                                                                                                                                                  | after 15 min, or at once under memory pressure or when a run waits for a device slot                                                                                                                                      | shut down                                                                 | `pool.bootedGraceMinutes` (15)                                                |
-| Shared build cache and Metro cache                                                                                                                                                                                                                                                                            | over the cap, to 80%; entries unused 3 days; high, to half the cap; critical, emptied except entries in use                                                                                                               | trimmed                                                                   | `caches.buildCacheMaxGb` (10), `caches.metroCacheMaxGb` (5)                   |
-| Swift compilation cache, ccache, Xcode's compilation cache, other caches Stim registered or detected                                                                                                                                                                                                          | Swift cache over its cap, or over half of it at high; critical, emptied; ccache evicts itself at its limit                                                                                                                | emptied                                                                   | `caches.swiftCompilationCacheMaxGb` (0, no cap), `caches.ccacheMaxGb` (5)     |
-| Fingerprint index and memo                                                                                                                                                                                                                                                                                    | critical                                                                                                                                                                                                                  | emptied                                                                   |                                                                               |
-| Cargo `target/` of an Exact app or a Cargo workspace root, tagged or not                                                                                                                                                                                                                                      | over the cap; high, every stale profile and `incremental/`, in use or not; critical, idle build units too; dormant, deleted whole except lock files and keypairs                                                          | trimmed, deleted                                                          | `maintenance.cargoTargetMaxGb` (25), `idle.dormantDays` (1)                   |
-| Idle Gradle and Kotlin daemons, a Watchman nothing uses over 2 GiB (1 GiB under memory pressure)                                                                                                                                                                                                              | sweep; at once under pressure                                                                                                                                                                                             | stopped                                                                   |                                                                               |
-| Gradle versions no registered project pins                                                                                                                                                                                                                                                                    | unmodified 7 days, sweep or pressure; critical, all                                                                                                                                                                       | deleted                                                                   | `maintenance.gradleVersionIdleDays` (7)                                       |
-| `TMPDIR` leftovers (Stim, stopped hosted agent-device state, `xctrace`, SwiftPM), Metro file maps, Jest's default cache                                                                                                                                                                                       | unchanged 24 h (Metro, Jest: unused 3 days); sweep or pressure                                                                                                                                                            | deleted                                                                   | `maintenance.sweepHours` (24), the sweep interval                             |
-| Worktree trash: what a removal moved aside                                                                                                                                                                                                                                                                    | right after the removal                                                                                                                                                                                                   | deleted                                                                   |                                                                               |
-| iOS simulator runtimes no simulator uses, deletable, not pinned, not the active Xcode's major version, not used for 7 days; never the only one, or the newest when none is used                                                                                                                               | sweep                                                                                                                                                                                                                     | deleted with `simctl`                                                     | `maintenance.olderThanDays` (0 turns it off)                                  |
-| Devices, records, folders and service data of removed projects; owned simulators whose runtime is gone; expired leases and stale locks                                                                                                                                                                        | sweep                                                                                                                                                                                                                     | deleted                                                                   |                                                                               |
-| Orphaned EAS sessions of the current project; parked hosted devices on a hosting Mac                                                                                                                                                                                                                          | `stim gc` (EAS); a session a `--remote eas` run created but could not set up, by that run; sweep (hosted)                                                                                                                 | stopped, deleted                                                          |                                                                               |
-| On a hosting Mac: a hosted session in an unknown state                                                                                                                                                                                                                                                        | each idle sweep, up to 5 tries; then the device is kept and its claim released                                                                                                                                            | stopped                                                                   |                                                                               |
-| Stim engine versions other than the current, previous and staged ones, those in use, and the three client builds offload jobs used most recently in the last 24 hours; engine scratch folders; the engine's npm download cache, emptied except the tarballs of those builds once any file in it is 7 days old | every engine install, use, update and rollback, and `stim gc`                                                                                                                                                             | deleted                                                                   |                                                                               |
-| On a hosting Mac: the private home of a hosted session stopped for an hour, its logs included                                                                                                                                                                                                                 | stim-server, whatever `daemon.mode` says                                                                                                                                                                                  | deleted                                                                   |                                                                               |
-| On a hosting Mac: earlier app installs and unreferenced blobs of a hosted session                                                                                                                                                                                                                             | after a replacement install succeeds                                                                                                                                                                                      | deleted                                                                   |                                                                               |
-| Machine cleanup log (`gc/gc.ndjson` in the Stim home)                                                                                                                                                                                                                                                         | rotates at 1 MiB, keeping one older file; that file goes after 30 days                                                                                                                                                    | rotated, deleted                                                          | `maintenance.logMaxMb` (1), `maintenance.logRetentionDays` (30)               |
-| On a build worker: a repository area under `server.workerRoot`                                                                                                                                                                                                                                                | unused 7 days, or the volume near its free disk floor, keeping each client's newest; at once when the client removes that checkout or its build approval is revoked; stim-server, whatever `daemon.mode` says             | deleted                                                                   | `server.workerAreaMaxAgeDays` (7)                                             |
-| On a build worker: idle Gradle daemons of offload clients                                                                                                                                                                                                                                                     | low memory, or a client forces it                                                                                                                                                                                         | stopped                                                                   |                                                                               |
-| Device recordings                                                                                                                                                                                                                                                                                             | footage beyond the newest 15 min recorded per device, however old, or over 1 GiB per home; critical, all not being written; all of a workspace at once when `recording.enabled` is set to false                           | deleted                                                                   | `recording.enabled` (true)                                                    |
-| Archives and rescued files                                                                                                                                                                                                                                                                                    | past retention: records 30 days, 200, 5 GB; logs 14 days, 100 MB per workspace; recordings 3 days, 2 GB; agent actions 7 days; rescued files 30 days, by `stim gc`; critical, archived logs, recordings and agent actions | deleted                                                                   | `archive.*`                                                                   |
-| npm, Yarn, pnpm, CocoaPods, Gradle and SwiftPM caches                                                                                                                                                                                                                                                         | critical only, disk still short after the steps above, at most hourly in `stimd`; `stim gc` at critical runs it each time, and `stim gc --pressure critical` without measuring the disk                                   | cleaned                                                                   | `disk.criticalFreeGb` (20)                                                    |
-| Android NDKs, unused system images, Exact's cache, Xcode device support, agent-device state                                                                                                                                                                                                                   | never                                                                                                                                                                                                                     | reported by `stim gc --dry-run`, the first three at `--pressure critical` |                                                                               |
+| Phase                 | Stops                                                                                                                                                                    | Deletes                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Idle                  | the dev server and workspace services, data kept; owned simulators and emulators shut down. With a device on another Mac, after `maintenance.idleStopHours` (6) instead  | build outputs and the app's Metro cache                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Dormant               |                                                                                                                                                                          | owned simulators and emulators; an Exact app's Cargo `target/`; a linked worktree's `node_modules` and Pods holding 256 MB of their own. Logs are archived                                                                                                                                                                                                                                                                                                                         |
+| Main checkout, 7 days |                                                                                                                                                                          | its `node_modules` and Pods (`idle.sourceDormantDays`)                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Finished              | its dev server, devices and services                                                                                                                                     | the worktree, and its branch when Stim created it, after archiving uncommitted changes for 30 days. One kept for its changes loses its owned devices                                                                                                                                                                                                                                                                                                                               |
+| Any time              | idle Gradle and Kotlin daemons; an unused Watchman over 2 GiB; a parked simulator left booted for 15 minutes; an idle workspace's booted device, when a run needs a slot | over a cap: build outputs (20 GB), the build (10) and Metro (5) caches, stale Cargo `target/` profiles (25), parked devices (3 per platform). Unused for `maintenance.olderThanDays` (3): build outputs, cache entries, parked devices. Also unpinned Gradle versions (all at critical), `TMPDIR` leftovers, Jest's cache, unused iOS simulator runtimes, what removed projects left behind, logs over 8 MiB, recordings past the newest 15 minutes, and archives past `archive.*` |
+| High                  | workspaces idle 2 minutes, under memory pressure; booted parked simulators                                                                                               | parked devices, oldest first; shared caches to half their caps; stale Cargo profiles and incremental data; build outputs of stopped workspaces; owned devices of workspaces idle 10 minutes                                                                                                                                                                                                                                                                                        |
+| Critical              |                                                                                                                                                                          | every parked device; shared caches and the fingerprint index, except entries in use; owned devices of workspaces idle 2 minutes; recordings and archived logs. If still short: the npm, Yarn, pnpm, CocoaPods, Gradle and SwiftPM caches and Xcode's compilation cache, each while its tool is idle                                                                                                                                                                                |
+| A Mac hosting others  | a hosted session without its client for 6 hours; idle Gradle daemons at low memory                                                                                       | a stopped session's home after an hour; parked hosted devices; a build client's repository area unused for `server.workerAreaMaxAgeDays` (7)                                                                                                                                                                                                                                                                                                                                       |
+
+Only reported, by `stim gc --dry-run`: Android NDKs, unused system images,
+Exact's cache and Xcode device support.
+
+**Never touched:**
+
+- Tracked files, untracked files git does not ignore, and unpushed commits.
+- Anything building, driven by an agent, leased, shared or hosted.
+- A workspace pinned with `maintenance.keep`.
+- A worktree locked with `git worktree lock`, and its dependencies.
+- Simulators and emulators you created, physical devices, `ios/build`, and
+  Xcode DerivedData outside Stim.
+- Checkouts no `stim` command ran in, unless
+  [discovery](#which-checkouts-it-maintains) reaches them.
+
+**Exceptions:**
+
+- A finished worktree goes with its uncommitted changes, once archived. A
+  git-ignored file the main checkout lacks, outside dependency and build
+  folders, keeps it.
+- Removing a finished worktree tears down its
+  [workspace services](./dev-server-and-logs.md#workspace-services), which
+  deletes their data.
+- You reinstall the main checkout's dependencies yourself.
+- A pinned workspace still has its logs trimmed, its recordings expire, its
+  hosted device stopped and its booted device shut down for a waiting run.
+- A locked worktree still goes idle and dormant; only the worktree and its
+  dependencies stay.
+- `daemon.mode off` still stops an idle dev server that `stimd` runs, and its
+  devices.
 
 ## Settings you might change
 
-| To                                                            | Run                                                                                                         |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| See what it would do, deleting nothing                        | `stim settings set daemon.mode report --scope machine`                                                      |
-| Turn automatic cleanup off                                    | `stim settings set daemon.mode off --scope machine`                                                         |
-| Keep one workspace from idle, dormant and cleanup             | `stim settings set maintenance.keep true --scope workspace`                                                 |
-| Keep a worktree from removal                                  | `git worktree lock`                                                                                         |
-| Stop removing finished worktrees                              | `stim settings set maintenance.removeFinishedWorktrees false --scope machine`                               |
-| Keep a finished worktree with changes instead of archiving it | `stim settings set archive.enabled false --scope repo`                                                      |
-| Wait longer before idle and dormant                           | `stim settings set idle.minutes 60 --scope machine`, `stim settings set idle.dormantDays 3 --scope machine` |
-| Never touch the main checkout's dependencies                  | `stim settings set idle.sourceDormantDays 0 --scope machine`                                                |
-| Clean earlier or later                                        | `disk.minFreeGb` (40), `disk.criticalFreeGb` (20), `disk.hardFloorGb` (5)                                   |
-| Raise or lower a cap                                          | `caches.buildCacheMaxGb`, `maintenance.workspaceOutputsMaxGb`, `maintenance.cargoTargetMaxGb`               |
+| To                                           | Set                                                                                           |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| See what it would do, deleting nothing       | `daemon.mode report`                                                                          |
+| Turn automatic cleanup off                   | `daemon.mode off`                                                                             |
+| Pin one workspace, from inside it            | `maintenance.keep true --scope workspace`                                                     |
+| Stop removing finished worktrees             | `maintenance.removeFinishedWorktrees false`                                                   |
+| Keep a finished worktree that has changes    | `archive.enabled false`                                                                       |
+| Wait longer before idle (15 minutes)         | `idle.minutes 60`                                                                             |
+| Wait longer before dormant (1 day)           | `idle.dormantDays 3`                                                                          |
+| Never touch the main checkout's dependencies | `idle.sourceDormantDays 0`                                                                    |
+| Clean earlier or later (40, 20 and 5 GB)     | `disk.minFreeGb`, `disk.criticalFreeGb`, `disk.hardFloorGb`                                   |
+| Raise or lower a cap                         | `caches.buildCacheMaxGb`, `maintenance.workspaceOutputsMaxGb`, `maintenance.cargoTargetMaxGb` |
 
-`idle.minutes 0` turns the idle and dormant stages off; `STIM_DAEMON`
-overrides `daemon.mode`. The rest is in [All settings](./settings.md#all-settings).
+Each is `stim settings set <setting> <value> --scope machine`:
+
+<StimTabs code="stim settings set daemon.mode report --scope machine" />
+
+`git worktree lock` keeps one worktree from removal. `idle.minutes 0` turns the idle and dormant stages off. The rest is in
+[All settings](./settings.md#all-settings).
 
 ## Which checkouts it maintains
 
-- **Registered**: a checkout where a project command ran (`worktree warm`,
-  `start`, `ios`, `android`, `macos`, `web`, `services`, `doctor`).
+- **Registered**: a checkout where a project command ran, such as
+  `worktree warm`, `start`, `ios` or `android`.
 - **Named folders**: the recognised projects directly inside each
   `maintenance.discoverRoots` folder, and their linked worktrees inside it,
-  under the registered rules, worktree removal included. A plain Node checkout
-  there (git and a `package.json`) only has its finished linked worktrees
-  removed.
+  under the same rules. A plain Node checkout there only has its finished
+  linked worktrees removed.
 - **Automatic discovery** (`maintenance.autoDiscover`, off): also the folders
   next to registered checkouts and the linked worktrees of every known
-  repository; checkouts in `~/.codex/worktrees` and a weekly home-folder scan
+  repository. Checkouts in `~/.codex/worktrees` and a weekly home-folder scan
   only lose build outputs and dependencies.
 
-A discovered worktree is removed only when clean, idle for `idle.dormantDays`,
-and holding no ignored file the main checkout lacks outside build and
-`node_modules` folders; it is never archived. Discovery registers nothing, runs
-no `git fetch`, and skips `TMPDIR` and home dot-folders unless a named folder
-holds them. With it off the scan still runs, deletes nothing, and `stim doctor`
-suggests a command once its finds hold 10 GiB of build output. Exclude a
-checkout with `stim settings set maintenance.keep true --scope committed` in
-it, or drop its folder from the list.
+A discovered worktree is removed only when finished, clean, idle for
+`idle.dormantDays`, and holding no ignored file the main checkout lacks
+outside build and dependency folders. Nothing is archived, and no `git fetch`
+runs.
+
+To exclude a checkout, run
+`stim settings set maintenance.keep true --scope committed` in it, or drop its
+folder from the list.
 
 <StimTabs code={`stim settings set maintenance.discoverRoots '["~/Developer"]' --scope machine
 stim gc --dry-run`} />
 
-## See it and run it
+## What commands delete
 
-- `stim gc --dry-run`: what a run would delete now, and why the rest stays;
-  `--pressure high|critical` previews a level. `stim gc` deletes.
-- `stim logs --source gc`: what gc and maintenance removed. The pressure
-  ladder logs to `$STIM_HOME/daemon/daemon.ndjson`.
-- `stim worktree list --all`: each worktree's size, idle age and verdict.
-- `stim status` and `stim doctor`: the level and each workspace's stage.
+This page leaves out what a command does to its own target:
+
+| Command or action              | Where                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| `stim stop`                    | [Commands](./commands.md#stop), [web](./web.md#cleanup)                       |
+| `stim worktree remove`         | [Remove a worktree](./worktrees.md#remove-a-worktree)                         |
+| `stim gc` and its flags        | [Commands](./commands.md#gc)                                                  |
+| Reusing a parked device        | [What Stim deletes](./owned-devices.md#what-stim-deletes)                     |
+| A device hosted on another Mac | [Hosted parking and restart](./remote-machines.md#hosted-parking-and-restart) |
+| `stim-ci run`                  | [What a run deletes](./ci.md#what-a-run-deletes)                              |
+
+## See what it did
+
+`stim logs --source gc` lists what cleanup removed, and `stim status` shows
+the level and each workspace's stage.
 
 <PromptBox title="Explain cleanup on this machine">
-{`Read stim guide cleanup and stim guide lifecycle budget, then run stim gc --dry-run and stim worktree list --all. Explain what Stim would delete or stop on this machine and why, then change <what I want, for example: keep worktrees with changes> with stim settings. Do not run stim gc without asking me.`}
+{`Read stim guide cleanup, then run stim gc --dry-run and stim worktree list --all. Explain what Stim would delete or stop on this machine and why. Do not run stim gc without asking me.`}
 </PromptBox>

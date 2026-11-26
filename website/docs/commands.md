@@ -373,7 +373,7 @@ pinned with `maintenance.keep`, unpushed work, or a simulator or emulator you
 created. A finished worktree past its grace period is removed even with
 uncommitted changes, after they are archived; pin it with `maintenance.keep`
 or `git worktree lock` to keep it. [How cleanup works](./maintenance.md) lists
-every rule, and the agent reads `stim guide cleanup gc`.
+what runs automatically, and the agent reads `stim guide cleanup gc`.
 
 ## Servers, ports and tests
 

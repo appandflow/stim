@@ -96,7 +96,7 @@ Automatic maintenance, and `stim gc` when you run it:
 To protect a checkout, run `git worktree lock` or pin it with
 `maintenance.keep`. To stop automatic removal, set
 `maintenance.removeFinishedWorktrees` to `false`. [How cleanup
-works](./maintenance.md) has every rule and setting.
+works](./maintenance.md) has the automatic rules and settings.
 
 ## Checkouts Stim never ran in {/* #checkouts-stim-never-ran-in */}
 
