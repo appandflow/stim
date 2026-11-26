@@ -416,30 +416,46 @@ function withRustPanics(reports: NdjsonRecord[], panics: readonly string[]): Ndj
   return [{ ...newest, msg: `${String(newest.msg)}\n${panics.join('\n')}` }, ...older];
 }
 
-/** Finds ActivityManager killing the target app's main process for an ANR, with the reason its ANR report gave. */
+/**
+ * Finds ActivityManager killing the target app's most recently started main process for an ANR, with the reason
+ * its ANR report gave. Android logs an ANR kill as `bg anr`, or as a plain kill of the PID its `ANR in` report named.
+ */
 export function parseAndroidAnrKill(
   text: string,
   target: Pick<CrashTarget, 'appId' | 'since'>,
   clockOffsetMs: number,
 ): { reason: string | null } | null {
+  let startedPid: string | null = null;
+  let anrPid: string | null = null;
   let inAppAnr = false;
   let reason: string | null = null;
+  let found: { reason: string | null } | null = null;
   for (const line of text.split('\n')) {
     const record = parseLogcatLine(line, { clockOffsetMs });
     if (!record || Number(record.ts) < target.since) continue;
     const msg = record.msg ?? '';
+    const start = /^Start proc (\d+):([^/\s]+)\//.exec(msg);
     const anr = /^ANR in (\S+)/.exec(msg);
-    if (anr) {
+    const kill = /^Killing (\d+):([^/\s]+)\/\S+ \(adj -?\d+\): (.*)$/.exec(msg);
+    if (start?.[2] === target.appId) {
+      startedPid = start[1]!;
+      anrPid = reason = found = null;
+    } else if (anr) {
       inAppAnr = anr[1] === target.appId;
-      if (inAppAnr) reason = null;
+      if (inAppAnr) anrPid = reason = null;
+    } else if (inAppAnr && msg.startsWith('PID: ')) {
+      anrPid = msg.slice('PID: '.length).trim();
     } else if (inAppAnr && msg.startsWith('Reason: ')) {
       reason = msg.slice('Reason: '.length).trim() || null;
-    } else {
-      const kill = /^Killing \d+:([^/\s]+)\/\S+ \(adj -?\d+\): (.*)$/.exec(msg);
-      if (kill?.[1] === target.appId && /\banr\b/i.test(kill[2]!)) return { reason };
+    } else if (
+      kill?.[2] === target.appId &&
+      kill[1] === startedPid &&
+      (kill[1] === anrPid || /\banr\b/i.test(kill[3]!))
+    ) {
+      found = { reason };
     }
   }
-  return null;
+  return found;
 }
 
 export async function readAndroidAnrKill(

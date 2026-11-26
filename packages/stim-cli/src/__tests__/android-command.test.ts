@@ -27,7 +27,7 @@ import * as iosDevices from '../devices/ios.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import * as installedArtifact from '../engine/installed-artifact.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
-import { vi } from 'vitest';
+import { onTestFinished, vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -4374,6 +4374,8 @@ describe('launch verification', () => {
   });
 
   test.each(['default', 'phone'])('a native process exit recommends the same slot (%s)', async (slot) => {
+    setExecutor(makeExecutor({ runFileQuiet: () => null }));
+    onTestFinished(() => resetExecutor());
     const h = harness({
       slot,
       verifyLaunched: async () => ({
@@ -4396,8 +4398,8 @@ describe('launch verification', () => {
       const at = Math.floor(now / 1000) + atSeconds;
       return [
         '--------- beginning of system',
-        `         ${at - 74}.005 I/ActivityManager(  537): Killing 4542:${appId}/u0a145 (adj 0): stop ${appId} due to from pid 5984`,
-        `         ${at - 74}.177 I/ActivityManager(  537): Start proc 6004:${appId}/u0a145 for next-top-activity {${appId}/${appId}.MainActivity}`,
+        `         ${at - 4}.005 I/ActivityManager(  537): Killing 4542:${appId}/u0a145 (adj 0): stop ${appId} due to from pid 5984`,
+        `         ${at - 4}.177 I/ActivityManager(  537): Start proc 6004:${appId}/u0a145 for next-top-activity {${appId}/${appId}.MainActivity}`,
         `         ${at}.362 E/ActivityManager(  537): ANR in ${appId}`,
         `         ${at}.362 E/ActivityManager(  537): PID: 6004`,
         `         ${at}.362 E/ActivityManager(  537): Reason: Process ProcessRecord{c0daa15 6004:${appId}/u0a145} failed to complete startup`,
@@ -5104,16 +5106,26 @@ describe('release skips Metro entirely', () => {
     );
   });
 
-  test('a dead app process fails the readiness check with the device-log pointer', async () => {
+  test.each([false, true])('a dead app process fails the readiness check (ANR kill: %s)', async (anr) => {
+    setExecutor(makeExecutor({ runFileQuiet: () => null }));
+    const read = vi
+      .spyOn(crashDiagnostics, 'readAndroidAnrKill')
+      .mockResolvedValue(anr ? { reason: 'failed to complete startup' } : null);
+    onTestFinished(() => {
+      read.mockRestore();
+      resetExecutor();
+    });
     const h = harness({
       variant: 'productionRelease',
       verifyReleaseLaunched: async () => ({ verified: false, reason: 'exited', waitedMs: 3000, pid: null }),
     });
     const result = await h.run();
+    const text = h.stderr.join('\n');
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
-    expect(h.stderr.join('\n')).toMatch(/FATAL: no com\.example\.app process/);
-    expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
+    expect(/FATAL: no com\.example\.app process/.test(text)).toBe(!anr);
+    expect(text.includes('ANR reason: failed to complete startup')).toBe(anr);
+    expect(text.includes('again once the load drops')).toBe(anr);
   });
 
   test('a failed release process probe stays unverified without claiming an exit', async () => {

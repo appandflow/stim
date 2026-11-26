@@ -207,17 +207,19 @@ async function reportAnrKill({
   physical,
   phase,
   clockOffsetMs,
+  hostAdb,
   runCommand,
   waitedMs,
 }: Pick<VerifyAndroidRunArgs, 'operation' | 'serial' | 'androidPackage' | 'launchedAt' | 'physical' | 'phase'> & {
   clockOffsetMs: number | null | undefined;
+  hostAdb: boolean;
   runCommand: string;
   waitedMs: number | undefined;
 }): Promise<boolean> {
-  if (clockOffsetMs === null || clockOffsetMs === undefined) return false;
+  if (!hostAdb) return false;
   const anr = await readAndroidAnrKill(
-    { deviceId: serial, appId: androidPackage, since: launchedAt },
-    clockOffsetMs,
+    { deviceId: serial, appId: androidPackage, since: clockOffsetMs == null ? 0 : launchedAt },
+    clockOffsetMs ?? 0,
     operation?.signal,
   );
   if (!anr) return false;
@@ -226,7 +228,7 @@ async function reportAnrKill({
     chalk.red(`FATAL after ${formatDuration(waitedMs ?? 0)}: Android killed the app for not responding (ANR)`),
   );
   if (anr.reason) phase('', chalk.red(`ANR reason: ${anr.reason}`));
-  if (!physical)
+  if (!physical && process.platform !== 'win32')
     phase('load', `host load ${Math.round((loadavg()[0] ?? 0) * 10) / 10} on ${availableParallelism()} cores`);
   const busy = physical ? 'the device' : 'the host';
   phase(
@@ -289,6 +291,7 @@ async function verifyAndroidProcessRun({
       physical,
       phase,
       clockOffsetMs: await androidCrashClockOffset(serial, operation?.signal),
+      hostAdb: true,
       runCommand: nativeRunCommand('android', slot, { physical, deviceId: serial }),
       waitedMs: processCheck?.waitedMs,
     }))
@@ -439,6 +442,7 @@ export async function verifyAndroidMetroRun({
         physical,
         phase,
         clockOffsetMs,
+        hostAdb: !hostedLogs && !remoteDevice,
         runCommand,
         waitedMs: verification.waitedMs,
       }))

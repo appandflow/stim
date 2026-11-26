@@ -6,6 +6,7 @@ import {
   bundleBindFailure,
   captureNativeCrashes,
   captureWorkspaceCrashes,
+  parseAndroidAnrKill,
   parseAndroidCrashes,
   parseIosCrash,
   simulatorConsolePaths,
@@ -858,4 +859,51 @@ test('a stalled symbolication server cannot hide or indefinitely delay the origi
   const [record] = await symbolicateErrors([raw], { port, timeoutMs: 30 });
   expect(record?.msg).toBe(raw.msg);
   expect(record?.symbolicationNote).toContain('timed out');
+});
+
+const AM = (at: string, msg: string) => `         ${at} I/ActivityManager(  537): ${msg}`;
+const startProc = (at: string, pid: number, proc = 'app.test') =>
+  AM(at, `Start proc ${pid}:${proc}/u0a145 for next-top-activity {app.test/app.test.MainActivity}`);
+const anrBlock = (at: string, app: string, pid: number, reason: string) => [
+  AM(at, `ANR in ${app}`),
+  AM(at, `PID: ${pid}`),
+  AM(at, `Reason: ${reason}`),
+  AM(at, 'Load: 0.0 / 0.0 / 0.0'),
+];
+
+test.each([
+  {
+    name: 'a bg anr kill of the launched process',
+    lines: [startProc('2000.100', 6004), ...anrBlock('2011.362', 'app.test', 6004, 'failed to complete startup')],
+    kill: 'Killing 6004:app.test/u0a145 (adj 900): bg anr',
+    expected: { reason: 'failed to complete startup' },
+  },
+  {
+    name: 'a plain kill of the PID its ANR report named',
+    lines: [startProc('2000.100', 6004), ...anrBlock('2011.362', 'app.test', 6004, 'Input dispatching timed out')],
+    kill: 'Killing 6004:app.test/u0a145 (adj 0): user request after error',
+    expected: { reason: 'Input dispatching timed out' },
+  },
+  {
+    name: 'another app ANR reason is not borrowed',
+    lines: [startProc('2000.100', 6004), ...anrBlock('2011.362', 'app.other', 7001, 'Broadcast of Intent')],
+    kill: 'Killing 6004:app.test/u0a145 (adj 900): bg anr',
+    expected: { reason: null },
+  },
+  {
+    name: 'a secondary process of the app',
+    lines: [startProc('2000.100', 6010, 'app.test:remote')],
+    kill: 'Killing 6010:app.test:remote/u0a145 (adj 900): bg anr',
+    expected: null,
+  },
+  {
+    name: 'an older process the launch replaced',
+    lines: [startProc('2000.100', 6004), ...anrBlock('2011.362', 'app.test', 6004, 'failed to complete startup')],
+    kill: 'Killing 6004:app.test/u0a145 (adj 900): bg anr',
+    after: [startProc('2030.000', 6100)],
+    expected: null,
+  },
+])('an ActivityManager ANR kill counts only for $name', ({ lines, kill, after = [], expected }) => {
+  const text = ['--------- beginning of system', ...lines, AM('2011.363', kill), ...after].join('\n');
+  expect(parseAndroidAnrKill(text, { appId: 'app.test', since: 1_000_000 }, 0)).toEqual(expected);
 });
