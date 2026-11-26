@@ -136,17 +136,19 @@ run, such as agent-device, brings it back.
 
 ## What Stim deletes
 
-| Action                        | What happens                                                                                                                 |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `stim stop`                   | Shuts down the workspace's devices and releases its leases. Deletes nothing.                                                 |
-| `stim worktree remove`        | Reclaims the workspace and parks its owned devices for reuse, unless disk pressure is critical.                              |
-| `stim gc --dry-run`           | Shows what `stim gc` would delete. Deletes nothing.                                                                          |
-| `stim gc`                     | Deletes stale owned devices, devices of workspaces idle for `idle.dormantDays` (1 day), unused simulator runtimes, and more. |
-| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                                                    |
+| Action                        | What happens                                                                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stim stop`                   | Shuts down the workspace's devices and releases its leases. Deletes no local device.                                                                 |
+| `stim worktree remove`        | Reclaims the workspace and parks its owned devices for reuse, or deletes them at critical disk pressure, with parking at `0`, or when parking fails. |
+| `stim gc --dry-run`           | Shows what `stim gc` would delete. Deletes nothing.                                                                                                  |
+| `stim gc`                     | Deletes stale owned devices, devices of workspaces idle for `idle.dormantDays` (1 day), unused simulator runtimes, and more.                         |
+| `stim gc --pressure critical` | Also makes every idle workspace dormant, which deletes its owned devices.                                                                            |
 
 Each platform parks up to three devices by default (`pool.iosParkedMax`,
-`pool.androidParkedMax`), and Stim clears the previous app's data before
-reusing one. Stim also deletes iOS simulator runtimes no simulator uses; [How
+`pool.androidParkedMax`). Before reusing one, Stim uninstalls every other user
+app and clears the kept app's data; an iOS simulator also has its privacy
+grants and keychain reset, and an Android emulator still short on `/data` has
+its user data wiped. Stim also deletes iOS simulator runtimes no simulator uses; [How
 cleanup works](./maintenance.md#deletion-rules) has that rule and the rest.
 Stim never touches simulators you created or physical devices.
 
