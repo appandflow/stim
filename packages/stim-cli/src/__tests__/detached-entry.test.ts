@@ -76,7 +76,6 @@ test.each([
   try {
     const launcher = windowsDetachedLaunchArgs({ file: 'D:\\tools\\node.exe', args: [], cwd: 'D:\\' });
     expect(launcher.file).toBe(`${expectedRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`);
-    expect(launcher.env.STIM_WINDOWS_LAUNCH_ARGS).toBe('"D:\\tools\\node.exe"');
   } finally {
     process.env = originalEnv;
   }

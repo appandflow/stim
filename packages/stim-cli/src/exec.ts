@@ -95,7 +95,7 @@ export function windowsDetachedLaunchArgs({
     file: windowsSystemExecutable('powershell.exe'),
     args: ['-NoProfile', '-NonInteractive', '-Command', LAUNCH_SCRIPT],
     env: {
-      STIM_WINDOWS_LAUNCH_ARGS: windowsCommandLine(file, args),
+      STIM_WINDOWS_LAUNCH_ARGS: windowsCommandLine(file, args, cwd),
       STIM_WINDOWS_LAUNCH_CWD: cwd,
       STIM_WINDOWS_LAUNCH_CONSOLE: console,
       STIM_WINDOWS_LAUNCH_LOG: logFile ?? '',
@@ -106,19 +106,22 @@ export function windowsDetachedLaunchArgs({
 interface CrossSpawnParsed {
   command: string;
   args: string[];
+  options: { windowsVerbatimArguments?: boolean };
 }
 
-// CreateProcessW runs a .cmd or .bat file only through cmd.exe, which reparses its command line; cross-spawn's parser
-// (what its spawn uses) builds the escaped `cmd.exe /d /s /c` invocation the executor's spawn would run.
-function windowsCommandLine(file: string, args: readonly string[]): string {
+// CreateProcessW runs neither a .cmd or .bat file without cmd.exe, which reparses its command line, nor a shebang
+// script; cross-spawn's parser (what its spawn uses) builds the invocation the executor's spawn would run.
+function windowsCommandLine(file: string, args: readonly string[], cwd: string): string {
   if (isUnsafeBatchSpawn(file, args))
     throw new Error(
       `Refusing to run ${basename(file)}: an argument contains a character cmd.exe could misinterpret (a double quote or a line break).`,
     );
-  if (!WINDOWS_BATCH_FILE.test(file)) return [file, ...args].map(windowsArgument).join(' ');
+  if (process.platform !== 'win32') return [file, ...args].map(windowsArgument).join(' ');
   const parse: (file: string, args: string[], options: object) => CrossSpawnParsed = Reflect.get(spawn, '_parse');
-  const parsed = parse(file, [...args], {});
-  return [windowsArgument(parsed.command), ...parsed.args].join(' ');
+  const parsed = parse(file, [...args], { cwd });
+  return parsed.options.windowsVerbatimArguments
+    ? [windowsArgument(parsed.command), ...parsed.args].join(' ')
+    : [parsed.command, ...parsed.args].map(windowsArgument).join(' ');
 }
 
 function windowsArgument(value: string): string {
