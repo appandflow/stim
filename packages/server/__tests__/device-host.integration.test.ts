@@ -3063,6 +3063,32 @@ test('close waits for an in-flight retirement and prevents further reconciliatio
   expect(existsSync(join(deviceHostArea(next.id), 'home', 'stopped'))).toBe(false);
 });
 
+test('a retirement whose stop worker group outlived its deadline frees the session claim once the group exits', async () => {
+  const record = seedHosted({ deviceType: 'delayed-stop' });
+  const area = join(deviceHostArea(record.id), 'home');
+  const claims = join(deviceHostRoot(), `${record.id}.claims`);
+  const reconciliation = host.reconcileStopped();
+  await vi.waitFor(() => expect(existsSync(join(area, 'stopped'))).toBe(true));
+  const pid = await readPid(join(area, 'stopped'));
+  const kill = process.kill.bind(process);
+  const withheld = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) =>
+      target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
+    );
+  try {
+    await reconciliation;
+    expect(readClaimSet(claims).live).toHaveLength(1);
+  } finally {
+    withheld.mockRestore();
+    writeFileSync(join(area, 'release-stop'), 'release');
+    await groupGone(pid);
+  }
+  await vi.waitFor(() => expect(readClaimSet(claims).live).toEqual([]));
+  await host.reconcileStopped();
+  expectRetired(record.id);
+});
+
 // The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
 test.skipIf(process.platform === 'win32')(
   'Android Metro restore is serialized with install and stop under its session claim',
@@ -3436,7 +3462,7 @@ test('unknown stop retries are bounded and a client can stop after the host rele
   expect(host.working()).toBe(1);
 });
 
-test('the sweep keeps an unknown session whose worker group did not settle, without stopping or releasing it', async () => {
+test('the sweep keeps an unknown session while its unsettled worker group lives and stops it once the group exits', async () => {
   const session = await reserve({ deviceType: 'held-prepare' });
   const area = join(deviceHostArea(session.id), 'home');
   await vi.waitFor(() => expect(existsSync(join(area, 'entered'))).toBe(true));
@@ -3462,6 +3488,75 @@ test('the sweep keeps an unknown session whose worker group did not settle, with
     writeFileSync(join(area, 'release-prepare'), '');
     await groupGone(pid);
   }
+  host.sweepIdle();
+  await state(session.id, 'stopped');
+  expect(readFileSync(join(area, 'modes'), 'utf8')).toBe('prepare\nstop\n');
+  expect(host.working()).toBe(0);
+  expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toEqual([]);
+});
+
+test(
+  'a stop refused by an unsettled log worker group goes through once that group exits',
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async () => {
+    const session = await reserve({ deviceType: 'logs-hang' });
+    await state(session.id, 'ready');
+    const app = await offerAndUpload(session.id, 'app-first');
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    const area = join(deviceHostArea(session.id), 'home');
+    const pending = host.logsQuery('client', { session: session.id });
+    await vi.waitFor(() => expect(existsSync(join(area, 'logs-entered'))).toBe(true));
+    const pid = await readPid(join(area, 'logs-entered'));
+    const logsClaims = join(deviceHostRoot(), `${session.id}.claims.logs`);
+    const kill = process.kill.bind(process);
+    const withheld = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((target, signal) =>
+        target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
+      );
+    try {
+      host.stop('client', { session: session.id });
+      expect(await state(session.id, 'unknown')).toHaveProperty('notice', expect.stringContaining('log worker group'));
+      expect(await pending).toHaveProperty('error');
+      expect(readClaimSet(logsClaims).live).toHaveLength(1);
+    } finally {
+      withheld.mockRestore();
+      if (processGroupAlive(pid)) process.kill(-pid, 'SIGKILL');
+      await groupGone(pid);
+    }
+    host.sweepIdle();
+    await state(session.id, 'stopped');
+    expect(readClaimSet(logsClaims).live).toEqual([]);
+    expect(host.working()).toBe(0);
+  },
+);
+
+test('an app state probe whose worker group outlived its deadline frees the input claim once the group exits', async () => {
+  const { id, params } = await installApp('ios');
+  const area = join(deviceHostArea(id), 'home');
+  writeFileSync(join(area, 'app-state-wait'), '');
+  const pending = host.appState('client', params);
+  await vi.waitFor(() => expect(existsSync(join(area, 'app-state-entered'))).toBe(true));
+  const pid = await readPid(join(area, 'app-state-entered'));
+  const inputClaims = join(deviceHostRoot(), `${id}.claims.input`);
+  const kill = process.kill.bind(process);
+  const withheld = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) =>
+      target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
+    );
+  try {
+    expect(await pending).toHaveProperty('error.code', 'action-failed');
+    expect(readClaimSet(inputClaims).live).toHaveLength(1);
+  } finally {
+    withheld.mockRestore();
+    rmSync(join(area, 'app-state-wait'), { force: true });
+    await groupGone(pid);
+  }
+  await vi.waitFor(() => expect(readClaimSet(inputClaims).live).toEqual([]));
+  host.stop('client', { session: id });
+  await state(id, 'stopped');
 });
 
 test('revocation during inspection refuses adoption and retires the parked device after releasing its claim', async () => {
