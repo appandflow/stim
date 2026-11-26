@@ -1805,8 +1805,10 @@ PREDICTING THE NEXT BUILD (--plan)
   key once; and a Release hit that fails its JS swap builds fresh.
   An Android plan reads the ABI from the emulator the slot records, or from
   the system image a new one would use. A plan refuses --device, --wait,
-  --no-wait, --no-metro-check and --simulator-app with STIM_BAD_ARG.
-  With --remote, ios.remote or android.remote set to a Mac name, a plan reads the
+  --no-wait and --no-metro-check with STIM_BAD_ARG, and an iOS plan also
+  refuses --install-runtime and --simulator-app. A native Xcode plan refuses
+  any remote; plan it with --remote local. Otherwise, with --remote,
+  ios.remote or android.remote set to a Mac name, a plan reads the
   architecture or ABI from that Mac's device offer, the question a run asks
   before it reserves anything. With auto it repeats the placement decision a
   run would make now and reports where in the payload's placement field, for

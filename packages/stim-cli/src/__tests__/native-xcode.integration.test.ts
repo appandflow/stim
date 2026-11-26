@@ -421,6 +421,21 @@ test('stim ios, build and plan APIs and --plan share one native artifact key for
   });
 });
 
+test.each(['flag', 'setting'])('a hosted remote from the %s refuses the plan and names its source', async (origin) => {
+  writeNativeXcodeProject(root);
+  write(join(root, '.stim.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  const plan = nativeXcodeIosProject(root).plan;
+  if (!plan) throw new Error('The native Xcode fixture has no plan.');
+  expect(await plan(origin === 'flag' ? { remote: 'proxy' } : {}, resolvedSettings(root))).toMatchObject({
+    refusal: {
+      message: expect.stringContaining(origin === 'flag' ? 'which --remote asks for' : 'which ios.remote asks for'),
+      remedy: expect.stringContaining('--remote local'),
+    },
+  });
+  expect(await plan({ remote: 'local' }, resolvedSettings(root))).not.toHaveProperty('refusal');
+});
+
 test('ios.scheme selects the scheme for native planning and the native doctor', async () => {
   writeNativeXcodeProject(root);
   write(join(root, '.stim.json'), JSON.stringify({ ios: { scheme: 'Missing' } }));
