@@ -294,9 +294,12 @@ describe('createActivityReader', () => {
     writeFileSync(events, '{}\n');
     const actedAt = NOW - 120_000;
     utimesSync(events, actedAt / 1000, actedAt / 1000);
+    adb +=
+      ' 6628 app_process /system/bin com.android.commands.am.Am instrument -w -e mode authenticated-session-v1 -e sessionSocket agentdevice-snapshot-helper-63356 com.callstack.agentdevice.snapshothelper/.SnapshotInstrumentation\n';
     expect(read({ 100: OWNER_START }, { ...target, platform, id })).toMatchObject({
       state: 'driven',
       recent: { 'agent-action': new Date(actedAt).toISOString() },
+      basis: ['agent-device-claim'],
     });
   });
 
