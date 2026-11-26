@@ -1,11 +1,25 @@
+import { processContext } from '../cli-operation.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { cancelledFailure } from '../engine/native-run.ts';
 import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import {
+  watchFile,
+  unwatchFile,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
+  pendingEasSessionRemedy,
   endRecordedSession,
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -512,7 +526,7 @@ describe('session creation', () => {
 
   test('an Expo app without an EAS project gets the EAS link remedy, not the owned-simulator one', async () => {
     const stderr = [
-      '★ eas-cli@25.3.0 is now available.',
+      '\u2605 eas-cli@25.3.0 is now available.',
       'EAS project not configured. This command cannot configure it in non-interactive mode. Run one of the following, then re-run this command:',
       '  eas init --id <project-id> --non-interactive',
     ].join('\n');
@@ -555,12 +569,48 @@ describe('session creation', () => {
     for (const call of exec.calls) expect(call.timeoutMs).toBeGreaterThan(0);
   });
 
+  test.each([false, true])('a failed create resolves exact NEW sessions, with partial id: %s', async (hasId) => {
+    const error = Object.assign(new Error('network disconnected'), { stdout: hasId ? CREATED : '' });
+    const exec = mockExec({
+      errors: { '/bin/eas sim ': error },
+      outputs: {
+        'simulator:list': JSON.stringify({
+          sessions: [
+            { id: 'drs_42', name: 'stim-wt', status: 'NEW' },
+            { id: 'other', name: 'stim-wt-other', status: 'NEW' },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        }),
+      },
+    });
+    const result = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(result.failed).toBe(true);
+    expect(result.reason).toContain('network disconnected');
+    expect(exec.calls.filter((c) => c.args[0] === 'simulator:stop').map((c) => c.args[2])).toEqual(['drs_42']);
+    expect(readEasSessionLedger(tmpHome).claims.has('stim-wt')).toBe(false);
+  });
+
+  test('a failed pending claim write prevents create', async () => {
+    const blocked = join(tmpHome, 'blocked');
+    writeFileSync(blocked, 'file');
+    const exec = mockExec();
+    const result = await remoteIosDeps(ctx({ easLedgerRoot: blocked })).ensureBooted({});
+    expect(result.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+  });
+
   test('an eas sim that outlives its deadline names the session it may have left running', async () => {
     const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/eas sim'), { code: 'ETIMEDOUT' });
-    mockExec({ errors: { sim: timedOut } });
+    mockExec({
+      errors: { '/bin/eas sim ': timedOut },
+      outputs: {
+        'simulator:list': JSON.stringify({ sessions: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+      },
+    });
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
     expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('stim-wt');
+    expect(booted.reason).toContain('no session named stim-wt was found yet');
+    expect(readEasSessionLedger(tmpHome).claims.has('stim-wt')).toBe(true);
     expect(booted.remedy).toContain('eas simulator:list --name stim-wt');
   });
 });
@@ -1155,4 +1205,57 @@ test('remoteSessionExpired is true only strictly past a recorded expiry', () => 
   expect(remoteSessionExpired({ ...record, expiresAt }, at)).toBe(false);
   expect(remoteSessionExpired({ ...record, expiresAt }, at + 1)).toBe(true);
   expect(remoteSessionExpired(record, at + 1e12)).toBe(false);
+});
+
+test.each(['live', 'absent', 'printed'])(
+  'cancelling an EAS child before it finishes preserves ownership: %s',
+  async (mode) => {
+    resetExecutor();
+    const easBin = join(root, 'delayed-eas.cjs');
+    writeFileSync(
+      easBin,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const command = process.argv[2];
+if (command === 'sim') {
+  ${mode === 'printed' ? `process.stdout.write(${JSON.stringify(CREATED)});` : ''}
+  fs.writeFileSync(${JSON.stringify(join(root, 'created'))}, 'ready');
+  setInterval(() => {}, 1000);
+} else if (command === 'simulator:list') {
+  process.stdout.write(JSON.stringify({ sessions: ${mode === 'absent' ? '[]' : "[{id:'drs_42',name:'stim-wt',status:'NEW'}]"}, pageInfo: {hasNextPage:false,endCursor:null} }));
+} else if (command === 'simulator:stop') {
+  fs.writeFileSync(${JSON.stringify(join(root, 'stopped'))}, 'drs_42');
+  process.stdout.write(JSON.stringify({id:'drs_42',status:'STOPPED'}));
+}
+`,
+    );
+    chmodSync(easBin, 0o755);
+    const controller = new AbortController();
+    const operation = processContext(root, controller.signal);
+    const marker = join(root, 'created');
+    watchFile(marker, { interval: 10 }, (stat) => {
+      if (stat.size) controller.abort();
+    });
+    try {
+      const result = await remoteIosDeps(ctx({ easBin, operation })).ensureBooted({});
+      expect(result.failed).toBe(true);
+      expect(readEasSessionLedger(tmpHome).claims.has('stim-wt')).toBe(mode === 'absent');
+      expect(existsSync(join(root, 'stopped'))).toBe(mode !== 'absent');
+      operationState(operation).cancelled = 'cancelled';
+      const remedy = pendingEasSessionRemedy('stim-wt');
+      expect(cancelledFailure(operation, 'ios', { code: 'STIM_REMOTE_SESSION_CLEANUP', remedy })?.remedy).toBe(remedy);
+    } finally {
+      unwatchFile(marker);
+    }
+  },
+);
+
+test('an already cancelled operation never spawns create', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const exec = mockExec();
+  await expect(
+    remoteIosDeps(ctx({ operation: processContext(root, controller.signal) })).ensureBooted({}),
+  ).rejects.toThrow(/cancel/i);
+  expect(exec.calls).toEqual([]);
 });

@@ -41,6 +41,7 @@ import {
   MIN_EAS_CLI_SIMULATOR_VERSION,
   ownedSessionName,
   parseCreatedSession,
+  parseSessionListPage,
   remoteDaemonFrom,
   stopSessionArgs,
   verifyStoppedSession,
@@ -51,6 +52,7 @@ import { describeEasProjectLockHolder, withEasProjectLock } from './eas-project-
 import { nativeRunWaitNotice } from './native-run.ts';
 import {
   easMachineStateRoot,
+  isPendingEasSessionClaim,
   readEasSessionLedger,
   recordEasSessionClaim,
   removeEasSessionClaim,
@@ -264,6 +266,45 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       }
 
       if (!daemon) {
+        const name = ownedSessionName(ctx.label);
+        const ledgerRoot = ctx.easLedgerRoot ?? easMachineStateRoot();
+        const remedy = pendingEasSessionRemedy(name);
+        const signal = ctx.operation ? (operationState(ctx.operation).runSignal ?? ctx.operation.signal) : undefined;
+        throwIfCancelled(signal, 'remote device boot');
+        const previous = readEasSessionLedger(ledgerRoot).claims.get(name);
+        if (previous && isPendingEasSessionClaim(previous)) {
+          const resolved = await resolvePendingEasSession(ctx.root, ctx.easBin, name, ledgerRoot, ctx.operation);
+          if (!resolved.ok)
+            return { failed: true, code: 'STIM_REMOTE_SESSION_CLEANUP', reason: resolved.reason, remedy };
+        }
+        try {
+          await recordEasSessionClaim(
+            {
+              sessionId: name,
+              name,
+              platform: ctx.platform ?? 'ios',
+              workspaceRoot: ctx.root,
+              workspaceHome: getConfigDir(),
+              stateFile: workspaceStateFile(ctx.root),
+            },
+            ledgerRoot,
+          );
+        } catch (error) {
+          return {
+            failed: true,
+            code: 'STIM_REMOTE_SESSION_CLEANUP',
+            reason: `Could not record pending EAS session ${name}: ${describe(error)}`,
+            remedy,
+          };
+        }
+        const failedCreate = async (reason: string): Promise<BootResult> => {
+          const resolved = await resolvePendingEasSession(ctx.root, ctx.easBin, name, ledgerRoot, ctx.operation, true);
+          return {
+            failed: true,
+            ...(!resolved.ok ? { code: 'STIM_REMOTE_SESSION_CLEANUP', remedy } : {}),
+            reason: `${reason}. ${resolved.reason}`,
+          };
+        };
         note('Creating an EAS Simulator session (this takes a moment).');
         let stdout: string;
         try {
@@ -280,23 +321,12 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           );
         } catch (err) {
           const cancelled = ctx.operation && (operationState(ctx.operation).runSignal ?? ctx.operation.signal).aborted;
-          if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' || cancelled) {
-            const failure = cancelled
-              ? 'eas sim was cancelled'
-              : `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes`;
-            const partial = parseCreatedSession(String((err as { stdout?: unknown }).stdout ?? ''));
-            if (partial) {
-              return abandonSession(ctx, partial.id, `${failure} after creating session ${partial.id}.`);
-            }
-            const name = ownedSessionName(ctx.label);
-            return {
-              failed: true,
-              reason: `${failure} and the eas process was killed. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
-              remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
-            };
-          }
+          const partial = parseCreatedSession(String((err as { stdout?: unknown }).stdout ?? ''));
+          const failureText = cancelled ? 'eas sim was cancelled' : describe(err);
+          if (partial) return abandonSession(ctx, partial.id, failureText);
           const failure = describe(err);
           if (EAS_PROJECT_NOT_CONFIGURED.test(failure)) {
+            removeEasSessionClaim(name, ledgerRoot, isPendingEasSessionClaim);
             return {
               failed: true,
               code: 'STIM_REMOTE_EAS_UNAVAILABLE',
@@ -304,11 +334,11 @@ function remoteDeviceDeps(ctx: RemoteContext) {
               remedy: `Link it with \`eas init --id <project-id> --non-interactive\` (existing project) or \`eas init --account <account-name> --non-interactive\` (new project), then run \`stim ${ctx.platform ?? 'ios'} --remote eas\` again.`,
             };
           }
-          return { failed: true, reason: `eas sim failed: ${failure}` };
+          return failedCreate(`eas sim failed: ${failureText}`);
         }
         const created = parseCreatedSession(stdout);
         if (!created) {
-          return { failed: true, reason: 'eas sim returned no session; run it by hand to see what it reported.' };
+          return failedCreate('eas sim returned no session');
         }
         id = created.id;
         createdHere = created.id;
@@ -691,13 +721,73 @@ async function stopCreatedSession(ctx: RemoteContext, sessionId: string): Promis
 
 async function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): Promise<BootResult> {
   const stopped = await stopCreatedSession(ctx, sessionId);
-  if (stopped.ok) return { failed: true, reason: `${reason} The session was stopped.` };
+  if (stopped.ok) {
+    removeEasSessionClaim(ownedSessionName(ctx.label), ctx.easLedgerRoot, isPendingEasSessionClaim);
+    return { failed: true, reason: `${reason} The session ${sessionId} was stopped.` };
+  }
   return {
     failed: true,
     code: stopped.code,
     reason: `${reason} ${stopped.reason} ${stopped.remedy}`,
-    remedy: stopped.remedy,
+    remedy: pendingEasSessionRemedy(ownedSessionName(ctx.label)),
   };
+}
+
+export function pendingEasSessionRemedy(name: string): string {
+  return `Run \`stim stop\` to end it, or by hand: \`eas simulator:list --name ${name}\` then \`eas simulator:stop --id <id>\`.`;
+}
+
+export async function resolvePendingEasSession(
+  root: string,
+  easBin: string,
+  name: string,
+  ledgerRoot: string,
+  operation?: StimContext,
+  keepWhenNone = false,
+): Promise<{ ok: boolean; reason: string }> {
+  try {
+    const stdout = await remoteCommand(
+      { operation, easBin },
+      easBin,
+      ['simulator:list', '--name', name, '--limit', '100', '--json', '--non-interactive'],
+      easBoundedExecOptions(root),
+      true,
+    );
+    const parsed = parseSessionListPage(stdout);
+    if (!parsed.ok) return { ok: false, reason: parsed.reason };
+    if (parsed.page.hasNextPage) return { ok: false, reason: `EAS returned more than 100 sessions for ${name}.` };
+    const stopped: string[] = [];
+    for (const raw of parsed.page.sessions) {
+      const session = raw as { id?: string; name?: string; status?: string } | null;
+      if (session?.name !== name) continue;
+      if (!session.id || !session.status) return { ok: false, reason: `EAS returned a malformed session for ${name}.` };
+      if (['STOPPED', 'ERRORED'].includes(session.status.toUpperCase().replaceAll('-', '_'))) continue;
+      const output = await remoteCommand(
+        { operation, easBin },
+        easBin,
+        stopSessionArgs(session.id),
+        easBoundedExecOptions(root),
+        true,
+      );
+      const verified = verifyStoppedSession(output, session.id);
+      if (!verified.ok) return { ok: false, reason: verified.reason };
+      stopped.push(session.id);
+    }
+    if (!stopped.length && keepWhenNone)
+      return {
+        ok: false,
+        reason: `no session named ${name} was found yet; Stim kept its record so \`stim stop\` or the next run ends it if EAS still starts one`,
+      };
+    removeEasSessionClaim(name, ledgerRoot, isPendingEasSessionClaim);
+    return {
+      ok: true,
+      reason: stopped.length
+        ? `Stopped EAS sessions ${stopped.join(', ')}.`
+        : `No live session named ${name} was found.`,
+    };
+  } catch (error) {
+    return { ok: false, reason: `Could not resolve EAS session ${name}: ${describe(error)}` };
+  }
 }
 
 export function withRemoteSessionLock<T>(
@@ -809,10 +899,16 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
                     : {}),
                 },
               });
+              try {
+                removeClaim(sessionName, ledgerRoot, isPendingEasSessionClaim);
+              } catch {}
               return booted;
             } catch (err) {
               const cleanup = await abandonCreatedSession();
               if (cleanup.ok) {
+                try {
+                  removeClaim(sessionName, ledgerRoot, isPendingEasSessionClaim);
+                } catch {}
                 let removalFailure = 'the claim store did not remove it';
                 try {
                   if (removeClaim(sessionId, ledgerRoot)) {

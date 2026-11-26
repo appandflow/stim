@@ -26,6 +26,7 @@ import { withRemoteSessionLock } from '../../engine/device-remote.ts';
 import { withEasProjectLock } from '../../engine/eas-project-lock.ts';
 import {
   easMachineStateRoot,
+  isPendingEasSessionClaim,
   readEasSessionLedger,
   removeEasSessionClaim,
   type EasSessionClaim,
@@ -290,7 +291,10 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
   const orphaned: ScopedSessionSummary[] = [];
   if (ledger.safe && recorded.safe) {
     for (const session of compared.orphaned) {
-      const claim = ledger.claims.get(session.id);
+      const pending = ledger.claims.get(session.name);
+      const claim =
+        ledger.claims.get(session.id) ??
+        (pending && isPendingEasSessionClaim(pending) && pending.platform === session.platform ? pending : undefined);
       if (!claim || claim.name !== session.name || claim.platform !== session.platform) {
         notices.push(
           `EAS session ${session.id} (${session.name}) is unclaimed or its fixed ownership record does not match; it was not selected for deletion.`,
@@ -434,11 +438,18 @@ export async function deleteEasSessions(
             const ledgerRoot = coordinatedDeps.easLedgerRoot ?? easMachineStateRoot();
             const ledger = readEasSessionLedger(ledgerRoot);
             const removeClaim = coordinatedDeps.removeEasSessionClaim ?? removeEasSessionClaim;
-            const reconcileClaim = (sessionId: string): void => {
+            const reconcileClaim = (claim: EasSessionClaim): void => {
               deps.operation?.signal.throwIfAborted();
               let detail = 'the claim store did not remove it';
               try {
-                if (removeClaim(sessionId, ledgerRoot)) return;
+                if (
+                  removeClaim(
+                    claim.sessionId,
+                    ledgerRoot,
+                    isPendingEasSessionClaim(claim) ? isPendingEasSessionClaim : undefined,
+                  )
+                )
+                  return;
               } catch (error) {
                 deps.operation?.signal.throwIfAborted();
                 detail = describeError(error);
@@ -446,7 +457,7 @@ export async function deleteEasSessions(
               deleteFailures++;
               output.log(
                 chalk.red(
-                  `EAS session ${sessionId} is resolved, but its ownership claim could not be removed: ${detail}. The claim was retained for reconciliation.`,
+                  `EAS session ${claim.sessionId} is resolved, but its ownership claim could not be removed: ${detail}. The claim was retained for reconciliation.`,
                 ),
               );
             };
@@ -480,7 +491,12 @@ export async function deleteEasSessions(
                   });
                   continue;
                 }
-                const claim = ledger.claims.get(session.id);
+                const pending = ledger.claims.get(session.name);
+                const claim =
+                  ledger.claims.get(session.id) ??
+                  (pending && isPendingEasSessionClaim(pending) && pending.platform === session.platform
+                    ? pending
+                    : undefined);
                 const claimState = claim ? claimStateAbsence(claim) : null;
                 if (
                   !claim ||
@@ -528,7 +544,7 @@ export async function deleteEasSessions(
                   deps.operation?.signal.throwIfAborted();
                   if (isDefinitiveMissingSessionError(error, session.id)) {
                     output.log(chalk.dim(`EAS session ${session.id} is already gone.`));
-                    reconcileClaim(session.id);
+                    reconcileClaim(claim);
                   } else {
                     deleteFailures++;
                     output.log(chalk.red(`Could not verify EAS session ${session.id}: ${describeError(error)}`));
@@ -543,7 +559,7 @@ export async function deleteEasSessions(
                 const inspection = inspectSessionForTeardown(live, session.id);
                 if (inspection.action === 'already-stopped') {
                   output.log(chalk.dim(`EAS session ${session.id} is already stopped (${inspection.status}).`));
-                  reconcileClaim(session.id);
+                  reconcileClaim(claim);
                   continue;
                 }
                 if (inspection.action === 'refused') {
@@ -588,7 +604,7 @@ export async function deleteEasSessions(
                 }
                 output.log(chalk.green(`Stopped EAS session ${session.id} (${session.name})`));
                 output.record('easSession', 'done', session.name, { id: session.id });
-                reconcileClaim(session.id);
+                reconcileClaim(claim);
               }
             }
           });

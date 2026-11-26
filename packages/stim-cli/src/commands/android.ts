@@ -901,7 +901,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       lease,
     }: FailExtra = {},
   ): RunAndroidResult => {
-    const cancellation = cancelledFailure(context, PLATFORM, { code, message });
+    const cancellation = cancelledFailure(context, PLATFORM, { code, message, remedy });
     if (cancellation) ({ code, message, remedy, lines } = cancellation);
     if (lastBuildStatus || artifactAcquired) {
       persistLastBuild({
@@ -1400,6 +1400,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               root,
               platform: PLATFORM,
               sessionName: ownedSessionName(remoteDevice.ctx.label),
+              ledgerRoot: remoteDevice.ctx.easLedgerRoot,
               operation: context,
               startedAt: new Date(now()).toISOString(),
               maxDurationMinutes: remoteDevice.ctx.maxDurationMinutes ?? null,

@@ -80,3 +80,7 @@ export async function removeEasSessionClaimAsync(
   if (!existsSync(easSessionLedgerFile(root))) return false;
   return withDirLockAsync(easSessionLedgerLock(root), () => removeEasSessionClaim(sessionId, root, when), { signal });
 }
+
+export function isPendingEasSessionClaim(claim: EasSessionClaim): boolean {
+  return claim.sessionId === claim.name;
+}

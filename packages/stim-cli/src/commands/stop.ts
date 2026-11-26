@@ -1,3 +1,6 @@
+import { resolveEasCliBin as defaultResolveEasCliBin } from '../engine/remote-cache.ts';
+import { easMachineStateRoot, readEasSessionLedger, isPendingEasSessionClaim } from '../engine/eas-session-ledger.ts';
+import { canonicalPath } from './gc/paths.ts';
 import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { debugLog } from '../debug-log.ts';
@@ -90,7 +93,12 @@ import {
 } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
-import { endRecordedSession } from '../engine/device-remote.ts';
+import {
+  endRecordedSession,
+  resolvePendingEasSession,
+  pendingEasSessionRemedy,
+  withRemoteSessionLock,
+} from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { waitForTreeExit } from '../process-group-exit.ts';
@@ -362,6 +370,46 @@ async function endRemoteSession(
   return { status: result.status, label: sessionId, reason: result.reason };
 }
 
+async function endPendingEasSessions(
+  root: string,
+  ledgerRoot: string,
+  operation: StimContext | undefined,
+  resolvePending: typeof resolvePendingEasSession,
+  resolveBin: typeof defaultResolveEasCliBin,
+  report: (line: string) => void,
+  remoteDevice: RemoteDeviceRecord | null | undefined,
+  record: (outcome: DeviceOutcomeEntry) => void,
+): Promise<void> {
+  if (remoteDevice !== undefined) return;
+  const claims = () =>
+    [...readEasSessionLedger(ledgerRoot).claims.values()].filter(
+      (claim) => isPendingEasSessionClaim(claim) && canonicalPath(claim.workspaceRoot) === canonicalPath(root),
+    );
+  if (!claims().length) return;
+  await withRemoteSessionLock(
+    root,
+    async () => {
+      let outcome: DeviceOutcomeEntry | null = null;
+      for (const claim of claims()) {
+        const eas = resolveBin(root);
+        const result = eas
+          ? await resolvePending(root, eas.file, claim.name, ledgerRoot, operation)
+          : { ok: false, reason: 'eas-cli is not available.' };
+        const reason = result.ok ? result.reason : `${result.reason} ${pendingEasSessionRemedy(claim.name)}`;
+        report(phaseLine('device', reason));
+        if (outcome?.status !== 'failed')
+          outcome = {
+            status: result.ok ? 'torn-down' : 'failed',
+            label: claim.name,
+            reason: result.ok ? undefined : reason,
+          };
+      }
+      if (outcome) record(outcome);
+    },
+    { signal: operation?.signal, declareSpawnsFor: operation },
+  );
+}
+
 function remoteEnded(entry: DeviceOutcomeEntry): boolean {
   return entry.status !== 'failed' && !entry.reason;
 }
@@ -575,6 +623,9 @@ async function stopWorkspace({
   hostedSlot,
   remoteDevice = undefined,
   teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
+  resolvePendingSession = resolvePendingEasSession,
+  resolveEasCliBin = defaultResolveEasCliBin,
+  easLedgerRoot = easMachineStateRoot(),
   metroTunnel = undefined,
   stopMetroTunnel = (projectRoot, record, signal) => stopTunnelThroughStimd(projectRoot, record, signal),
   releaseLeases = releaseWorkspaceLeasesAsync,
@@ -609,6 +660,9 @@ async function stopWorkspace({
   hostedSlot?: string;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
+  resolvePendingSession?: typeof resolvePendingEasSession;
+  resolveEasCliBin?: typeof defaultResolveEasCliBin;
+  easLedgerRoot?: string;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: (root: string, record: ManagedTunnelRecord | null, signal?: AbortSignal) => Promise<TunnelStop>;
   releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
@@ -892,6 +946,19 @@ async function stopWorkspace({
     }
     return workspace;
   });
+  await endPendingEasSessions(
+    root,
+    easLedgerRoot,
+    operation,
+    resolvePendingSession,
+    resolveEasCliBin,
+    report,
+    remoteDevice,
+    (pending) => {
+      outcomes.device.remote = pending;
+      ok = ok && remoteEnded(pending);
+    },
+  );
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {

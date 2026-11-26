@@ -619,7 +619,7 @@ async function runIos(
     lease,
     setup = false,
   }: FailArgs): null => {
-    ({ code, message, remedy, lines } = cancelledFailure(context, PLATFORM, { code, message }) ?? {
+    ({ code, message, remedy, lines } = cancelledFailure(context, PLATFORM, { code, message, remedy }) ?? {
       code,
       message,
       remedy,
@@ -1252,6 +1252,7 @@ async function runIos(
                 root,
                 platform: PLATFORM,
                 sessionName: ownedSessionName(remoteDevice.ctx.label),
+                ledgerRoot: remoteDevice.ctx.easLedgerRoot,
                 operation: context,
                 startedAt: new Date(d.now()).toISOString(),
                 deviceType: remoteDevice.ctx.deviceType ?? null,

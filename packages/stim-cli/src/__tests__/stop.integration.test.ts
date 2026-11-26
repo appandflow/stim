@@ -1,3 +1,4 @@
+import { recordEasSessionClaim, readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'fs';
@@ -2127,4 +2128,43 @@ describe('stop leaves the owned simulator booted when the booted-park gates hold
     await runStop(opts);
     expect(readDeferredShutdowns(readWorkspaceState(tmpRoot))).toEqual({});
   });
+});
+
+test('full stop resolves a pending EAS claim without a workspace session id', async () => {
+  const ledgerRoot = join(tmpHome, 'eas-ledger');
+  await recordEasSessionClaim(
+    {
+      sessionId: 'stim-pending',
+      name: 'stim-pending',
+      platform: 'ios',
+      workspaceRoot: tmpRoot,
+      workspaceHome: tmpHome,
+      stateFile: workspaceStateFile(tmpRoot),
+    },
+    ledgerRoot,
+  );
+  const calls: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFileAsync: async (_file, args = []) => {
+        calls.push(args[0] ?? '');
+        return JSON.stringify(
+          args[0] === 'simulator:list'
+            ? {
+                sessions: [{ id: 'pending-id', name: 'stim-pending', status: 'NEW' }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              }
+            : { id: 'pending-id', status: 'STOPPED' },
+        );
+      },
+    }),
+  );
+  const { opts } = seams({
+    root: tmpRoot,
+    easLedgerRoot: ledgerRoot,
+    resolveEasCliBin: () => ({ file: '/fixture-eas', source: 'path' }),
+  });
+  await runStop(opts);
+  expect(calls).toEqual(['simulator:list', 'simulator:stop']);
+  expect(readEasSessionLedger(ledgerRoot).claims.size).toBe(0);
 });

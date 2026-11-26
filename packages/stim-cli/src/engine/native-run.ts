@@ -161,14 +161,17 @@ export function runCancellation(context: StimContext | undefined): string | null
 export function cancelledFailure(
   context: StimContext | undefined,
   platform: 'ios' | 'android',
-  { code, message }: { code: string | undefined; message?: string | null },
+  { code, message, remedy }: { code: string | undefined; message?: string | null; remedy?: string | null },
 ): { code: string; message: string; remedy: string; lines: string[] } | null {
   const cancelled = runCancellation(context);
   if (cancelled === null || code === 'STIM_CLAIM_UNAVAILABLE') return null;
   return {
     code: 'STIM_CANCELLED',
     message: `The ${platform} run was ${cancelled} before it finished.`,
-    remedy: `Run \`stim ${platform}\` again when you want the app on a device.`,
+    remedy:
+      code === 'STIM_REMOTE_SESSION_CLEANUP' && remedy
+        ? remedy
+        : `Run \`stim ${platform}\` again when you want the app on a device.`,
     lines: [`it stopped at ${code ?? 'an unfinished step'}${message ? `: ${message}` : ''}`],
   };
 }
