@@ -87,7 +87,8 @@ Automatic maintenance, and `stim gc` when you run it:
   prove were merged.
 - Saves a recovery archive before removing a finished worktree with
   uncommitted changes, and prints the restore commands. The archive can contain
-  secrets. Git-ignored files, such as a `.env.local`, are not archived.
+  secrets. A git-ignored file the main checkout lacks, such as a `.env.local`,
+  keeps the worktree.
 - Shrinks a worktree idle for `idle.dormantDays` (1 day): its build outputs,
   devices, `node_modules` and Pods go. The next Stim command there restores
   the dependencies with `stim worktree warm`.
