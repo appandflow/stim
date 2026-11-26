@@ -53,11 +53,12 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
     /checkout -- src\/app\.js/,
   );
   expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toContain(
-    `clean -fd ${quoted('we ird.txt')}`,
+    `clean -fd -- ${quoted('we ird.txt')}`,
   );
   expect(removalRemedy([' M app/(tabs)/index.tsx'], { worktree: '/tmp/wt' }).join('\n')).toContain(
     `checkout -- ${quoted('app/(tabs)/index.tsx')}`,
   );
+  expect(removalRemedy(['?? -x'], { worktree: '/tmp/wt' }).join('\n')).toContain('clean -fd -- -x');
   const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
   expect(many).toMatch(/checkout -- a b c d e \.\.\./);
   expect(!many.includes('<path>')).toBeTruthy();
@@ -2300,7 +2301,7 @@ test('intent-to-add paths get no checkout remedy and spaced worktree paths are q
   const remedy = removalRemedy([' A intent', ' M edited', '?? new'], { worktree: '/tmp/my wt' }).join('\n');
   expect(remedy).not.toContain('intent');
   expect(remedy).toContain(`git -C ${quoted('/tmp/my wt')} checkout -- edited`);
-  expect(remedy.split('\n')).toContain(`  git -C ${quoted('/tmp/my wt')} clean -fd new`);
+  expect(remedy.split('\n')).toContain(`  git -C ${quoted('/tmp/my wt')} clean -fd -- new`);
 });
 
 test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () => {
@@ -2308,7 +2309,7 @@ test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () =>
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
     expect(removalRemedy(['?? "it\'s new"'], { worktree: "C:\\Users\\o'brien\\wt" }).join('\n')).toContain(
-      `git -C "C:\\Users\\o'brien\\wt" clean -fd "it's new"`,
+      `git -C "C:\\Users\\o'brien\\wt" clean -fd -- "it's new"`,
     );
     expect(removalRemedy([' M edited'], { worktree: 'C:\\Users\\$o\u2019brien\\wt' }).join('\n')).toContain(
       "git -C 'C:\\Users\\$o\u2019\u2019brien\\wt' checkout -- edited",

@@ -794,7 +794,7 @@ export function removalRemedy(
   }
   if (untracked.length) {
     lines.push('If a build or a setup script left these untracked files, delete them and retry:');
-    lines.push(`  git -C ${dir} clean -fd ${pathArgs(untracked)}`);
+    lines.push(`  git -C ${dir} clean -fd -- ${pathArgs(untracked)}`);
   }
   return lines;
 }
