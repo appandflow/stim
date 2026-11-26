@@ -254,7 +254,8 @@ function normalize(value: unknown, roots: Roots, sortArrays: boolean): unknown {
     try {
       path = realpathSync.native(path);
     } catch {
-      if (!within(path, roots.project) && !within(path, roots.install)) return value;
+      if (!within(path, roots.project) && !within(path, roots.install) && !path.split(sep).includes('node_modules'))
+        return value;
     }
     return pathForm(path, roots);
   }

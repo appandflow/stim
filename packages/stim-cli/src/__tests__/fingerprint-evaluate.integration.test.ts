@@ -887,6 +887,37 @@ describe('fingerprint evaluators on a bare React Native app', () => {
     expect(isUncertain(result) && result.uncertain).toContain('patch-package');
   });
 
+  test('autolinking keys agree with linked node_modules and a missing generated CMake file', SLOW, async () => {
+    const root = bareApp({ ios: {} }, { ios: { sourceDir: 'ios' } });
+    const dependency = join(root, 'node_modules', 'local-module');
+    const source = join(dependency, 'android');
+    const cmake = join(source, 'build', 'generated', 'source', 'codegen', 'jni', 'CMakeLists.txt');
+    write(join(dependency, 'package.json'), JSON.stringify({ name: 'local-module', version: '1.0.0' }));
+    write(join(source, 'build.gradle'), '');
+    write(
+      join(root, 'node_modules/@react-native-community/cli/node_modules/@react-native-community/cli-config/index.js'),
+      `exports.loadConfig = ({ projectRoot }) => ({ root: projectRoot, platforms: { ios: {} }, project: { ios: { sourceDir: 'ios' } }, dependencies: { 'local-module': { root: ${JSON.stringify(dependency)}, platforms: { android: { sourceDir: ${JSON.stringify(source)}, cmakeListsPath: ${JSON.stringify(cmake)} } } } } });`,
+    );
+    const linked = realpathSync(mkdtempSync(join(dirname(root), 'stim-fp-linked-')));
+    temps.push(linked);
+    for (const file of ['package.json', 'package-lock.json', 'ios/App/AppDelegate.swift'])
+      write(join(linked, file), readFileSync(join(root, file), 'utf8'));
+    symlinkSync(join(root, 'node_modules'), join(linked, 'node_modules'), 'junction');
+    const hashes = [];
+    for (const app of [root, linked]) {
+      const result = await fingerprint(
+        app,
+        { platform: 'ios' },
+        { env: baseEnv(), embedMode: 'development', index: 'skip' },
+      );
+      if (isUncertain(result)) throw new Error(result.uncertain);
+      const row = result.inputs.find((input) => input.name === 'autolinking:rn');
+      if (!row) throw new Error('The fixture did not produce an autolinking:rn input.');
+      hashes.push(row.hash);
+    }
+    expect(hashes[1]).toBe(hashes[0]);
+  });
+
   test('full and indexed keys follow autolinked native source and CMake paths', SLOW, async () => {
     const root = bareApp({ ios: {} }, { ios: { sourceDir: 'ios' } });
     const dependency = join(root, 'local-module');
