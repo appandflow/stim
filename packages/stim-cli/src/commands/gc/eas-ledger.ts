@@ -5,8 +5,6 @@ import chalk from 'chalk';
 import { isOnMountedVolume } from '../../fs-util.ts';
 import {
   easMachineStateRoot,
-  isPendingEasSessionClaim,
-  pendingClaimExpired,
   readEasSessionLedger,
   removeEasSessionClaimAsync,
 } from '../../engine/eas-session-ledger.ts';
@@ -31,7 +29,6 @@ function isStaleEasLedgerEntry(
   mountedVolumes: string[],
   exists: (path: string) => boolean = existsSync,
 ): boolean {
-  if (isPendingEasSessionClaim(claim)) return pendingClaimExpired(claim, Date.now());
   if (UUID.test(claim.sessionId)) return false;
   const root = claim.workspaceRoot;
   if (!isAbsolute(root) || exists(root)) return false;
@@ -65,7 +62,7 @@ export async function forgetStaleEasLedgerEntries(
     signal?.throwIfAborted();
     try {
       if (await remove(entry.id, root, (claim) => isStaleEasLedgerEntry(claim, mountedVolumes), signal)) {
-        output.log(chalk.green(`Forgot the EAS ledger entry ${entry.id} (stale claim)`));
+        output.log(chalk.green(`Forgot the EAS ledger entry ${entry.id} (invalid id, ${entry.workspaceRoot} is gone)`));
         output.record('easLedgerEntry', 'done', entry.id, { id: entry.id });
       } else {
         output.log(chalk.dim(`Kept the EAS ledger entry ${entry.id}: it changed since the report.`));

@@ -55,7 +55,7 @@ import {
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord, webLogFile } from '../web/state.ts';
-import { endRecordedSession, endPendingEasSessions } from '../engine/device-remote.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
 import { getExecutor } from '../exec.ts';
@@ -157,23 +157,6 @@ async function reapCollectors(
     failedDevices.push(entry);
   }
   return { skippedDevices, failedDevices };
-}
-
-async function reclaimPendingSessions(root: string, operation?: StimContext): Promise<SkippedDevice[]> {
-  const failedDevices: SkippedDevice[] = [];
-  try {
-    for (const pending of await endPendingEasSessions(root, undefined, operation)) {
-      if (pending.status === 'failed') {
-        const failed = { name: pending.label, reason: pending.reason ?? 'Pending EAS session cleanup failed.' };
-        failedDevices.push(failed);
-      }
-    }
-  } catch (error) {
-    throwIfCleanupInterrupted(error, operation);
-    const failed = { name: 'pending EAS sessions', reason: String(error) };
-    failedDevices.push(failed);
-  }
-  return failedDevices;
 }
 
 // eas simulator:stop needs a project cwd, so end the session before removing the worktree.
@@ -699,9 +682,6 @@ async function reclaimIdleProject(
   }
 
   signal?.throwIfAborted();
-  const pendingFailures = await reclaimPendingSessions(path, operation);
-  skippedDevices.push(...pendingFailures);
-  failedDevices.push(...pendingFailures);
   const remote = await reclaimRemoteSession(path, { stopSession, operation });
   if (remote.failed) {
     skippedDevices.push(remote.failed);

@@ -512,7 +512,7 @@ if (command === 'sim') {
           }),
         );
         expect(result.failed).toBe(true);
-        expect(result.reason).toContain('The session drs_context was stopped');
+        expect(result.reason).toContain('The session was stopped');
         expect(JSON.parse(readFileSync(stopped, 'utf8'))).toEqual({ id: 'drs_context', marker: 'client' });
         expectChildGone(JSON.parse(readFileSync(marker, 'utf8')).pid);
         expect(operationState(operation).running.size).toBe(0);

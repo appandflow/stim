@@ -1399,7 +1399,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               root,
               platform: PLATFORM,
               sessionName: remoteDevice.ctx.sessionName,
-              ledgerRoot: remoteDevice.ctx.easLedgerRoot,
               operation: context,
               startedAt: new Date(now()).toISOString(),
               maxDurationMinutes: remoteDevice.ctx.maxDurationMinutes ?? null,

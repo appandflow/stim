@@ -231,14 +231,14 @@ test('a stalled second EAS page kills its child and refuses deletion of a partia
   expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
 });
 
-test.each(['drs_owned', 'stim-owned'])('EAS verification retains locks and reconciles claim %s', async (claimId) => {
+test('asynchronous EAS verification retains both deletion locks until the stop result and claim reconciliation', async () => {
   const root = join(home, 'app');
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
   await recordEasSessionClaim(
     {
-      sessionId: claimId,
+      sessionId: 'drs_owned',
       name: 'stim-owned',
       platform: 'ios',
       workspaceRoot: root,
@@ -247,16 +247,6 @@ test.each(['drs_owned', 'stim-owned'])('EAS verification retains locks and recon
     },
     ledger,
   );
-  writeFileSync(join(root, 'app.json'), '{"expo":{}}');
-  const inventory = await collectEasSessionSweep(null, {
-    ...dependencies(root),
-    runEasFile: async () =>
-      JSON.stringify({
-        sessions: [{ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS', platform: 'ios' }],
-        pageInfo: { hasNextPage: false, endCursor: null },
-      }),
-  });
-  expect(inventory.orphaned.map((session) => session.id)).toEqual(['drs_owned']);
   let started!: () => void;
   const ready = new Promise<void>((resolve) => (started = resolve));
   let finish!: () => void;
@@ -291,7 +281,7 @@ test.each(['drs_owned', 'stim-owned'])('EAS verification retains locks and recon
     await expect(withRemoteSessionLock(root, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
       code: 'STIM_LOCK_TIMEOUT',
     });
-    expect(readEasSessionLedger(ledger).claims.has(claimId)).toBe(true);
+    expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
   } finally {
     finish();
     const failures = await pending;

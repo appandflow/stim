@@ -1251,7 +1251,6 @@ async function runIos(
                 root,
                 platform: PLATFORM,
                 sessionName: remoteDevice.ctx.sessionName,
-                ledgerRoot: remoteDevice.ctx.easLedgerRoot,
                 operation: context,
                 startedAt: new Date(d.now()).toISOString(),
                 deviceType: remoteDevice.ctx.deviceType ?? null,

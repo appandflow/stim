@@ -243,10 +243,11 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     },
   );
 
-  test('a cancelled native run preserves the pending EAS cleanup remedy', async () => {
+  test('a cancelled native run preserves the EAS cleanup remedy', async () => {
     const controller = new AbortController();
     const context = testContext({ signal: controller.signal });
-    const remedy = 'Run `stim stop` to end it, or use `eas simulator:list --name stim-pending`.';
+    const remedy =
+      'Run `eas simulator:list --name stim-run-abcdef` and stop any live session with `eas simulator:stop --id <id>`.';
     const result = await withNativeBuildRun(
       context,
       root,
