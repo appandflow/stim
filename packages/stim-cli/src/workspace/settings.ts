@@ -1007,7 +1007,7 @@ export function removedSettingFindings(
       const scope = target.scopes.length > 1 && target.scopes.includes(layer.scope) ? ` --scope ${layer.scope}` : '';
       const shown = `${key} ${JSON.stringify(value)} in ${layer.file}`;
       const fallback = String(target.default);
-      const unset = `stim settings unset ${key}${rule.kept ? ` --scope ${layer.scope}` : ''}`;
+      const unset = `stim settings unset ${key} --scope ${layer.scope}`;
       const set = applied || rule.kept ? null : `stim settings set ${rule.key} ${off}${scope}`;
       const where = fromEnv ? `from ${variable}` : `in ${holder?.file ?? getConfigPath()}`;
       return [

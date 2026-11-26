@@ -60,7 +60,7 @@ test.each([
     const payload = JSON.parse(refused.stdout);
     expect(payload.code).toBe('STIM_BAD_ARG');
     expect(payload.remedy).toContain(`\`${set}\``);
-    expect(payload.remedy).toContain(`stim settings unset ${unset}`);
+    expect(payload.remedy).toContain(`stim settings unset ${unset} --scope machine`);
   },
 );
 
@@ -76,8 +76,24 @@ test("start refuses while the project's .stim.json holds the old idle settings a
   expect(refused.status).toBe(1);
   expect(refused.stderr).toContain('STIM_BAD_ARG: metro.idleStopMinutes 0 in');
   expect(refused.stderr.split('stim settings set idle.minutes 0 --scope committed')).toHaveLength(2);
-  expect(refused.stderr).toContain('`stim settings unset devices.idleShutdownMinutes`');
+  expect(refused.stderr).toContain('`stim settings unset devices.idleShutdownMinutes --scope committed`');
   expect(refused.stderr).toContain('`stim settings set idle.minutes 0 --scope committed`');
+});
+
+test('a leftover in two layers gets one unset per layer, each scoped to the layer that holds it', () => {
+  const app = join(home, 'app');
+  mkdirSync(app);
+  writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 0 } }),
+  );
+  const refused = run(['start'], {}, app);
+  expect(refused.status).toBe(1);
+  expect(refused.stderr).toContain('`stim settings unset devices.idleShutdownMinutes --scope committed`');
+  expect(refused.stderr).toContain('`stim settings unset devices.idleShutdownMinutes --scope machine`');
+  expect(refused.stderr).not.toMatch(/unset devices\.idleShutdownMinutes`/);
 });
 
 test.skipIf(process.platform === 'win32')(
