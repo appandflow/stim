@@ -60,7 +60,6 @@ describe('the other Stim homes of gc', () => {
     collectOtherHomes(own, listing, mounted, { homesRoot });
 
   test.each([30, 61])('home size after %i minutes', async (minutes) => {
-    vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
     vi.stubEnv('STIM_HOME', own);
     scratchHome('cached');
