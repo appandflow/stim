@@ -111,7 +111,8 @@ stim doctor        # in an app directory: can this worker build this app?`} />
 - `stim remote add` keeps the machines already in `remote.machines`. Add
   `:<port>` when the route does not use 7443.
 - `stim remote update <machine>` updates an approved worker to the newest
-  compatible Stim release on its channel.
+  compatible Stim release on its channel. `--to <version>` installs exactly
+  that published release instead, such as the version this machine runs.
 
 Without a ticket yet, install the server on the worker first with
 `stim service install --serve`, then run `stim remote add` here.
@@ -408,7 +409,8 @@ stim settings set server.devicesPaused true`} />
   `stim serve --tailnet` on it once so it always listens on the tailnet.
 - **`outdated`:** `stim doctor` reports a worker whose stim-server is older
   than this machine's peer version. A 2.x worker takes
-  `stim remote update <machine>` here. A 1.x worker cannot: on the worker,
+  `stim remote update <machine> --to <version>` here, with the version this
+  machine runs. A 1.x worker cannot: on the worker,
   install the Stim this machine runs and reinstall its service, as
   [Services and remote machines](./migrate-to-2.md#6-services-and-remote-machines)
   describes, then approve this machine as doctor shows, or run

@@ -105,6 +105,46 @@ it.each([
   },
 );
 
+it.each(['1.40.0', '2.0.0-rc.1'])(
+  'launches engine-select for %s, a release no older than the running one',
+  async (target) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-engine-accept-'));
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('HOME', home);
+    const root = join(home, 'engine');
+    const script = join(root, '0123456789ab', 'dist', 'cli.mjs');
+    mkdirSync(dirname(script), { recursive: true });
+    writeFileSync(script, '');
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, version: '1.40.0', pinned: false }));
+    writeFileSync(join(root, 'state.json'), JSON.stringify({ format: 1, installed: [], bad: [] }));
+    const detached = vi.fn<(file: string) => { file: string; args: string[] }>((file) => ({ file, args: ['-e', ''] }));
+    const updates = new EngineUpdates({
+      label: 'dev.stim.test',
+      port: 7787,
+      build: { version: '1.40.0', stimBuild: null },
+      node: process.execPath,
+      script,
+      env: { ...process.env, STIM_ENGINE_ROOT: root },
+      acceptsClientBuilds: () => false,
+      runsAsService: async () => true,
+      detached,
+      drain: vi.fn<EngineUpdateOptions['drain']>(),
+      audit: vi.fn<EngineUpdateOptions['audit']>(),
+    });
+    try {
+      expect(await updates.start({ id: 'approved-client', name: 'Laptop' }, { version: target })).toMatchObject({
+        result: { target: `release ${target}` },
+      });
+      expect(detached).toHaveBeenCalled();
+      await vi.waitFor(async () => expect(await updates.status()).toMatchObject({ running: null }));
+    } finally {
+      updates.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
 it('an exact engine.update prerelease passes promotion without changing the worker channel', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-engine-prerelease-'));
   const root = join(home, 'engine');

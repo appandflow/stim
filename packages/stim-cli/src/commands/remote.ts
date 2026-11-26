@@ -212,9 +212,11 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
   const updateCommand = defineOp({
     name: 'update',
     arguments: '<machine>',
-    description: 'Update an approved remote machine to the newest compatible Stim release on its channel.',
+    description:
+      'Update an approved remote machine to the newest compatible Stim release on its channel, or to the release --to names.',
     options: {
       channel: { flags: '--channel <channel>', description: 'select versions from latest or next for this update' },
+      to: { flags: '--to <version>', description: 'update to exactly this published Stim release' },
     },
     run: ({ args: [machine], options: opts, version }) =>
       run(false, async () => {
@@ -222,10 +224,27 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
         const channel = opts.channel === 'latest' || opts.channel === 'next' ? opts.channel : undefined;
         if (opts.channel && !channel)
           throw refusal('STIM_BAD_ARG', `--channel ${opts.channel} is unknown.`, 'Use latest or next.');
+        if (opts.to === '')
+          throw refusal('STIM_BAD_ARG', '--to is empty.', 'Pass a published Stim version, such as --to 2.0.0.');
+        if (opts.channel && opts.to !== undefined)
+          throw refusal(
+            'STIM_BAD_ARG',
+            '--to names one release, so --channel cannot also choose one.',
+            `Run \`stim remote update ${machine} --to ${opts.to}\` or \`stim remote update ${machine} --channel ${opts.channel}\`.`,
+          );
         const { updateRemoteMachine } = await import('./remote-update.ts');
         try {
-          console.log(await updateRemoteMachine(processContext(process.cwd()), machine, version, channel, io));
+          console.log(
+            await updateRemoteMachine(
+              processContext(process.cwd()),
+              machine,
+              version,
+              opts.to !== undefined ? { version: opts.to } : { channel },
+              io,
+            ),
+          );
         } catch (error) {
+          if (asRefusal(error)) throw error;
           throw refusal('STIM_ENGINE_REFUSED', error instanceof Error ? error.message : String(error), null);
         }
       }),

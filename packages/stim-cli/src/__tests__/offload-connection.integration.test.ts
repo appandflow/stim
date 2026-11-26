@@ -1025,7 +1025,7 @@ describe('native Xcode worker selection', () => {
       machines: [credential('old')],
     });
     expect(result).toBe(
-      `old: peer-too-old: old runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update old, or on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
+      `old: peer-too-old: old runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update old --to ${STIM_VERSION}, or on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
     );
     expect(machine.methods).toEqual(['hello']);
   });
