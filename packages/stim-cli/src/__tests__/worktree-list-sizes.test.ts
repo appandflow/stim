@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { diskUsageCacheFile } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -73,8 +73,17 @@ it.each([
   ).toBe(rest);
 });
 
-it('walks a project-local store and its dependencies together', async () => {
-  mkdirSync(join(roots[1], '.pnpm-store'));
+it.each([
+  { layout: 'a project-local store', make: () => mkdirSync(join(roots[1], '.pnpm-store')) },
+  {
+    layout: 'ios linked to a sibling native project',
+    make: () => {
+      mkdirSync(join(roots[1], 'native-project', 'Pods'), { recursive: true });
+      symlinkSync('native-project', join(roots[1], 'ios'));
+    },
+  },
+])('walks a worktree with $layout whole', async ({ make }) => {
+  make();
   await listing();
   const calls = vi.mocked(measureTree).mock.calls.filter(([path]) => path.startsWith(roots[1]));
   expect(calls).toHaveLength(1);

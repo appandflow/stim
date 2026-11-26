@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { readDiskUsage, readDiskUsagePartial, readGcMark, readGcMarks, type DaemonMode } from '@stim-cli/core/state';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { runProcessOperation } from '../cli-operation.ts';
@@ -95,7 +95,10 @@ function dependencies(root: string): string[] {
 
 function wholeWalk(root: string): boolean {
   // real-size counts a file shared between two measured paths as private in neither, as a store and node_modules are.
-  return existsSync(join(root, '.pnpm-store'));
+  if (existsSync(join(root, '.pnpm-store'))) return true;
+  return [...dependencies(root), join(root, 'ios')].some(
+    (path) => lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
+  );
 }
 
 function restTargets(root: string): string[] {
