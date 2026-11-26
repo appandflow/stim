@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, realpathSync, rmdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { compareVersions, installKind } from '../../bin/route.mjs';
@@ -91,13 +91,44 @@ const use = defineOp({
       refuse('STIM_BAD_ARG', `--channel ${opts.channel} is unknown.`, 'Use latest or next.');
     const { current } = readRecords(engineRoot(process.env));
     if (!current) missing();
-    const source = target && /^\d+\.\d+\.\d+/.test(target) ? { version: target } : { dir: resolve(target ?? '') };
+    const source: Promotion['source'] =
+      target && /^\d+\.\d+\.\d+/.test(target) ? { version: target } : { dir: resolve(target ?? '') };
     const pinReason = target ? `set by stim engine use ${target}` : (current?.pinReason ?? null);
-    await run('use', target ? source : { dir: join(engineRoot(process.env), current?.dir ?? '') }, {
-      channel,
-      pinReason,
-      pinned: target ? true : current?.pinned,
-    });
+    if (target && 'dir' in source) {
+      let name: unknown;
+      try {
+        name = JSON.parse(readFileSync(join(source.dir, 'package.json'), 'utf8'))?.name;
+      } catch {}
+      if (name !== 'stim')
+        refuse(
+          'STIM_BAD_ARG',
+          `${target} is not a stim package directory.`,
+          'Pass a published stim version or the directory of a built stim package.',
+        );
+    }
+    try {
+      await run('use', target ? source : { dir: join(engineRoot(process.env), current?.dir ?? '') }, {
+        channel,
+        pinReason,
+        pinned: target ? true : current?.pinned,
+      });
+    } catch (error) {
+      if ('version' in source && error instanceof Error) {
+        if (/ETARGET/.test(error.message))
+          refuse(
+            'STIM_ENGINE_REFUSED',
+            `npm has no stim ${source.version}.`,
+            'Run npm view stim versions to list them.',
+          );
+        if (/has no stim with its stim build/.test(error.message))
+          refuse(
+            'STIM_ENGINE_REFUSED',
+            `stim ${source.version} predates the engine store.`,
+            'Choose a later version; npm view stim versions lists them.',
+          );
+      }
+      throw error;
+    }
   },
 });
 
