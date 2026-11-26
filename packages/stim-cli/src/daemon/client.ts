@@ -60,6 +60,9 @@ const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
 const HANDOVER_WAIT_MS = 15_000;
 const ATTACH_AFTER_MS = 2000;
+// Windows PowerShell 5.1 took up to 9.5 s to start on a fresh GitHub-hosted runner (#4102), and an attached stimd dies
+// with an OpenSSH session's job (#6439), so a command waits this long for a stimd its launcher started.
+const WINDOWS_CLAIM_WAIT_MS = 30_000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
 const OP_BEGIN_TIMEOUT_MS = 30_000;
@@ -929,7 +932,7 @@ export function launchStimd(
   platform: NodeJS.Platform = process.platform,
   entry: string = spawnEntry('cli'),
   extra: readonly string[] = [],
-): { settled: Promise<void>; exited: () => boolean } {
+): { settled: Promise<void>; exited: () => boolean; launcher?: true } {
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   const args = [entry, '__stimd', '--mode', mode, ...extra];
   const kept = stimdLaunchEnv(env, platform);
@@ -951,13 +954,24 @@ export function launchStimd(
   const child = getExecutor().spawn(launcher?.file ?? process.execPath, launcher?.args ?? args, {
     cwd: stimdRunDir(),
     detached: !launcher,
-    stdio: 'ignore',
+    stdio: launcher ? ['ignore', 'pipe', 'ignore'] : 'ignore',
     env: { ...kept, ...launcher?.env },
     ...(launcher ? { windowsHide: true } : {}),
   });
   if (launcher) {
-    child.on?.('error', () => {});
-    return never;
+    let failed = false;
+    let pid = '';
+    child.stdout?.on('data', (chunk: Buffer) => (pid += String(chunk)));
+    const settled = new Promise<void>((done) => {
+      const end = (code: number | null) => {
+        if (code === 0 && /^\d+$/.test(pid)) return;
+        failed = true;
+        done();
+      };
+      child.once?.('close', end);
+      child.once?.('error', () => end(null));
+    });
+    return { settled, exited: () => failed, launcher: true };
   }
   let exited = false;
   const settled = new Promise<void>((done) => {
@@ -988,8 +1002,9 @@ async function claimTaken(
 /**
  * Makes sure this home's stimd runs before a command creates running state: tells a live one about the contact so it
  * does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and waits
- * for it to take its claim. When that detached stimd has not taken it within 2 s, a CLI command (not an API caller)
- * hosts stimd as its own child for its lifetime (`hostStimd`), and otherwise waits up to five seconds in all. Under
+ * for it to take its claim. When that detached stimd has not taken it within 2 s (30 s on Windows once its launcher
+ * reports the started process), a CLI command (not an API caller) hosts stimd as its own child for its lifetime
+ * (`hostStimd`), and otherwise waits up to five seconds in all (33 s on Windows). Under
  * `daemon.mode` off it starts stimd when `required`, for Metro and device logs; otherwise a pinned command begins its op only
  * with a live stimd, such as the one `stim ci` hosts. Throws {@link SANDBOX_BLOCKED} when the sandbox denies this home's stimd socket. Returns whether a
  * stimd holds the home; an unresolvable daemon claim is reported and counts as held.
@@ -1048,7 +1063,7 @@ export async function ensureStimd(
         throw error;
       launched = { settled: Promise.resolve(), exited: () => true };
     }
-    let taken = await claimTaken(launched, ATTACH_AFTER_MS);
+    let taken = await claimTaken(launched, 'launcher' in launched ? WINDOWS_CLAIM_WAIT_MS : ATTACH_AFTER_MS);
     let attachedAttempt = false;
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       attachedAttempt = true;

@@ -16,7 +16,7 @@ import { acquireBuildSlot, releaseBuildSlot } from './engine/build-slots.ts';
 import { withDrainingCancellation } from './engine/operation-state.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
-import { getExecutor, isTimeoutError } from './exec.ts';
+import { getExecutor, isTimeoutError, windowsDetachedLaunchArgs } from './exec.ts';
 import { signalProcessTree } from './metro.ts';
 import { clearNamedPorts, getNamedPort } from './named-ports.ts';
 import { recordReversePort, reverseOnDevices } from './reverse-ports.ts';
@@ -602,21 +602,73 @@ async function spawnProcess(root: string, name: string, record: ServiceRecord, o
   const file = getExecutor().findExecutable(program, { cwd: record.cwd, env });
   if (!file) throw new Error(`${program} is not on PATH`);
   mkdirSync(workspaceLogsDir(root), { recursive: true });
+  const pid =
+    process.platform === 'win32'
+      ? startWindows(file, args, record.cwd, env, root, name)
+      : startDetached(file, args, record.cwd, env, root, name);
+  if (pid === undefined) throw new Error(`${record.start.join(' ')} did not start`);
+  const identity = captureProcessIdentity(pid);
+  if (!identity.ok) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
+    throw new Error(`cannot identify pid ${pid}: ${identity.reason}.${logTail(root, name)}`);
+  }
+  return { pid, processToken: identity.token };
+}
+
+function startDetached(
+  file: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  root: string,
+  name: string,
+): number | undefined {
   const fd = openSync(serviceLogFile(root, name), 'a');
   try {
-    const child = getExecutor().spawn(file, args, { cwd: record.cwd, env, detached: true, stdio: ['ignore', fd, fd] });
+    const child = getExecutor().spawn(file, args, { cwd, env, detached: true, stdio: ['ignore', fd, fd] });
     child.on('error', () => {});
     child.unref();
-    if (child.pid === undefined) throw new Error(`${record.start.join(' ')} did not start`);
-    const identity = captureProcessIdentity(child.pid);
-    if (!identity.ok) {
-      child.kill('SIGKILL');
-      throw new Error(`cannot identify pid ${child.pid}: ${identity.reason}.${logTail(root, name)}`);
-    }
-    return { pid: child.pid, processToken: identity.token };
+    return child.pid;
   } finally {
     closeSync(fd);
   }
+}
+
+function startWindows(
+  file: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  root: string,
+  name: string,
+): number | undefined {
+  const launcher = windowsDetachedLaunchArgs({
+    file,
+    args,
+    cwd,
+    console: 'hidden',
+    logFile: serviceLogFile(root, name),
+  });
+  const definedEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  let pid: number;
+  try {
+    pid = Number(
+      getExecutor().runFile(launcher.file, launcher.args, {
+        cwd,
+        env: { ...definedEnv, ...launcher.env },
+        timeoutMs: 30_000,
+      }),
+    );
+  } catch {
+    // Unhandled: a launcher that dies after CreateProcessW but before printing the pid leaves the service unrecorded.
+    // Only the pid write sits in that window, while a slow PowerShell start times out before CreateProcessW.
+    return undefined;
+  }
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
 function groupAlive(pid: number): boolean {

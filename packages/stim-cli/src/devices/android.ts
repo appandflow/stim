@@ -26,8 +26,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
-import { windowsDetachedLaunchArgs } from '../detached-entry.ts';
-import { type Executor, getExecutor, windowsSystemExecutable } from '../exec.ts';
+import { type Executor, getExecutor, windowsDetachedLaunchArgs, windowsSystemExecutable } from '../exec.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
@@ -1287,7 +1286,7 @@ export async function bootAndroidEmulator(
     ...suppressEmulatorCrashConsent({ platform }),
   ];
   if (platform === 'win32') {
-    const log = logFile && emulatorLogDirectory(logFile) ? { logFile } : {};
+    const log = logFile && emptyEmulatorLog(logFile) ? { logFile } : {};
     const home = homedir();
     const launcher = windowsDetachedLaunchArgs({ file, args, cwd: home, console: 'none', ...log });
     let pid: number;
@@ -1311,9 +1310,10 @@ export async function bootAndroidEmulator(
   return pid;
 }
 
-function emulatorLogDirectory(logFile: string): boolean {
+function emptyEmulatorLog(logFile: string): boolean {
   try {
     mkdirSync(dirname(logFile), { recursive: true });
+    writeFileSync(logFile, '');
     return true;
   } catch {
     return false;

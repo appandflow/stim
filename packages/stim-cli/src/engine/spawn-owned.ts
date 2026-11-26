@@ -1,8 +1,7 @@
 import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { dirname } from 'node:path';
-import { windowsDetachedLaunchArgs } from '../detached-entry.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, windowsDetachedLaunchArgs } from '../exec.ts';
 import {
   clearClaimChild,
   markClaimChildPending,
@@ -184,7 +183,8 @@ function startDetached(launch: OwnedLaunch): ChildProcess {
   }
 }
 
-// libuv/libuv#1490: a detached child spawned by Node on win32 inherits every inheritable handle of this process.
+// A detached child spawned by Node on win32 stays in an OpenSSH session's kill-on-close job and inherits every
+// inheritable handle of this process (libuv/libuv#1490).
 function startWindows(launch: OwnedLaunch): number | undefined {
   const launcher = windowsDetachedLaunchArgs(launch);
   const pid = Number(

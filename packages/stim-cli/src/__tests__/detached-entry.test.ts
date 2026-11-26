@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnOptions } from 'node:child_process';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { relaunchWithLogFile, windowsLauncherArgs, windowsDetachedLaunchArgs } from '../detached-entry.ts';
+import { relaunchWithLogFile, windowsLauncherArgs } from '../detached-entry.ts';
+import { windowsDetachedLaunchArgs } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
 let dir: string;
@@ -75,7 +76,6 @@ test.each([
   try {
     const launcher = windowsDetachedLaunchArgs({ file: 'D:\\tools\\node.exe', args: [], cwd: 'D:\\' });
     expect(launcher.file).toBe(`${expectedRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`);
-    expect(launcher.env.STIM_WINDOWS_LAUNCH_ARGS).toBe('"D:\\tools\\node.exe"');
   } finally {
     process.env = originalEnv;
   }
