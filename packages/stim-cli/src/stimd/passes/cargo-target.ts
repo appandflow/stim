@@ -158,7 +158,7 @@ export async function measureCargoTargets(
   for (const size of recorded)
     if (size.name === CARGO_TARGET_SIZE && !lastMeasured.has(size.dir)) lastMeasured.set(size.dir, size.measuredAt);
   scan = { unmeasured: new Map(), refused: new Map(), unlisted: [] };
-  const cap = resolveMaintenanceSettings().cargoTargetMaxGb * GIB;
+  const cap = Math.floor(resolveMaintenanceSettings().cargoTargetMaxGb * GIB);
   if (cap === 0) return sizes;
   const registered = Object.keys(loadConfig()?.projects ?? {});
   const { measured, unlisted } = selectCargoTargets(
@@ -261,7 +261,7 @@ export async function planCargoTargets({
   lowPriority?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
-  const cap = settings.cargoTargetMaxGb * GIB;
+  const cap = Math.floor(settings.cargoTargetMaxGb * GIB);
   const targets = [
     ...sizes.flatMap((size) =>
       size.name === CARGO_TARGET_SIZE && size.workspace

@@ -212,6 +212,7 @@ describe('the Cargo target cap over a root target/', () => {
     const planned = await planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now() });
     const action = planned.actions[0];
     if (!action) throw new Error('no trim was planned');
+    expect(Number.isInteger(action.overBytes)).toBe(true);
     const real = getExecutor();
     setExecutor({
       ...real,
