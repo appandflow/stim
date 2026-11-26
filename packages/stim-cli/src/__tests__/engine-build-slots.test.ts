@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claimRemoveCommand } from '../ownership-claim.ts';
+import { claimFilesRemoveCommand, claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import {
   acquireBuildSlot,
@@ -446,7 +446,7 @@ test('status slot usage counts the live and unresolved slots a build could take,
         unresolved: true,
         claim: {
           unresolved: expect.stringContaining(`its owner pid 4242`),
-          removeCommand: `rm -f '${slot3}' '${slot3.replace(/\.claim$/, '.child')}'`,
+          removeCommand: claimFilesRemoveCommand(slot3),
         },
       },
     ],
@@ -478,7 +478,6 @@ test('status names an unresolved offloaded build slot, its dead owner and one co
     claimId: 'other-job',
     child: pending,
   });
-  const files = (claim: string) => `'${claim}' '${claim.replace(/\.claim$/, '.child')}'`;
 
   const [holder] = buildSlotUsage(2, process.env).holders;
 
@@ -488,7 +487,7 @@ test('status names an unresolved offloaded build slot, its dead owner and one co
   expect(holder?.claim?.unresolved).toContain(repo);
   expect(holder?.claim?.unresolved).toContain(engine);
   expect(holder?.claim?.removeCommand).toBe(
-    `rm -rf '${work}' && rm -f ${files(repo)} && rm -f ${files(slot)} && rm -f ${files(engine)}`,
+    [claimRemoveCommand(work), ...[repo, slot, engine].map(claimFilesRemoveCommand)].join(' && '),
   );
 });
 
@@ -517,7 +516,7 @@ test('engine claims of an owner that leaves two offloaded slots unresolved get t
     for (const engine of engines) expect(holder.claim?.removeCommand).not.toContain(engine);
     expect(holder.claim?.unresolved).toContain(
       `once every build of owner pid ${owner.pid} has stopped, run: ${engines
-        .map((engine) => `rm -f '${engine}' '${engine.replace(/\.claim$/, '.child')}'`)
+        .map((engine) => claimFilesRemoveCommand(engine))
         .join(' && ')}`,
     );
   }

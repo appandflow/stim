@@ -1,3 +1,4 @@
+import { claimRemoveCommand } from '../ownership-claim.ts';
 const state = vi.hoisted(() => {
   const result: {
     reply: Record<string, unknown> | null;
@@ -125,7 +126,7 @@ test('on Windows, where no stimd adopts, a Metro whose stimd exited stops throug
     expect(fallback).toHaveBeenCalledOnce();
     expect(await stopMetroTree('/project', 42, 'token', () => false)).toMatchObject({
       stopped: false,
-      remedy: expect.stringContaining("rm -f '/home/workspaces/w/metro.claim/exclusive/a.claim'"),
+      remedy: expect.stringContaining(claimRemoveCommand('/home/workspaces/w/metro.claim/exclusive/a.claim')),
     });
   } finally {
     if (platform) Object.defineProperty(process, 'platform', platform);
@@ -136,7 +137,7 @@ test('an unanswered stop names the Metro claim and the command that removes it',
   const stopped = await stopMetroTree('/project', 42, 'token', () => true);
   expect(stopped).toMatchObject({
     stopped: false,
-    remedy: expect.stringContaining("rm -f '/home/workspaces/w/metro.claim/exclusive/a.claim'"),
+    remedy: expect.stringContaining(claimRemoveCommand('/home/workspaces/w/metro.claim/exclusive/a.claim')),
   });
 });
 
@@ -147,7 +148,7 @@ test('an unanswered stop under an unresolved stimd claim names that claim, not t
   expect(stopped).toMatchObject({
     stopped: false,
     reason: expect.stringContaining('/home/stimd.claim/exclusive/d.claim'),
-    remedy: expect.stringContaining("rm -f '/home/stimd.claim/exclusive/d.claim'"),
+    remedy: expect.stringContaining(claimRemoveCommand('/home/stimd.claim/exclusive/d.claim')),
   });
   expect(fallback).not.toHaveBeenCalled();
 });

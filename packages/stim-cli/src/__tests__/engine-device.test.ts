@@ -2635,7 +2635,7 @@ describe('a boot refused at admission', () => {
     });
     const result = await ensureBooted({ projectPath: tmpHome, platform: 'ios', device: failedBoot(refused) });
     expect(result).toMatchObject({ failed: true, code: 'STIM_CLAIM_REFUSED' });
-    expect(result.remedy).toContain('rm -f');
+    expect(result.remedy).toContain(refused.removeCommand);
   });
 });
 

@@ -1,3 +1,4 @@
+import { claimFilesRemoveCommand, claimRemoveCommand } from '../../../core/ownership-claim.ts';
 import assert from 'node:assert';
 import { once } from 'node:events';
 import {
@@ -20,7 +21,6 @@ import { captureProcessToken } from '../process-identity.ts';
 import {
   claimFailure,
   claimLiveness,
-  claimRemoveCommand,
   clearClaimChild,
   clearFreeClaimSet,
   exclusiveClaimDir,
@@ -168,7 +168,7 @@ describe('refusing instead of guessing', () => {
     expect(err.claimPath).toBe(path);
     expect(err.removeCommand).toBe(claimRemoveCommand(path));
     expect(err.message).toContain(path);
-    expect(err.message).toContain(`rm -f '${path}'`);
+    expect(err.message).toContain(claimRemoveCommand(path));
     expect(err.message).toContain('ios build');
     expect(existsSync(path)).toBe(true);
   });
@@ -618,4 +618,25 @@ describe('claimFailure', () => {
     expect(failure?.remedy).not.toContain('undefined');
     expect(failure?.remedy).toContain('`stim gc`');
   });
+});
+
+test('Windows claim remedies quote spaces and single quotes for PowerShell', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const dir = join(mkdtempSync(join(tmpdir(), 'stim-claim-pwsh-')), "it's cache");
+  const claim = join(dir, 'owner.claim');
+  const quoted = (path: string) => `'${path.replaceAll("'", "''")}'`;
+  mkdirSync(dir);
+  writeFileSync(claim, '');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    expect(claimRemoveCommand(dir)).toBe(`Remove-Item -Recurse -Force -LiteralPath ${quoted(dir)}`);
+    expect(claimFilesRemoveCommand(claim)).toBe(`Remove-Item -Force -LiteralPath ${quoted(claim)}`);
+    writeFileSync(join(dir, 'owner.child'), '');
+    expect(claimFilesRemoveCommand(claim)).toBe(
+      `Remove-Item -Force -LiteralPath ${quoted(claim)}, ${quoted(join(dir, 'owner.child'))}`,
+    );
+  } finally {
+    if (platform) Object.defineProperty(process, 'platform', platform);
+    rmSync(dirname(dir), { recursive: true, force: true });
+  }
 });

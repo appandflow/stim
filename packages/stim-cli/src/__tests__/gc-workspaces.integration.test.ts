@@ -68,6 +68,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
+  claimFilesRemoveCommand,
   exclusiveClaimDir,
   tryAcquireClaim,
   releaseClaim,
@@ -768,7 +769,7 @@ describe('workspaceInUse', () => {
     const [reason] = workspaceInUse(root);
     expect(reason).toContain(claim);
     expect(reason).toContain(`pid ${IMPOSSIBLE_PID} (claimed 2026-11-12T05:23:46.715Z) is no longer running`);
-    expect(reason).toContain(`rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`);
+    expect(reason).toContain(claimFilesRemoveCommand(claim));
   });
 
   test('a live build lock or slot naming the root marks it in use; one naming another root does not', () => {
