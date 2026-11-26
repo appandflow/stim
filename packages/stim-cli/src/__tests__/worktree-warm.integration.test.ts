@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
@@ -597,6 +597,29 @@ test('warm removes the Xcode derived data an Expo package left in node_modules, 
     expect(existsSync(join(root, dir, '.DerivedData/ModuleCache.noindex/foo.pcm'))).toBe(true);
   }
   expect(existsSync(join(target, other, '.DerivedData'))).toBe(true);
+}, 30_000);
+
+test('warm carries pnpm directory links into the destination checkout', async () => {
+  const expo = 'node_modules/.pnpm/expo@1/node_modules/expo';
+  const b = 'node_modules/.pnpm/b@1/node_modules/b';
+  write(root, `${expo}/package.json`, '{"name":"expo"}');
+  write(root, `${b}/package.json`, '{"name":"b"}');
+  const nested = 'node_modules/.pnpm/a@1/node_modules/b';
+  mkdirSync(dirname(join(root, nested)), { recursive: true });
+  symlinkSync('.pnpm/expo@1/node_modules/expo', join(root, 'node_modules/expo'), 'junction');
+  symlinkSync('../../b@1/node_modules/b', join(root, nested), 'junction');
+
+  const result = await warm();
+  expect(result.failed).toEqual([]);
+  for (const { link, name } of [
+    { link: 'node_modules/expo', name: 'expo' },
+    { link: nested, name: 'b' },
+  ]) {
+    expect(readFileSync(join(target, link, 'package.json'), 'utf-8')).toBe(`{"name":"${name}"}`);
+    const resolved = realpathSync(join(target, link));
+    expect(resolved.startsWith(realpathSync(target) + sep)).toBe(true);
+    expect(resolved.startsWith(realpathSync(root) + sep)).toBe(false);
+  }
 }, 30_000);
 
 test.skipIf(process.platform === 'win32')(

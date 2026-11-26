@@ -1,6 +1,20 @@
 import type { StimContext } from '@stim-cli/core';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { access, chmod, lstat, mkdir, readFile, readdir, realpath, stat as statAsync, utimes } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  stat as statAsync,
+  symlink,
+  utimes,
+} from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
@@ -503,13 +517,38 @@ export async function cloneIgnoredEntries({
             return false;
           }
         };
-        const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
-        if (
-          !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
-          !(await copiedWith('cp', ['-Rc', from, to]))
-        ) {
-          await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+        if (process.platform === 'win32') {
+          await cp(from, to, {
+            recursive: true,
+            errorOnExist: true,
+            force: false,
+            filter: async (source, destination) => {
+              operation.signal.throwIfAborted();
+              if (!(await lstat(source)).isSymbolicLink()) return true;
+              let link = await readlink(source);
+              if (isAbsolute(link) && isPathPrefix(root, link)) link = join(target, relative(root, link));
+              const file = await statAsync(source).then(
+                (stat) => !stat.isDirectory(),
+                () => false,
+              );
+              // Windows: a file symbolic link needs the create-symlink privilege; a junction does not.
+              await symlink(link, destination, file ? 'file' : 'junction').catch(async (error: unknown) => {
+                if (!file || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+                await copyFile(source, destination);
+              });
+              return false;
+            },
+          });
           cloned = false;
+        } else {
+          const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+          if (
+            !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+            !(await copiedWith('cp', ['-Rc', from, to]))
+          ) {
+            await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+            cloned = false;
+          }
         }
         if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal, trash);
         copied.push(rel);
