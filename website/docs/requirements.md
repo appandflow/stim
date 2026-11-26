@@ -20,8 +20,8 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 ## Projects that pin an older Node {/* #older-node-pins */}
 
-`stim` and `stim-server` start through `#!/usr/bin/env node`, so the working
-directory can choose the Node that runs them. asdf, mise and Volta's `node`
+`stim` starts through `#!/usr/bin/env node`, so the working
+directory can choose the Node that runs it. asdf, mise and Volta's `node`
 shim follow the project's `.nvmrc`, `.node-version`, `.tool-versions` or
 `package.json`; nvm and fnm do when a shell hook switches versions on `cd`. A
 Stim installed with Volta keeps the Node it was installed with. When that Node

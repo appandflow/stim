@@ -109,7 +109,7 @@ Android Debug build for a known ABI ends in that ABI (`-arm64-v8a`), and an iOS
 simulator build ends in the architecture it runs on (`-arm64` or `-x86-64`):
 this Mac's for a local build in any configuration, the remote host's for a
 `--remote` build. A build of every architecture the project lists
-(`stim build --arch all`, `stim ci build --arch all`) has no suffix. An app
+(`stim ci build --arch all`) has no suffix. An app
 built on Apple silicon therefore no longer runs on an Intel Mac's simulator;
 build it with `--arch all` for that.
 
