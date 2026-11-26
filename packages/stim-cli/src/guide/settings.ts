@@ -756,7 +756,7 @@ run waiting to boot, and automatic maintenance.
           it, and other commands run without stimd;
           stimd keeps serving until nothing runs in the home, and the next
           command starts its own build's stimd. A stim-daemon from Stim
-          1.40 to 1.42 holds the daemon claim exclusively and does not
+          1.40 holds the daemon claim exclusively and does not
           exit when its workspaces stop. stimd does not stop it: stim
           start and the commands that need Metro or a managed tunnel exit
           with its PID and the stop command. Update projects that pin the

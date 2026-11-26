@@ -153,7 +153,7 @@ describe.skipIf(process.platform === 'win32')('background passes availability', 
 });
 
 /**
- * A stand-in for a stim-daemon from Stim 1.40 to 1.42. Like that daemon it holds the daemon claim exclusively, releases it
+ * A stand-in for a stim-daemon from Stim 1.40. Like that daemon it holds the daemon claim exclusively, releases it
  * the moment SIGTERM arrives and exits only after the tick in progress, here `argv[3]` ms later. `argv[2]` is
  * `stim-daemon` for the record that daemon writes, `none` for a process that holds no claim, and anything else for a holder that is not one.
  */
