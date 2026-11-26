@@ -2,9 +2,13 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { workspaceName, type StimContext } from '@stim-cli/core';
 import { operationState } from './operation-state.ts';
-import { NATIVE_RUN_LOCK } from './native-run.ts';
+import { describeNativeRunHolder, NATIVE_RUN_LOCK } from './native-run.ts';
 import { fenceDeclaredSpawns } from './spawn-claims.ts';
-import { withWorkspaceProcessLock, workspaceProcessLockPath } from './workspace-process-lock.ts';
+import {
+  withWorkspaceProcessLock,
+  workspaceProcessLockError,
+  workspaceProcessLockPath,
+} from './workspace-process-lock.ts';
 import { ClaimUnavailableError, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { ownStoreEngine } from '../daemon/engine-switch.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
@@ -106,7 +110,25 @@ async function withWorkspaceOwnership<T>(
     external: true,
     signal,
     waitMs: 0,
+    onHeld: (holder) => {
+      throw Object.assign(
+        new Error(
+          `This workspace's native-run lock is held by ${describeNativeRunHolder(holder, Date.now())}, so Stim cannot fingerprint the project now.`,
+        ),
+        { code: 'STIM_LOCK_REFUSED', remedy: 'Run the command again after it finishes.' },
+      );
+    },
     declareSpawnsFor: context,
     ownerPurpose: 'fingerprint evaluation',
   });
+}
+
+/** The refusal a fingerprint gives while another Stim operation holds the workspace's native-run lock, or null for any other error. */
+export function nativeRunBusy(error: unknown): { message: string; remedy: string } | null {
+  return error instanceof Error &&
+    workspaceProcessLockError(error) === 'refused' &&
+    'remedy' in error &&
+    typeof error.remedy === 'string'
+    ? { message: error.message, remedy: error.remedy }
+    : null;
 }

@@ -8944,6 +8944,21 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 });
 
 describe('--plan', () => {
+  test('refuses with the holder and its remedy when a run holds the workspace during fingerprinting', async () => {
+    const message =
+      "This workspace's native-run lock is held by `stim ios` (pid 1), so Stim cannot fingerprint the project now.";
+    const remedy = 'Run the command again after it finishes.';
+    const { logs, exitCode } = await run(
+      { plan: true, json: true },
+      {
+        fingerprint: async () => {
+          throw Object.assign(new Error(message), { code: 'STIM_LOCK_REFUSED', remedy });
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_NO_FINGERPRINT', message, remedy });
+  });
   test('preserves the retry remedy when the engine store is busy during fingerprinting', async () => {
     const store = join(root, 'engine-store');
     const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root: store, build: '0123456789ab' });

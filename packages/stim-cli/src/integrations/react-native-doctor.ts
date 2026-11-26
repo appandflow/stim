@@ -1,3 +1,4 @@
+import { nativeRunBusy } from '../engine/fingerprint-ownership.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { phaseLine } from '../command-output.ts';
@@ -102,7 +103,11 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
               remedy: 'Run stim doctor in a terminal to get them.',
             },
           ]
-        : await readFingerprintNotes(operation ?? processContext(root), request);
+        : await readFingerprintNotes(operation ?? processContext(root), request).catch((error: unknown) => {
+            const busy = nativeRunBusy(error);
+            if (!busy) throw error;
+            return [{ message: `Fingerprint notes were not computed: ${busy.message}`, remedy: busy.remedy }];
+          });
       const parity = await detectFingerprintParity(root, { ...request, operation });
       return [
         ...source,

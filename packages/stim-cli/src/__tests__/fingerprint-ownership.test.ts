@@ -199,3 +199,34 @@ test('an unavailable engine refuses fingerprinting with engine status guidance',
     rmSync(area, { recursive: true, force: true });
   }
 });
+
+test('a fingerprint refuses at once, naming the run that holds the workspace', async () => {
+  const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
+  fixture.root = join(area, 'store');
+  const tree = join(fixture.root, '0123456789ab');
+  mkdirSync(join(tree, 'dist'), { recursive: true });
+  writeFileSync(join(tree, 'dist', 'cli.mjs'), '');
+  writeFileSync(join(tree, '.stim-manifest.json'), JSON.stringify({ format: 1, build: '0123456789ab' }));
+  const root = join(area, 'project');
+  mkdirSync(root);
+  const home = join(area, 'home');
+  const native = tryAcquireClaim({
+    root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
+    mode: 'exclusive',
+    details: { command: 'ios', platform: 'ios', slot: 'default' },
+  }).acquired;
+  if (!native) throw new Error('fixture did not acquire native-run');
+  const work = vi.fn<() => Promise<string>>(async () => 'done');
+  try {
+    await expect(withFingerprintOwnership(testContext({ home, projectRoot: root }), root, work)).rejects.toMatchObject({
+      code: 'STIM_LOCK_REFUSED',
+      message: expect.stringContaining(`held by \`stim ios\` (pid ${process.pid}`),
+      remedy: 'Run the command again after it finishes.',
+    });
+    expect(work).not.toHaveBeenCalled();
+    expect(readClaimSet(buildClaimRoot(fixture.root, '0123456789ab')).live).toEqual([]);
+  } finally {
+    releaseClaim(native);
+    rmSync(area, { recursive: true, force: true });
+  }
+});

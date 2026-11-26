@@ -1,5 +1,6 @@
 import { claimFailure, isClaimUnavailable } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
+import { nativeRunBusy } from '../engine/fingerprint-ownership.ts';
 import { processContext } from '../cli-operation.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { isUncertain } from '../fingerprint/key.ts';
@@ -172,6 +173,8 @@ export async function planReactNativeIos(
     const failure = claimFailure(error, null);
     if (isClaimUnavailable(error) && failure)
       return refuse({ code: 'STIM_NO_FINGERPRINT', message: error.message, remedy: failure.remedy });
+    const busy = nativeRunBusy(error);
+    if (busy) return refuse({ code: 'STIM_NO_FINGERPRINT', ...busy });
     note(chalk.dim(`Fingerprinting failed: ${(error as Error)?.message || error}`));
   }
   if (!fingerprint) return fingerprintPlanRefusal(root, null);

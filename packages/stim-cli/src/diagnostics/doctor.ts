@@ -1,3 +1,4 @@
+import { nativeRunBusy } from '../engine/fingerprint-ownership.ts';
 import { brokenPodLinks } from './doctor-pods-flavor.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { processContext } from '../cli-operation.ts';
@@ -1717,6 +1718,8 @@ export async function detectFingerprintParity(
       throw error;
     }
     context.signal.throwIfAborted();
+    const busy = nativeRunBusy(error);
+    if (busy) return finding('note', 'Fingerprint parity could not be checked', busy.message, busy.remedy);
     return finding(
       'note',
       'Fingerprint parity could not be checked',
