@@ -3419,8 +3419,8 @@ test('unknown stop retries are bounded and a client can stop after the host rele
   expect(stops()).toBe(1);
   for (let attempt = 1; attempt <= 5; attempt++) {
     host.sweepIdle();
+    await vi.waitFor(() => expect(stops()).toBe(attempt + 1));
     await state(session.id, 'unknown');
-    expect(stops()).toBe(attempt + 1);
     expect(host.working()).toBe(1);
   }
   host.sweepIdle();
@@ -3434,6 +3434,34 @@ test('unknown stop retries are bounded and a client can stop after the host rele
   await state(session.id, 'unknown');
   expect(stops()).toBe(7);
   expect(host.working()).toBe(1);
+});
+
+test('the sweep keeps an unknown session whose worker group did not settle, without stopping or releasing it', async () => {
+  const session = await reserve({ deviceType: 'held-prepare' });
+  const area = join(deviceHostArea(session.id), 'home');
+  await vi.waitFor(() => expect(existsSync(join(area, 'entered'))).toBe(true));
+  const pid = await readPid(join(area, 'entered'));
+  const kill = process.kill.bind(process);
+  const withheld = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) =>
+      target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
+    );
+  try {
+    host.stop('client', { session: session.id });
+    expect(await state(session.id, 'unknown')).toHaveProperty('notice', expect.stringContaining('unresolved'));
+    for (let sweep = 0; sweep < 7; sweep++) {
+      host.sweepIdle();
+      await vi.waitFor(() => expect(readFileSync(join(area, 'modes'), 'utf8')).toBe('prepare\n'));
+      await state(session.id, 'unknown');
+    }
+    expect(host.working()).toBe(1);
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(1);
+  } finally {
+    withheld.mockRestore();
+    writeFileSync(join(area, 'release-prepare'), '');
+    await groupGone(pid);
+  }
 });
 
 test('revocation during inspection refuses adoption and retires the parked device after releasing its claim', async () => {

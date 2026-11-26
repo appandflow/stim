@@ -265,6 +265,7 @@ function loopbackAccepts(port: number): Promise<boolean> {
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
 export class DeviceHost {
   private readonly unknownStopAttempts = new Map<string, number>();
+  private reconcilingUnknown?: Promise<void>;
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, { client: string; mutating?: true }>();
@@ -2181,35 +2182,43 @@ export class DeviceHost {
         `hosted idle check could not use the journal: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    void this.reconcileUnknown();
+    void (this.reconcilingUnknown ??= this.reconcileUnknown().finally(() => {
+      this.reconcilingUnknown = undefined;
+    }));
   }
 
   // @ref LLP 0010#resume-the-recorded-session -- the sweep retries the stop path, then keeps the device
   private async reconcileUnknown(): Promise<void> {
     try {
       for (const record of readHostedSessions()) {
+        if (this.closed) return;
         if (record.state !== 'unknown') continue;
         const owned = this.owned.get(record.id);
         if (!owned || this.resuming.has(record.id) || this.idleUnresolved(record.id) !== null) continue;
         try {
+          const unsettled = (await owned.run?.done)?.settled === false;
+          await owned.logs?.pending?.catch(() => {});
+          if (unsettled || owned.logs?.run) {
+            this.logIdleKept(record.id, 'a worker group of this session is unresolved; its claim and device are kept');
+            continue;
+          }
+          const current = readHostedSessions().find((each) => each.id === record.id);
+          if (
+            this.closed ||
+            current?.state !== 'unknown' ||
+            this.owned.get(record.id) !== owned ||
+            this.resuming.has(record.id) ||
+            this.idleUnresolved(record.id) !== null
+          )
+            continue;
           const attempts = this.unknownStopAttempts.get(record.id) ?? 0;
           if (attempts < UNKNOWN_STOP_ATTEMPTS) {
             this.unknownStopAttempts.set(record.id, attempts + 1);
-            this.beginStop(record);
+            this.beginStop(current);
             continue;
           }
-          const outcome = await owned.run?.done;
-          if (outcome && !outcome.settled) continue;
-          if (
-            this.closed ||
-            this.owned.get(record.id) !== owned ||
-            this.resuming.has(record.id) ||
-            this.idleUnresolved(record.id) !== null ||
-            readHostedSessions().find((each) => each.id === record.id)?.state !== 'unknown'
-          )
-            continue;
-          this.change(record.id, (current) => {
-            current.notice =
+          this.change(record.id, (each) => {
+            each.notice =
               'The host could not verify the device after repeated attempts and kept it. Run stim stop from the client to reconcile it.';
           });
           this.release(record.id, owned);
