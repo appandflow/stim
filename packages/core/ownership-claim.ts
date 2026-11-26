@@ -149,16 +149,18 @@ export class ClaimUnavailableError extends Error {
   readonly reason: string;
   readonly remedy: string;
 
-  constructor(reason: string, { claimPath }: { claimPath?: string } = {}) {
+  constructor(reason: string, { claimPath, remedy }: { claimPath?: string; remedy?: string } = {}) {
     super(
       claimPath
         ? `Stim could not write the ownership claim at ${claimPath}: ${reason}.`
         : `Stim could not record a process identity, so it cannot take an ownership claim: ${reason}.`,
     );
     this.reason = reason;
-    this.remedy = claimPath
-      ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, an antivirus or endpoint agent holding its files, symlink targets, mount access and sandbox rules)`
-      : 'Reinstall Stim so the unique-pid native module for this platform is present';
+    this.remedy =
+      remedy ??
+      (claimPath
+        ? `Restore write access to the existing claim store at ${quotedPath(claimPath)} (check parent permissions, an antivirus or endpoint agent holding its files, symlink targets, mount access and sandbox rules)`
+        : 'Reinstall Stim so the unique-pid native module for this platform is present');
   }
 }
 

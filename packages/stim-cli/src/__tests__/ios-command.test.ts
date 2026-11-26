@@ -1,3 +1,6 @@
+import * as engineSwitch from '../daemon/engine-switch.ts';
+import { takeLock } from '../engine-store/locks.ts';
+import { withFingerprintOwnership } from '../engine/fingerprint-ownership.ts';
 import { FINGERPRINT_SCHEMA } from '../fingerprint/key.ts';
 import type { Fingerprint } from '../fingerprint/evaluate.ts';
 import * as fingerprintEvaluator from '../fingerprint/evaluate.ts';
@@ -8941,6 +8944,34 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 });
 
 describe('--plan', () => {
+  test('preserves the retry remedy when the engine store is busy during fingerprinting', async () => {
+    const store = join(root, 'engine-store');
+    const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root: store, build: '0123456789ab' });
+    const lock = await takeLock(store, '.lock.sock');
+    try {
+      expect(lock).not.toBeNull();
+      const { logs, exitCode } = await run(
+        { plan: true, json: true },
+        {
+          fingerprint: async (path) =>
+            withFingerprintOwnership(testContext({ home: join(root, 'home'), projectRoot: path }), path, async () => {
+              throw new Error('fingerprinting must not run while the engine store is locked');
+            }),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(parseFirst(logs)).toMatchObject({
+        code: 'STIM_NO_FINGERPRINT',
+        message: expect.stringContaining('the engine store is busy'),
+        remedy:
+          'Wait a few seconds while another Stim command uses or switches the engine, then retry the same Stim command.',
+      });
+    } finally {
+      await lock?.release();
+      engine.mockRestore();
+    }
+  });
+
   test('reports the evaluator refusal and its redacted diagnostic', async () => {
     const { logs, errs, exitCode } = await run(
       { plan: true, json: true },

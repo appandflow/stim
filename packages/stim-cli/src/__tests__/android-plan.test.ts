@@ -1,3 +1,7 @@
+import { testContext } from './_context.ts';
+import * as engineSwitch from '../daemon/engine-switch.ts';
+import { takeLock } from '../engine-store/locks.ts';
+import { withFingerprintOwnership } from '../engine/fingerprint-ownership.ts';
 import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -198,6 +202,34 @@ describe('planAndroid', () => {
     assert(line);
     return { payload: JSON.parse(line), exitCode, errors };
   }
+
+  test('preserves the retry remedy when the engine store is busy during fingerprinting', async () => {
+    const store = join(root, 'engine-store');
+    const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root: store, build: '0123456789ab' });
+    const lock = await takeLock(store, '.lock.sock');
+    try {
+      expect(lock).not.toBeNull();
+      const { payload, exitCode } = await plan(
+        {},
+        {
+          fingerprint: async (path) =>
+            withFingerprintOwnership(testContext({ home: join(root, 'home'), projectRoot: path }), path, async () => {
+              throw new Error('fingerprinting must not run while the engine store is locked');
+            }),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(payload).toMatchObject({
+        code: 'STIM_NO_FINGERPRINT',
+        message: expect.stringContaining('the engine store is busy'),
+        remedy:
+          'Wait a few seconds while another Stim command uses or switches the engine, then retry the same Stim command.',
+      });
+    } finally {
+      await lock?.release();
+      engine.mockRestore();
+    }
+  });
 
   test('plan reports the evaluator refusal and its redacted diagnostic', async () => {
     const { payload, exitCode, errors } = await plan(

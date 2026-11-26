@@ -11,6 +11,8 @@ import { buildClaimRoot } from '../engine-store/claims.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { readManifest } from '../engine-store/store.ts';
 
+const ENGINE_BUSY_REMEDY = 'Wait a few seconds while another Stim command uses or switches the engine';
+
 export async function withFingerprintOwnership<T>(
   context: StimContext,
   root: string,
@@ -22,14 +24,16 @@ export async function withFingerprintOwnership<T>(
   let engineClaim: ClaimHandle | null = null;
   if (engine && engineRoot && ![...operationState(context).declaring].some((claim) => claim.root === engineRoot)) {
     const lock = await takeLock(engine.root, '.lock.sock');
-    if (!lock) throw new ClaimUnavailableError('the engine store is busy');
+    if (!lock) throw new ClaimUnavailableError('the engine store is busy', { remedy: ENGINE_BUSY_REMEDY });
     let admissionFailure: { error: unknown } | null = null;
     try {
       signal.throwIfAborted();
       const tree = join(engine.root, engine.build);
       const manifest = readManifest(tree);
       if (!manifest || manifest.build !== engine.build || !existsSync(join(tree, 'dist', 'cli.mjs')))
-        throw new ClaimUnavailableError('the selected engine is unavailable');
+        throw new ClaimUnavailableError('the selected engine is unavailable', {
+          remedy: 'Run stim engine status to check the selected, previous and staged engine builds',
+        });
       const attempt = tryAcquireClaim({
         root: engineRoot,
         mode: 'shared',
@@ -38,7 +42,10 @@ export async function withFingerprintOwnership<T>(
       });
       if (attempt.pending) releaseClaim(attempt.pending);
       if (!attempt.acquired)
-        throw new ClaimUnavailableError('the selected engine claim is busy', { claimPath: engineRoot });
+        throw new ClaimUnavailableError('the selected engine claim is busy', {
+          claimPath: engineRoot,
+          remedy: ENGINE_BUSY_REMEDY,
+        });
       engineClaim = attempt.acquired;
     } catch (error) {
       admissionFailure = { error };
