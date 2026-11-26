@@ -26,6 +26,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
+import { windowsDetachedLaunchArgs } from '../detached-entry.ts';
 import { type Executor, getExecutor, windowsSystemExecutable } from '../exec.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
@@ -1273,25 +1274,36 @@ export async function bootAndroidEmulator(
 ): Promise<number | null> {
   const exec = getExecutor();
   const app = await configuredAndroidEmulatorApp(platform, ambientEnv());
-  const child = exec.spawn(
-    androidToolPath('emulator'),
-    [
-      '-avd',
-      avdName,
-      '-port',
-      String(consolePort),
-      '-grpc',
-      String(consolePort + 3000),
-      '-grpc-use-token',
-      ...headlessEmulatorArgs(ambientEnv(), platform, openViewer ? app : 'stim-desktop'),
-      ...suppressEmulatorCrashConsent({ platform }),
-    ],
-    {
-      cwd: androidToolCwd(platform),
-      detached: true,
-      stdio: emulatorStdio(logFile),
-    },
-  );
+  const file = androidToolPath('emulator');
+  const args = [
+    '-avd',
+    avdName,
+    '-port',
+    String(consolePort),
+    '-grpc',
+    String(consolePort + 3000),
+    '-grpc-use-token',
+    ...headlessEmulatorArgs(ambientEnv(), platform, openViewer ? app : 'stim-desktop'),
+    ...suppressEmulatorCrashConsent({ platform }),
+  ];
+  if (platform === 'win32') {
+    if (logFile) mkdirSync(dirname(logFile), { recursive: true });
+    const home = homedir();
+    const launcher = windowsDetachedLaunchArgs({
+      file,
+      args,
+      cwd: home,
+      console: 'none',
+      ...(logFile ? { logFile } : {}),
+    });
+    const pid = Number(exec.runFile(launcher.file, launcher.args, { cwd: home, env: launcher.env, timeoutMs: 30_000 }));
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  }
+  const child = exec.spawn(file, args, {
+    cwd: androidToolCwd(platform),
+    detached: true,
+    stdio: emulatorStdio(logFile),
+  });
   child?.unref?.();
   const pid = child?.pid ?? null;
   if (openViewer && pid !== null && platform === 'darwin' && app === 'stim-desktop') {
