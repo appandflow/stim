@@ -920,8 +920,9 @@ next period. The walk is the same one the thread already runs: one at a time,
 under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
 build admission is started by them: the pressure ladder reads them to order its
-Cargo trims, and the size scan reuses a `target/` size at or under the cap,
-which can only hold a trim back (see the cap rule below); the
+Cargo trims, from sizes up to 6 hours old, and the size scan reuses a
+`target/` size at or under the cap, which can only hold a trim back (see the
+cap rule below); the
 caps read the maintenance size scan, the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
@@ -1090,8 +1091,9 @@ chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
 The hourly size scan reuses shared, leftover and registered cache sizes for
 6 hours. For each capped category (build, Metro and Swift compilation), reuse
-requires a complete cached measurement under 6 hours old for every entry and a
-total at or under the nonzero cap; otherwise the whole category is measured fresh. Uncapped
+requires a complete cached measurement under 6 hours old for every existing
+entry and a total at or under the nonzero cap, decided once before the scan's
+walks; otherwise the whole category is measured fresh. Uncapped
 categories and a cap of zero use the age limit alone. Cargo targets reuse sizes
 at or under their cap for 6 hours; over-cap targets are measured fresh. Growth
 makes these sizes stale low, delaying a trim safely; fresh over-cap totals avoid

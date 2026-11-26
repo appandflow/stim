@@ -172,3 +172,21 @@ test.each([
   ).toEqual(dirs.map(() => [walked ? 50 : bytes, walked ? Date.now() : measuredAt]));
   expect(walk.mock.calls.filter(([dir]) => dirs.includes(dir))).toHaveLength(walked ? 2 : 0);
 });
+
+test('a capped category reuses its sizes when one of its folders does not exist', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+  vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '1');
+  saveConfig({ projects: {}, repos: {} });
+  const dir = join(home, 'relocated-build-cache');
+  mkdirSync(dir, { recursive: true });
+  register({ dir, name: 'Build cache', prune: 'entries' });
+  const file = diskUsageCacheFile(dir);
+  mkdirSync(join(file, '..'), { recursive: true });
+  const measuredAt = Date.now() - 3_600_000;
+  writeFileSync(file, JSON.stringify({ path: dir, bytes: 100, measuredAt: new Date(measuredAt).toISOString() }));
+  const walk = vi.spyOn(privateSize, 'measureTree').mockResolvedValue({ bytes: 50, privateBytes: null });
+  const sizes = await measureSizes(Date.now(), () => {}, undefined);
+  expect(sizes.find((size) => size.dir === dir)).toMatchObject({ category: 'build-cache', bytes: 100, measuredAt });
+  expect(walk.mock.calls.filter(([path]) => path === dir)).toHaveLength(0);
+});
