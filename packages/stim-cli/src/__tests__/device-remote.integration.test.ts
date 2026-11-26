@@ -1,5 +1,6 @@
 import { processContext, processOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
+import { cancelledFailure } from '../engine/native-run.ts';
 import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import {
@@ -1316,8 +1317,52 @@ if (args[0] === 'sim') {
       .map((line) => JSON.parse(line));
     expect(invoked.filter((args) => args[0] === 'simulator:stop')).toHaveLength(1);
     expect(operation.interrupted()).toBe(143);
+    expect(cancelledFailure(operation.context, 'ios', { code: 'STIM_NO_DEVICE' })).toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
   } finally {
     unwatchFile(marker);
+    raised.mockRestore();
+    exited.mockRestore();
+    operation.dispose();
+  }
+});
+
+test('a SIGTERM while an EAS create returns a session keeps the native run cancelled', async () => {
+  const operation = processOperation(root);
+  operationState(operation.context).runSignal = new AbortController().signal;
+  const kill = process.kill.bind(process);
+  const raised = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) => (target === process.pid ? true : kill(target, signal)));
+  const exited = vi.spyOn(process, 'exit').mockImplementation((code) => {
+    throw new Error(`exit ${String(code)}`);
+  });
+  try {
+    await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'stim-wt-abcdef',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      operation: operation.context,
+      boot: async () => {
+        operation.cancel('SIGTERM');
+        return { ok: true };
+      },
+      createdSessionId: () => 'drs_77',
+      abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_77' }),
+      writeState: () => {},
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot: join(tmpHome, 'machine-eas-terminated-ok'),
+    });
+    expect(raised).not.toHaveBeenCalledWith(process.pid, expect.anything());
+    expect(exited).not.toHaveBeenCalled();
+    expect(operationState(operation.context).runSignal?.aborted).toBe(true);
+    expect(cancelledFailure(operation.context, 'ios', { code: undefined })).toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
+  } finally {
     raised.mockRestore();
     exited.mockRestore();
     operation.dispose();
