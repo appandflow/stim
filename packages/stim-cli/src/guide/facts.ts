@@ -192,6 +192,7 @@ leased until <time>" for each one.`,
     Real size is whole-worktree private bytes (APFS, ext4, btrfs or XFS),
     unknown when unavailable; apparent size is allocated bytes. Neither includes
     Stim workspace data outside the checkout.
+    measuredAt is when its oldest measured part was walked.
 
   stim start --json
 

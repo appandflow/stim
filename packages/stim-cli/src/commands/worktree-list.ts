@@ -1,11 +1,11 @@
 import type { StimContext } from '@stim-cli/core';
 import { readDiskUsage, readDiskUsagePartial, readGcMark, readGcMarks, type DaemonMode } from '@stim-cli/core/state';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
-import { existsSync } from 'node:fs';
-import { relative, sep } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { runProcessOperation } from '../cli-operation.ts';
-import { freshMeasure, refreshMeasure } from '../disk-usage.ts';
+import { freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { daemonMode } from '../daemon/mode.ts';
 import { formatLongDuration, plural } from '../command-output.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -13,6 +13,7 @@ import { listWorktreesAsync, resolveSourceCheckoutAsync, type WorktreeEntry } fr
 import { canonicalPath } from './gc/paths.ts';
 import { eachLimited, sizeConcurrency } from './gc/limited.ts';
 import { phase } from './gc/progress.ts';
+import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 
 const DAY = 86_400_000;
 const OLD_DAYS = 30;
@@ -84,12 +85,60 @@ function summarize(entries: ListingEntry[]): Summary {
   };
 }
 
+function restKey(root: string): string {
+  return root + sep + '.';
+}
+
+function dependencies(root: string): string[] {
+  return ARTIFACT_DIRS.dependencies.map((dir) => join(root, dir));
+}
+
+function wholeWalk(root: string): boolean {
+  // real-size counts a file shared between two measured paths as private in neither, as a store and node_modules are.
+  return existsSync(join(root, '.pnpm-store'));
+}
+
+function restTargets(root: string): string[] {
+  const skip = new Set(dependencies(root));
+  const visit = (dir: string): string[] => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return [dir];
+    }
+    return names.flatMap((name) => {
+      const path = join(dir, name);
+      if (skip.has(path)) return [];
+      return [...skip].some((tree) => tree.startsWith(path + sep)) ? visit(path) : [path];
+    });
+  };
+  return visit(root);
+}
+
 function sizes(root: string) {
-  const measure = readDiskUsage(root);
+  const whole = readDiskUsage(root);
+  if (!wholeWalk(root)) {
+    const paths = [...dependencies(root), restKey(root)];
+    const parts = paths.map((path) => trustedMeasure(path));
+    if (parts.every((part) => part !== null)) {
+      const measuredAt = parts.map((part) => part.measuredAt).toSorted()[0] ?? null;
+      if (measuredAt !== null && (!whole || whole.measuredAt <= measuredAt))
+        return {
+          realBytes: parts.some(
+            (part, index) => part.privateBytes == null || readDiskUsagePartial(paths[index] ?? root),
+          )
+            ? null
+            : parts.reduce((sum, part) => sum + (part.privateBytes ?? 0), 0),
+          apparentBytes: parts.reduce((sum, part) => sum + part.bytes, 0),
+          measuredAt,
+        };
+    }
+  }
   return {
-    realBytes: readDiskUsagePartial(root) ? null : (measure?.privateBytes ?? null),
-    apparentBytes: measure?.bytes ?? null,
-    measuredAt: measure?.measuredAt ?? null,
+    realBytes: readDiskUsagePartial(root) ? null : (whole?.privateBytes ?? null),
+    apparentBytes: whole?.bytes ?? null,
+    measuredAt: whole?.measuredAt ?? null,
   };
 }
 
@@ -103,8 +152,9 @@ function idleDays(times: (number | null | undefined)[], now: number): number | n
 }
 
 /**
- * Builds a listing from saved observations and measures. With `measure`, it first walks each worktree whose measure is
- * missing or over an hour old, under a two minute budget for the whole call.
+ * Builds a listing from saved observations and measures. With `measure`, dependency trees follow their install and clone-group
+ * validity rule; the rest is walked hourly. A project-local .pnpm-store requires a whole hourly walk.
+ * All walks share a two minute budget for the whole call.
  */
 export async function worktreeListPayload(
   repositories: readonly string[],
@@ -137,15 +187,23 @@ export async function worktreeListPayload(
     })),
   );
   if (measure) {
-    const jobs = listed
-      .flatMap(({ entries }) => entries.map(({ path }) => canonicalPath(path)))
-      .filter((path) => !freshMeasure(path, MEASURE_OPTIONS));
-    if (jobs.length) phase('measuring', plural(jobs.length, 'worktree'), operation);
-    await eachLimited(jobs, sizeConcurrency(operation), async (path) => {
+    const roots = listed.flatMap(({ entries }) => entries.map(({ path }) => canonicalPath(path)));
+    const jobs = roots.flatMap((root) =>
+      (wholeWalk(root)
+        ? [{ path: root, options: MEASURE_OPTIONS }]
+        : [
+            ...dependencies(root).map((path) => ({ path, options: {} })),
+            { path: restKey(root), options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
+          ]
+      ).map((job) => ({ path: job.path, options: job.options, root })),
+    );
+    const due = jobs.filter(({ path, options }) => !freshMeasure(path, options));
+    if (due.length) phase('measuring', plural(new Set(due.map(({ root }) => root)).size, 'worktree'), operation);
+    await eachLimited(due, sizeConcurrency(operation), async ({ path, options }) => {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return;
       await refreshMeasure(path, {
-        ...MEASURE_OPTIONS,
+        ...options,
         timeoutMs: Math.min(30_000, remaining),
         operation,
         admit: () => Date.now() < deadline,
