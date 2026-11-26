@@ -196,9 +196,9 @@ that Mac's users reach.
 
 After `stim stop`, a host can park a healthy device and reuse it for the same
 client, with its app data cleared. The host's `pool.iosParkedMax` and
-`pool.androidParkedMax` (3 each) cap parking; `0` turns it off, and a device
-the host does not park is deleted. A replacement install deletes the session's
-earlier installs. A session whose state is unknown gets up to 5 stop attempts,
+`pool.androidParkedMax` (3 each) cap parking; `0` turns it off. A device the host does not park, because parking is off, the
+session is unhealthy or parking fails, is deleted. A replacement install
+deletes the session's earlier stored app copies. A session whose state is unknown gets up to 5 stop attempts,
 then the host keeps the device and releases its claim.
 
 ### Hosted sessions stop when they are idle

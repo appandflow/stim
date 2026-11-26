@@ -308,9 +308,10 @@ stim stop --slot tablet
 Stops the dev server and log collectors, shuts down the owned devices, closes
 the owned Chrome, quits the macOS app, ends web shares and an owned remote or
 EAS session, releases phone leases and frees the port. It never deletes a local
-device: the next run reuses it. A session on another Mac loses its app data
-there; its simulator or emulator is parked, or deleted when that Mac parks none
-or parking fails. An owned iOS simulator can stay
+device: the next run reuses it. On another Mac, a hosted simulator or emulator
+is parked with its apps kept until reuse, or deleted when that Mac parks none,
+the session is unhealthy or parking fails; a hosted macOS session's app data is
+deleted there. An owned iOS simulator can stay
 booted for `pool.bootedGraceMinutes` when memory allows. A `stop` during a
 build interrupts that build. On a phone, stopping the log collector closes the
 app; Stim never uninstalls it.
@@ -340,8 +341,8 @@ Reclaims the workspace's port, build output and owned devices, runs each
 service's `teardown` and archives the logs, then removes the linked worktree
 when that is safe. Owned devices are parked, or deleted at critical disk
 pressure, with parking set to `0`, or when parking fails. Git-ignored files
-such as `.env` go with the worktree; it lists those that differ from the source
-checkout. It refuses when the worktree has
+such as `.env` go with the worktree. It reports some that differ from the
+source checkout, best effort, so copy out the ones you need first. It refuses when the worktree has
 uncommitted, untracked or unpushed work; `--force` discards that work. A
 worktree locked with `git worktree lock` is kept even with `--force`. In the source checkout it
 reclaims the environment and keeps the files. Git branches with commits of
@@ -548,7 +549,8 @@ its channel. `use <version|path>` pins a version or a built checkout, with
 and `--restore-state` also puts back the state snapshot taken before a newer
 build migrated the home. `install` makes this copy the engine and `uninstall`
 removes it. Each install, use, update and rollback, and `stim gc`, deletes the
-engine versions that are not current, previous, staged or in use.
+engine versions that are not current, previous, staged, in use or used by an
+offload job in the last 24 hours.
 
 ### `plugin`
 

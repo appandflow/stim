@@ -75,7 +75,9 @@ Exact's cache and Xcode device support.
 **Never touched:**
 
 - Tracked files, untracked files git does not ignore, and unpushed commits.
-- Anything building, driven by an agent, leased or shared.
+- Anything building, driven by an agent, leased, shared or hosted, except that
+  a workspace with a device on another Mac still stops when idle and loses its
+  build outputs when dormant.
 - A workspace pinned with `maintenance.keep`.
 - A worktree locked with `git worktree lock`, and its dependencies.
 - Simulators and emulators you created, physical devices, `ios/build`, and
@@ -94,8 +96,8 @@ Exact's cache and Xcode device support.
 - You reinstall the main checkout's dependencies yourself.
 - A pinned workspace still has its logs trimmed, its recordings expire, its
   hosted device stopped and its booted device shut down for a waiting run.
-- A locked worktree still goes idle, so its dev server and devices stop; its
-  build outputs, dependencies and the worktree stay.
+- A locked worktree still goes idle and dormant, so its devices stop and are
+  deleted when dormant; its build outputs, dependencies and the worktree stay.
 - `daemon.mode off` still stops an idle dev server that `stimd` runs, and its
   devices. In every mode logs rotate, recordings expire, and stim-server on a
   Mac hosting others deletes stopped sessions' homes; it stops abandoned
