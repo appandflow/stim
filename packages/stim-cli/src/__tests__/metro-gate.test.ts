@@ -42,8 +42,10 @@ describe('the proof is a request arriving in THIS workspace log', () => {
     expect(result.ok).toBe(true);
   });
 
-  test('a HEALTHY foreign server is refused -- liveness is not identity', async () => {
-    const result = await gate({ probe: async () => 200, isProof: () => false });
+  test.each([200, 404])('a foreign server answering %s is refused without retrying', async (status) => {
+    const probe = vi.fn<() => Promise<number>>(async () => status);
+    const result = await gate({ probe, isProof: () => false });
+    expect(probe).toHaveBeenCalledOnce();
     expect(result.failed).toBe(true);
     expect(result.code).toBe(REMOTE_METRO_WRONG);
     expect(result.reason).toContain('different dev server');
@@ -83,4 +85,49 @@ describe('failing closed', () => {
     });
     expect(result.failed).toBe(true);
   });
+});
+
+test.each(['hung', '530'] as const)('retries a %s probe so later workspace proof can pass', async (failure) => {
+  let reachedMetro = false;
+  const signals: AbortSignal[] = [];
+  const probe = vi.fn<(url: string, signal: AbortSignal) => Promise<number | null>>(async (_url, signal) => {
+    signals.push(signal);
+    if (signals.length === 1) {
+      if (failure === '530') return 530;
+      return new Promise<null>((resolve) => signal.addEventListener('abort', () => resolve(null), { once: true }));
+    }
+    reachedMetro = true;
+    return 200;
+  });
+  const pending = gateMetroOrigin({
+    origin: ORIGIN,
+    metroPort: 8085,
+    platform: 'ios',
+    readRecords: () => (reachedMetro ? [{ ts: Date.now(), src: 'metro', level: 'info', msg: 'bundle' }] : []),
+    isProof: () => true,
+    probe,
+  });
+  await vi.advanceTimersByTimeAsync(failure === 'hung' ? 9_500 : 1_500);
+  expect(await pending).toEqual({ ok: true });
+  expect(probe).toHaveBeenCalledTimes(2);
+  expect(signals[0]?.aborted).toBe(true);
+});
+
+test('uses the managed tunnel remedy', async () => {
+  const result = await gate({ managed: true });
+  expect(result.remedy).toBe(
+    'Stim started this tunnel; it may still be registering. Run the same command again. If it fails again, run `stim stop` and retry, which starts a new tunnel.',
+  );
+});
+
+test('keeps the manual tunnel remedy by default', async () => {
+  const result = await gate();
+  expect(result.remedy).toContain('rebuild a manual tunnel');
+});
+
+test('a refusal describes the last probe response', async () => {
+  const probe = vi.fn<() => Promise<number>>(async () => 502).mockResolvedValueOnce(530);
+  const result = await gate({ probe });
+  expect(probe.mock.calls.length).toBeGreaterThan(1);
+  expect(result.reason).toContain('answered 502');
 });

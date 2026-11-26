@@ -847,7 +847,8 @@ describe('the Metro refusal comes before anything billable', () => {
     const { result } = await reach({
       isExpo: true,
       env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' },
-      gateOrigin: async (options: { entryPoint?: string }) => {
+      gateOrigin: async (options: { entryPoint?: string; managed?: boolean }) => {
+        expect(options.managed).toBe(false);
         entryPoint = options.entryPoint ?? null;
         return { ok: true as const };
       },
@@ -859,30 +860,39 @@ describe('the Metro refusal comes before anything billable', () => {
 });
 
 describe('a tunnel Stim starts for itself', () => {
-  test('a gate failure refuses with the gate stable code, and sets no origin', async () => {
-    const { result, context } = await reach({
-      available: ['cloudflared'],
-      readTunnelRecord: () => ({
-        kind: 'managed',
-        provider: 'cloudflared',
-        pid: 1,
-        url: 'https://t.trycloudflare.com',
-        port: 8085,
-        startedAt: 'T',
-      }),
-      isTunnelAlive: () => true,
-      gateOrigin: async () => ({
-        failed: true as const,
-        code: 'STIM_REMOTE_METRO_WRONG',
-        reason: 'wrong',
-        remedy: 'fix',
-      }),
-    });
-    expect('failed' in result).toBe(true);
-    assert('failed' in result);
-    expect(result.code).toBe('STIM_REMOTE_METRO_WRONG');
-    expect(context.publicMetroUrl).toBeNull();
-  });
+  test.each(['managed', 'expo'])(
+    'a %s gate failure refuses with the gate stable code, and sets no origin',
+    async (kind) => {
+      const { result, context } = await reach({
+        available: ['cloudflared'],
+        isExpo: kind === 'expo',
+        tunnelMode: kind === 'expo' ? 'expo' : 'auto',
+        readTunnelRecord: () => ({
+          kind,
+          provider: 'cloudflared',
+          pid: 1,
+          url: 'https://t.trycloudflare.com',
+          port: 8085,
+          startedAt: 'T',
+        }),
+        isTunnelAlive: () => true,
+        gateOrigin: async (options: { managed?: boolean }) => {
+          expect(options.managed).toBe(true);
+          return {
+            failed: true as const,
+            code: 'STIM_REMOTE_METRO_WRONG',
+            reason: 'wrong',
+            remedy: 'fix',
+          };
+        },
+      });
+      expect('failed' in result).toBe(true);
+      assert('failed' in result);
+      expect(result.code).toBe('STIM_REMOTE_METRO_WRONG');
+      expect(result.remedy).toBe('fix');
+      expect(context.publicMetroUrl).toBeNull();
+    },
+  );
 });
 
 describe('a session Stim created is never abandoned', () => {

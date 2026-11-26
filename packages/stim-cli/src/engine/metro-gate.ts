@@ -19,6 +19,7 @@ export interface GateOptions {
   metroPort: number | string;
   platform: 'ios' | 'android';
   entryPoint?: string;
+  managed?: boolean;
   readRecords: () => NdjsonRecord[];
   isProof: (record: NdjsonRecord, since: number) => boolean;
   probe?: (url: string, signal: AbortSignal) => Promise<number | null>;
@@ -37,6 +38,7 @@ export async function gateMetroOrigin({
   metroPort,
   platform,
   entryPoint = 'index',
+  managed = false,
   readRecords,
   isProof,
   probe = probePublicHttp,
@@ -49,15 +51,20 @@ export async function gateMetroOrigin({
   const bundleUrl = probeBundleUrl(origin, platform, entryPoint);
   let status: number | null = null;
   let pending = false;
+  let nextProbeAt = since;
   let request: Promise<void> = Promise.resolve();
   const startProbe = () => {
     pending = true;
+    const attempt = new AbortController();
+    const timer = setTimeout(() => attempt.abort(), 8_000);
     request = (async () => {
       try {
-        status = await probe(bundleUrl, controller.signal);
+        status = await probe(bundleUrl, AbortSignal.any([controller.signal, attempt.signal]));
       } catch {
         status = null;
       } finally {
+        clearTimeout(timer);
+        nextProbeAt = now() + 1_000;
         pending = false;
       }
     })();
@@ -70,7 +77,7 @@ export async function gateMetroOrigin({
       for (const record of readRecords()) {
         if (isProof(record, since)) return { ok: true };
       }
-      if (!pending && status === null) startProbe();
+      if (!pending && (status === null || status >= 500) && now() >= nextProbeAt) startProbe();
       await sleep(POLL_MS);
     }
   } finally {
@@ -82,10 +89,11 @@ export async function gateMetroOrigin({
     failed: true,
     code: REMOTE_METRO_WRONG,
     reason: describeMiss(origin, metroPort, status),
-    remedy:
-      `Check that ${origin} forwards to port ${metroPort} on THIS machine. ` +
-      'A tunnel built for a port this workspace no longer holds will answer normally and serve a different project. ' +
-      'Re-run `stim start`, which prints the port it reserved, and rebuild a manual tunnel against that port.',
+    remedy: managed
+      ? 'Stim started this tunnel; it may still be registering. Run the same command again. If it fails again, run `stim stop` and retry, which starts a new tunnel.'
+      : `Check that ${origin} forwards to port ${metroPort} on THIS machine. ` +
+        'A tunnel built for a port this workspace no longer holds will answer normally and serve a different project. ' +
+        'Re-run `stim start`, which prints the port it reserved, and rebuild a manual tunnel against that port.',
   };
 }
 
