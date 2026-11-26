@@ -496,7 +496,6 @@ export async function runMaintenance(
           for (const culprit of state.pressure.memory.culprits ?? [])
             record('maintenance_check', 'info', memoryCulpritAdvice([culprit])!, { culprit });
         } else {
-          measuredSizes = true;
           const measureFailed = (target: string, workspace?: string) => {
             failures.push(`Could not measure ${target}`);
             record('maintenance_failure', 'error', `Could not measure ${target}`, {
@@ -511,6 +510,7 @@ export async function runMaintenance(
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick, between))),
           ];
+          measuredSizes = true;
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
               check: {
@@ -530,12 +530,12 @@ export async function runMaintenance(
     }
     const plannedWorktrees =
       ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees && settings.removeIdleWorktrees);
-    const caps = [ran.has('size'), ran.has('sweep'), plannedWorktrees, cap.ran].some(Boolean);
-    if (!caps && !ran.has('idle')) {
+    const caps = measuredSizes || cap.ran;
+    const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
+    if (!Object.values(partPlanned).some(Boolean) && !failures.length) {
       writeState(state);
       return;
     }
-    const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
     await unitBoundary(between);
@@ -601,10 +601,7 @@ export async function runMaintenance(
         const began = Date.now();
         let outcome: ActionOutcome;
         try {
-          outcome =
-            action.kind === 'would-clear-build-dirs' && action.level === undefined && !measuredSizes && !cap.ran
-              ? { status: 'kept', bytes: 0, detail: 'this pass did not measure its size' }
-              : await executeAction(action, context);
+          outcome = await executeAction(action, context);
         } catch (error) {
           throwUnverifiedCleanup(error);
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };

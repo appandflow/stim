@@ -205,17 +205,16 @@ export async function plannedMaintenance(
   const sourceLast = (actions: MaintenanceAction[]): MaintenanceAction[] =>
     actions.toSorted((a, b) => sourceRank(a, sourceRoots) - sourceRank(b, sourceRoots));
   if (caps) {
-    const capped =
-      cargoOnly && !sweep && !worktrees
-        ? { actions: [], blocked: [], skips: [] }
-        : plan({
-            sizes: currentSizes,
-            settings,
-            protectedRoot: root,
-            pinned,
-            sourceRoots,
-            recentlyUsed: (workspace) => recentUse(workspace, settings),
-          });
+    const capped = cargoOnly
+      ? { actions: [], blocked: [], skips: [] }
+      : plan({
+          sizes: currentSizes,
+          settings,
+          protectedRoot: root,
+          pinned,
+          sourceRoots,
+          recentlyUsed: (workspace) => recentUse(workspace, settings),
+        });
     const cargo = await planCargoTargets({
       sizes: currentSizes,
       settings,

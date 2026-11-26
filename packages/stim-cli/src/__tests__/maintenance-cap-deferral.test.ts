@@ -116,6 +116,42 @@ test('a pass that measured no Cargo target trims nothing from its saved over-cap
   expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
 });
 
+test('a pass whose size check fails trims no Cargo target from the size an earlier pass saved', async () => {
+  vi.stubEnv('STIM_DAEMON', 'on');
+  vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '1');
+  vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
+  vi.spyOn(measurements, 'measureSizes').mockRejectedValue(new Error('du failed'));
+  const now = Date.now();
+  const state: MaintenanceState = {
+    version: 1,
+    lastAt: { pressure: now, sweep: now, idle: now, worktree: now },
+    capAt: now,
+    pressure: null,
+    sizes: [
+      {
+        name: 'Cargo target',
+        category: 'other',
+        dir: target,
+        workspace: dirname(target),
+        bytes: 2 * 1024 ** 3,
+        measuredAt: now - 3 * 3_600_000,
+      },
+    ],
+    lastPass: null,
+    recent: [],
+    plan: [],
+  };
+  mkdirSync(dirname(maintenanceStateFile()), { recursive: true });
+  writeFileSync(maintenanceStateFile(), JSON.stringify(state));
+
+  await runMaintenance('test');
+
+  expect(readMaintenanceState()?.recent).toContainEqual(
+    expect.objectContaining({ event: 'maintenance_failure', target: 'size' }),
+  );
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
+});
+
 test('while host load defers the size scan, the cap still measures and plans an over-cap target, and status says since when', async () => {
   await runMaintenance('test');
 
