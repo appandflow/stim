@@ -137,6 +137,25 @@ test('the last daemon action line names the newest action, its age and what it f
   ).toMatch(/^Last daemon action 2m ago: idle stage \/app \(2K\); 2 recent in /);
 });
 
+test('a leftover maintenance.mode caps status at report and explains the cap', () => {
+  vi.stubEnv('STIM_DAEMON', undefined);
+  onTestFinished(() => vi.unstubAllEnvs());
+  const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
+  process.env.STIM_HOME = home;
+  onTestFinished(() => {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ maintenance: { mode: 'report' } }));
+
+  const value = daemonStatus({});
+
+  expect(value.mode).toBe('report');
+  expect(daemonLine(value, NOW)).toMatch(
+    /^Daemon \(report only; a leftover maintenance\.mode holds it at report\): not running,/,
+  );
+});
+
 test("status reports the running daemon's tick and mode, and the setting when the mode differs", () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
   process.env.STIM_HOME = home;
