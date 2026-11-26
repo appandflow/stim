@@ -16,6 +16,7 @@ import { throwIfCancelled } from '../../cancellation.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { statSync } from 'node:fs';
 import { basename } from 'node:path';
+import { availableParallelism, loadavg } from 'node:os';
 import chalk from 'chalk';
 import type { BuildPhase, BuildProgress, recordFinishedBuild } from '../../engine/build-progress.ts';
 import type { ProviderCallResult } from '@stim-cli/cache';
@@ -96,6 +97,7 @@ import {
   androidCrashClockOffset,
   captureNativeCrashes,
   printNativeCrashReport,
+  readAndroidAnrKill,
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
@@ -197,6 +199,45 @@ export function androidMetroRuntime(prepare: AndroidRuntimePlan['prepare']): And
   };
 }
 
+async function reportAnrKill({
+  operation,
+  serial,
+  androidPackage,
+  launchedAt,
+  physical,
+  phase,
+  clockOffsetMs,
+  runCommand,
+  waitedMs,
+}: Pick<VerifyAndroidRunArgs, 'operation' | 'serial' | 'androidPackage' | 'launchedAt' | 'physical' | 'phase'> & {
+  clockOffsetMs: number | null | undefined;
+  runCommand: string;
+  waitedMs: number | undefined;
+}): Promise<boolean> {
+  if (clockOffsetMs === null || clockOffsetMs === undefined) return false;
+  const anr = await readAndroidAnrKill(
+    { deviceId: serial, appId: androidPackage, since: launchedAt },
+    clockOffsetMs,
+    operation?.signal,
+  );
+  if (!anr) return false;
+  phase(
+    'verify',
+    chalk.red(`FATAL after ${formatDuration(waitedMs ?? 0)}: Android killed the app for not responding (ANR)`),
+  );
+  if (anr.reason) phase('', chalk.red(`ANR reason: ${anr.reason}`));
+  if (!physical)
+    phase('load', `host load ${Math.round((loadavg()[0] ?? 0) * 10) / 10} on ${availableParallelism()} cores`);
+  const busy = physical ? 'the device' : 'the host';
+  phase(
+    'remedy',
+    chalk.yellow(
+      `An ANR while ${busy} is overloaded is not an app bug: run \`${runCommand}\` again once the load drops. If it repeats while ${busy} is idle, the app blocks its main thread during startup; fix that, then run \`${runCommand}\` again.`,
+    ),
+  );
+  return true;
+}
+
 async function verifyAndroidProcessRun({
   operation,
   root,
@@ -210,6 +251,7 @@ async function verifyAndroidProcessRun({
   launchedAt,
   phase,
   embeddedJavaScript,
+  physical,
 }: VerifyAndroidRunArgs & { embeddedJavaScript: boolean }): Promise<RuntimeReadiness> {
   const readNativeCrashes = () =>
     remoteDevice
@@ -237,6 +279,21 @@ async function verifyAndroidProcessRun({
     phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
     return { state: LAUNCH_UNVERIFIED };
   }
+  if (
+    !crashes.length &&
+    (await reportAnrKill({
+      operation,
+      serial,
+      androidPackage,
+      launchedAt,
+      physical,
+      phase,
+      clockOffsetMs: await androidCrashClockOffset(serial, operation?.signal),
+      runCommand: nativeRunCommand('android', slot, { physical, deviceId: serial }),
+      waitedMs: processCheck?.waitedMs,
+    }))
+  )
+    return { state: LAUNCH_FATAL };
   for (const line of launchErrorPreview(crashes, root)) phase('launch', chalk.red(line));
   if (!crashes.length)
     phase(
@@ -371,6 +428,22 @@ export async function verifyAndroidMetroRun({
     phase('readiness', appReadinessMessage(verification.readiness, verification.waitedMs ?? 0));
   if (verification?.fatal) {
     const nativeFatal = verification.errors?.some((record) => record.event === 'native_crash');
+    if (
+      !nativeFatal &&
+      verification.processAlive === false &&
+      (await reportAnrKill({
+        operation,
+        serial,
+        androidPackage,
+        launchedAt,
+        physical,
+        phase,
+        clockOffsetMs,
+        runCommand,
+        waitedMs: verification.waitedMs,
+      }))
+    )
+      return { state: LAUNCH_FATAL };
     const deliveryFailed = verification.record?.event === 'bundle_response_failed';
     const reason = nativeFatal
       ? 'the app reported a native crash'

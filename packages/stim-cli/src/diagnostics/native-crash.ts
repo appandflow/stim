@@ -416,6 +416,51 @@ function withRustPanics(reports: NdjsonRecord[], panics: readonly string[]): Ndj
   return [{ ...newest, msg: `${String(newest.msg)}\n${panics.join('\n')}` }, ...older];
 }
 
+/** Finds ActivityManager killing the target app's main process for an ANR, with the reason its ANR report gave. */
+export function parseAndroidAnrKill(
+  text: string,
+  target: Pick<CrashTarget, 'appId' | 'since'>,
+  clockOffsetMs: number,
+): { reason: string | null } | null {
+  let inAppAnr = false;
+  let reason: string | null = null;
+  for (const line of text.split('\n')) {
+    const record = parseLogcatLine(line, { clockOffsetMs });
+    if (!record || Number(record.ts) < target.since) continue;
+    const msg = record.msg ?? '';
+    const anr = /^ANR in (\S+)/.exec(msg);
+    if (anr) {
+      inAppAnr = anr[1] === target.appId;
+      if (inAppAnr) reason = null;
+    } else if (inAppAnr && msg.startsWith('Reason: ')) {
+      reason = msg.slice('Reason: '.length).trim() || null;
+    } else {
+      const kill = /^Killing \d+:([^/\s]+)\/\S+ \(adj -?\d+\): (.*)$/.exec(msg);
+      if (kill?.[1] === target.appId && /\banr\b/i.test(kill[2]!)) return { reason };
+    }
+  }
+  return null;
+}
+
+export async function readAndroidAnrKill(
+  target: Pick<CrashTarget, 'deviceId' | 'appId' | 'since'>,
+  clockOffsetMs: number,
+  signal?: AbortSignal,
+): Promise<{ reason: string | null } | null> {
+  try {
+    const text = await crashCommand(
+      'adb',
+      ['-s', target.deviceId, 'logcat', '-b', 'system', '-d', '-v', 'time,epoch', '-s', 'ActivityManager'],
+      { timeoutMs: 3000, cwd: androidToolCwd() },
+      signal,
+    );
+    return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
 export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
   const before = Date.now();
   const clock = (

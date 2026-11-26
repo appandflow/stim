@@ -4388,6 +4388,57 @@ describe('launch verification', () => {
   });
 
   test.each([
+    { name: 'an ANR kill of the app', appId: 'com.example.app', atSeconds: 5, anr: true },
+    { name: 'an ANR kill of another app', appId: 'com.example.other', atSeconds: 5, anr: false },
+    { name: 'an ANR kill before the launch', appId: 'com.example.app', atSeconds: -600, anr: false },
+  ])('a process exit after $name is reported as an ANR only for this launch', async ({ appId, atSeconds, anr }) => {
+    const recordedSystemLog = (now: number) => {
+      const at = Math.floor(now / 1000) + atSeconds;
+      return [
+        '--------- beginning of system',
+        `         ${at - 74}.005 I/ActivityManager(  537): Killing 4542:${appId}/u0a145 (adj 0): stop ${appId} due to from pid 5984`,
+        `         ${at - 74}.177 I/ActivityManager(  537): Start proc 6004:${appId}/u0a145 for next-top-activity {${appId}/${appId}.MainActivity}`,
+        `         ${at}.362 E/ActivityManager(  537): ANR in ${appId}`,
+        `         ${at}.362 E/ActivityManager(  537): PID: 6004`,
+        `         ${at}.362 E/ActivityManager(  537): Reason: Process ProcessRecord{c0daa15 6004:${appId}/u0a145} failed to complete startup`,
+        `         ${at}.362 E/ActivityManager(  537): ErrorId: c0daa159-367a-4d10-bf5f-d20e595e1124`,
+        `         ${at}.362 E/ActivityManager(  537): Load: 0.0 / 0.0 / 0.0`,
+        `         ${at}.363 I/ActivityManager(  537): Killing 6004:${appId}/u0a145 (adj 900): bg anr`,
+      ].join('\n');
+    };
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file, args) => {
+          if (file !== 'adb') return null;
+          if (args.includes('date')) return String(Date.now());
+          return args.includes('system') ? recordedSystemLog(Date.now()) : '';
+        },
+      }),
+    );
+    try {
+      const h = harness({
+        verifyLaunched: async () => ({
+          fatal: true,
+          processAlive: false,
+          waitedMs: 60000,
+          errors: [{ src: 'device', msg: 'Pinning is deprecated since Android Q. Please use trim or other methods.' }],
+        }),
+      });
+      const result = await h.run();
+      const text = h.stderr.join('\n');
+      expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
+      expect(text.includes('Android killed the app for not responding (ANR)')).toBe(anr);
+      expect(text.includes('ANR reason: Process ProcessRecord{c0daa15 6004:com.example.app/u0a145} failed')).toBe(anr);
+      expect(/host load [\d.]+ on \d+ cores/.test(text)).toBe(anr);
+      expect(text.includes('again once the load drops')).toBe(anr);
+      expect(text.includes('Fix the crash')).toBe(!anr);
+      expect(text.includes('Pinning is deprecated')).toBe(!anr);
+    } finally {
+      resetExecutor();
+    }
+  });
+
+  test.each([
     ['bundle_build_failed', 'Metro could not build the bundle', 'Fix the JavaScript'],
     ['bundle_response_failed', 'Metro bundle delivery failed', 'Check the Metro logs and device connection'],
   ])('a Metro failure (%s) with a live process recommends reload', async (event, reason, remedy) => {

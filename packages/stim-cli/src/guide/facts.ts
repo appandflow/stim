@@ -382,7 +382,7 @@ leased until <time>" for each one.`,
                   Neither "bundling" nor "unverified" is reported for an app
                   whose process is gone when the bundle timeout closes: the
                   run fails as FATAL, "the app process exited", with the
-                  device log's errors. An iOS crash report can land a minute
+                  device log's errors or Android's ANR reason. An iOS crash report can land a minute
                   after the crash, so \`logs --errors\` may show the native
                   stack only later
                   See \`guide facts devmenu\` for the dev menu and its button.
