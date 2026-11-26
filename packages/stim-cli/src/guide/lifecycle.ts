@@ -2582,7 +2582,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     budget: {
       summary: 'the pressure level, the ladder that reclaims under it, the dormant stage, and STIM_LOW_DISK',
       body: () => `PRESSURE: ONE LEVEL, ONE LADDER (ON BY DEFAULT)
-  Each stim-daemon tick (every 60s, and when a run asks) classifies the
+  Each stim-daemon tick (every 60s, 5 min in a quiet home at normal, and
+  when a run asks) classifies the
   machine from free disk on every volume Stim writes to ($STIM_HOME, every
   registered project, the build worker root) and memory:
 
@@ -2609,6 +2610,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   takes the longest-idle workspace first. Disk rungs take only what lies on a
   short volume (stim gc --pressure: every volume):
 
+    0. memory only: booted parked simulators shut down
     2. parked devices: at high the oldest deleted until the level clears, at
        critical all of them
     3. shared caches: at high the build and Metro caches trimmed least
@@ -2617,8 +2619,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        cap); at critical the Metro and compilation caches emptied, the build
        cache trimmed to the entries a workspace, parked device or build still
        uses, the fingerprint index and memo emptied, and every other cache
-       Stim registered emptied whole (ccache, the macOS artifact cache and the
-       React Native and Android caches; \`guide cleanup\` lists them), except
+       Stim registered or detected emptied whole (ccache, the macOS artifact
+       cache, the React Native and Android caches and, outside a scoped
+       STIM_HOME, Xcode's CompilationCache.noindex), except
        report-only caches, caches inside a workspace, caches Stim does not own,
        caches outside a scoped STIM_HOME and one a build holds. At high each
        capped cache is sized with a bounded walk, and one whose walk fails is
@@ -2630,8 +2633,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        idle.minutes; outputs of workspaces with nothing running go, but a
        checkout whose only output is a Cargo target/ is not read
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
-       for workspaces idle 2 minutes (the same reduction a day of idleness
-       causes, DORMANT STAGE below)
+       for workspaces idle 2 minutes, their owned devices deleted and logs
+       archived; their build outputs and dependencies stay (DORMANT STAGE)
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
        1 GiB under memory pressure), unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays (at critical every unpinned one), Stim
@@ -2678,8 +2681,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        command used for 7 days, only while maintenance.removeIdleWorktrees is
        true. \`stim gc\` looks the pull requests up again
 
-  A level raised only by memory runs only what frees memory: the idle stage
-  of rung 1, which shuts devices down, and the Gradle daemons and watchman of
+  A level raised only by memory runs only what frees memory: rung 0, the
+  idle stage of rung 1, which shuts devices down, and the Gradle daemons and watchman of
   rung 6.
   Memory never refuses: it holds boots (\`guide lifecycle concurrency\`).
 
@@ -2812,7 +2815,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   IDLE SHUTDOWN (15 MINUTES BY DEFAULT): once a workspace has had no activity
   for idle.minutes, the stim-daemon shuts its owned simulators and emulators
   down together with its dev server, in the idle stage (\`guide metro\`, IDLE
-  STOP), whether or not a dev server runs. A device stays booted while it is
+  STOP), whether or not a dev server runs, and deletes its build outputs and
+  Metro cache, unless another running dev server shares it. A device stays booted while it is
   driven, locked or leased, while a build runs in its workspace, while a web
   share of its workspace is live (\`guide share\`), and while its activity is
   unknown. Activity is the workspace's Stim commands and native

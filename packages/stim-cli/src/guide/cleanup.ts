@@ -34,11 +34,12 @@ MAINTENANCE
 Automatic maintenance follows daemon.mode (guide settings): on (the default)
 runs the disk actions below through gc's own removal code and logs each one;
 report measures, plans and logs, and never deletes anything; off disables it,
-with the idle and dormant stages and the pressure ladder. It is off in CI
+the dormant stage and the pressure ladder, and leaves only the idle stop of a
+dev server stimd runs. It is off in CI
 unless STIM_DAEMON is set, so a CI run never deletes on its own. A scoped
-STIM_HOME home runs it like any other.
+STIM_HOME home runs it without the machine-wide steps.
 The stim-daemon runs a pass in its own process on each tick when a check is
-due: a disk and memory reading for status (every minute), hosted idle stops
+due: a disk and memory reading for status (every minute, 5 when quiet), hosted idle stops
 (every 5 minutes), sizes (hourly; under-cap reuse 6h), finished worktrees (every 15
 minutes) and the age sweep (daily); the daemon also rescans the home folder for
 checkouts after the pass, weekly and also at low disk (DISCOVERED CHECKOUTS). The reading plans nothing, the idle check
@@ -257,7 +258,7 @@ live build lock, or in a Metro store with a running or unverifiable dev
 server. Anything the pass cannot verify is kept. A device is deleted only when
 its workspace is idle: no dev server, native run, build, lease, managed lock,
 driven or busy device, web share (live or stopped for now), and no recorded use within the window. A pass stops a
-dev server only by IDLE STOP above and never stops watchman; removing a
+dev server only by IDLE STOP above and watchman only by step 8; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc does. ccache evicts by itself under
 caches.ccacheMaxGb.
@@ -266,17 +267,14 @@ DISK PRESSURE
   Disk and memory pressure are the stim-daemon's: one level per tick and one
   ladder (stim guide lifecycle budget), not maintenance levels. The ladder
   reuses maintenance's removal code for parked devices, the Swift compilation
-  cache, Gradle daemons and versions, and the node_modules and ios/Pods of
-  idle linked worktrees, with the running-process checks of WORKTREE
-  DEPENDENCIES; dependencies that worktree warm can restore are recorded for
-  the next start, ios or android to restore. A directory is cleared only when
-  it is a real directory inside its worktree, git tracks nothing in it, its
-  worktree is not in use, is not locked with git worktree lock, holds no build
-  lock and is not pinned. The last rung, 9, cleans other tools' caches (npm,
+  cache and Gradle daemons and versions. It deletes no node_modules, Pods or
+  worktree: rungs 5 and 7 only report them, and only the dormant step and the
+  finished-worktree check above delete them. The last rung, 9, cleans other tools' caches (npm,
   Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM) through each
   tool's own command, only at critical and only while the earlier rungs left
-  the disk short (\`stim guide cleanup gc\`); Xcode DerivedData outside Stim
-  is never deleted. Every command prints stderr lines while the daemon's last tick, at most 10
+  the disk short (\`stim guide cleanup gc\`). Xcode DerivedData outside Stim
+  is never deleted, except that rung 3 empties Xcode's CompilationCache.noindex
+  at critical outside a scoped STIM_HOME. Every command prints stderr lines while the daemon's last tick, at most 10
   minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass
@@ -569,12 +567,12 @@ After updating Stim Host, unregister and register the helper again.`,
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
             idle stage at 2 minutes (memory pressure), parked devices until
-            the level clears, shared caches trimmed to half their caps, the dormant stage
-            at 10 minutes, idle daemons; it only reports dependencies and
-            finished worktrees; and, while free disk stays under
-            disk.minFreeGb, other tools' caches
-  critical  plus every parked device, every shared cache Stim registered
-            emptied, the dormant stage at 2 minutes,
+            the level clears, shared caches trimmed to half their caps, owned
+            devices of workspaces idle 10 minutes, idle daemons; it only
+            reports dependencies and finished worktrees
+  critical  plus every parked device, every shared cache Stim registered or
+            detected (Xcode's compilation cache) emptied, owned devices of
+            workspaces idle 2 minutes,
             every unpinned Gradle version,
             every device recording not being written, archived logs,
             recordings and agent actions, and other tools' caches
@@ -637,7 +635,7 @@ After updating Stim Host, unregister and register the helper again.`,
   Idle dev servers and their outputs (idle 2 minutes)
     idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1
     skips a Cargo target/ and a checkout whose only output is one.
-  Dormant stage at 10 minutes (H) or 2 minutes (C)
+  Owned devices, logs archived, idle 10 minutes (H) or 2 minutes (C)
     rung 4, H. Kept: as the dormant reduction.
   node_modules and Pods of linked worktrees idle 1 hour (H) or 2 minutes (C)
     rung 5, H, reported only, last, in stim gc only, never by the
@@ -684,7 +682,7 @@ After updating Stim Host, unregister and register the helper again.`,
   no AVD uses (the sdkmanager command), ~/.cache/exact
     rung 9, reported only, with the command, never deleted.
 
-  The dormant reduction and the dormant stage are the same work: a workspace
+  At idle.dormantDays the dormant reduction and stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
   stim gc at every level and by the stim-daemon (hourly, never beside a
   ladder pass). Its node_modules and
@@ -1196,13 +1194,13 @@ THE PRESSURE LADDER
     0  booted parked simulators
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
-       (compilation cache, ccache, build cache except entries in use, Metro
+       (compilation caches, Xcode's too, ccache, build cache except entries in use, Metro
        cache, macOS artifacts, React Native and Android caches), with the
        fingerprint index and memo; then the Cargo trims, largest first
     1  stopped outputs from saved marks, with fresh safety checks: high
        refreshes due marks if short; critical skips unmarked outputs.
-    4  the dormant stage: workspaces idle 10 minutes (high) or 2 minutes
-       (critical)
+    4  the dormant stage: owned devices deleted and logs archived for
+       workspaces idle 10 minutes (high) or 2 minutes (critical)
     6  idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle
        versions (critical: all unpinned), TMPDIR leftovers, the worktree trash
     8  critical only: every device recording not being written, except those
@@ -1241,20 +1239,16 @@ THE PRESSURE LADDER
        7 days, only while maintenance.removeIdleWorktrees is true (false
        means never, at any level). Only stim gc runs rungs 5 and 7, never the
        stim-daemon
-  Only the stim-daemon and stim gc run rung 9. The daemon runs it at most
-  hourly, while the disk is still short. stim gc with no --pressure that
-  measures critical measures free disk again after the earlier rungs and runs
-  rung 9 only if it is still under the critical level. An explicit
-  stim gc --pressure critical is the free-everything command and always runs
-  it.
+  Rung 9 runs as the table under RUNNING GC says; stim gc --pressure
+  critical is the free-everything command.
   It runs whatever daemon.mode says and covers every registered workspace,
   the one gc runs in included: its dev server stops and its devices shut
-  down after 2 idle minutes, and its owned devices are deleted after 10 at
-  high. It never touches
+  down after 2 idle minutes under memory pressure (else idle.minutes), and
+  its owned devices are deleted after 10 at high. It never touches
   a workspace with a blocker (a build, a driver, a lease or lock, a live web
   share, a hosted placement, unreadable evidence), and maintenance.keep
   protects a workspace. Report-only caches and what Stim never deletes (other
-  DerivedData, Android NDKs, system images, ~/.cache/exact) are never touched;
+  DerivedData than CompilationCache.noindex, Android NDKs, system images, ~/.cache/exact) are never touched;
   the SwiftPM cache goes only with rung 9, at critical. Caches whose loss slows the next build go only for an idle
   workspace or at critical. An acting run appends each item to
   $STIM_HOME/gc/gc.ndjson. \`stim revive\` resumes an idle workspace; the next
