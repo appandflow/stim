@@ -438,7 +438,7 @@ export function parseAndroidAnrKill(
     const anr = /^ANR in (\S+)/.exec(msg);
     const kill = /^Killing (\d+):([^/\s]+)\/\S+ \(adj -?\d+\): (.*)$/.exec(msg);
     if (start?.[2] === target.appId) {
-      startedPid = start[1]!;
+      startedPid = start[1] ?? null;
       anrPid = reason = found = null;
     } else if (anr) {
       inAppAnr = anr[1] === target.appId;
@@ -450,7 +450,7 @@ export function parseAndroidAnrKill(
     } else if (
       kill?.[2] === target.appId &&
       kill[1] === startedPid &&
-      (kill[1] === anrPid || /\banr\b/i.test(kill[3]!))
+      (kill[1] === anrPid || /\banr\b/i.test(kill[3] ?? ''))
     ) {
       found = { reason };
     }
