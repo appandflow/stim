@@ -50,7 +50,10 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
   expect(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
     /checkout -- src\/app\.js/,
   );
-  expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/clean -fd "we ird\.txt"/);
+  expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/clean -fd 'we ird\.txt'/);
+  expect(removalRemedy([' M app/(tabs)/index.tsx'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
+    /checkout -- 'app\/\(tabs\)\/index\.tsx'/,
+  );
   const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
   expect(many).toMatch(/checkout -- a b c d e \.\.\./);
   expect(!many.includes('<path>')).toBeTruthy();

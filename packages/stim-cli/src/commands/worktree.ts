@@ -804,7 +804,7 @@ export function removalRemedy(
 
 function pathArgs(lines: string[] | null | undefined, limit = 5): string {
   const paths = (lines || []).map(porcelainPath).filter((p): p is string => Boolean(p));
-  const shown = paths.slice(0, limit).map((p) => (/[\s"'\\$`]/.test(p) ? JSON.stringify(p) : p));
+  const shown = paths.slice(0, limit).map(quoteWorktree);
   return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
