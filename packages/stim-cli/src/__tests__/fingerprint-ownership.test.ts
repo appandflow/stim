@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
+import { takeLock } from '../engine-store/locks.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
 import { withFingerprintOwnership } from '../engine/fingerprint-ownership.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn, trackClaimActivity } from '../engine/spawn-claims.ts';
@@ -94,6 +95,27 @@ test.each([
     );
     expect(readClaimSet(buildClaimRoot(fixture.root, '0123456789ab'))).toMatchObject({ live: [], unresolved: [] });
   } finally {
+    rmSync(area, { recursive: true, force: true });
+  }
+});
+
+test('a busy engine store refuses fingerprinting with a retry remedy', async () => {
+  const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
+  fixture.root = join(area, 'store');
+  const lock = await takeLock(fixture.root, '.lock.sock');
+  try {
+    expect(lock).not.toBeNull();
+    const root = join(area, 'project');
+    const context = testContext({ home: join(area, 'home'), projectRoot: root });
+    const work = vi.fn<() => Promise<void>>();
+    await expect(withFingerprintOwnership(context, root, work)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy:
+        'Another Stim command holds the engine store for a moment (an engine switch, install or cleanup). Run the same command again in a few seconds.',
+    });
+    expect(work).not.toHaveBeenCalled();
+  } finally {
+    await lock?.release();
     rmSync(area, { recursive: true, force: true });
   }
 });

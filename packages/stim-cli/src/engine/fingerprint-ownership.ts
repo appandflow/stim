@@ -22,7 +22,11 @@ export async function withFingerprintOwnership<T>(
   let engineClaim: ClaimHandle | null = null;
   if (engine && engineRoot && ![...operationState(context).declaring].some((claim) => claim.root === engineRoot)) {
     const lock = await takeLock(engine.root, '.lock.sock');
-    if (!lock) throw new ClaimUnavailableError('the engine store is busy');
+    if (!lock)
+      throw new ClaimUnavailableError('the engine store is busy', {
+        remedy:
+          'Another Stim command holds the engine store for a moment (an engine switch, install or cleanup). Run the same command again in a few seconds.',
+      });
     let admissionFailure: { error: unknown } | null = null;
     try {
       signal.throwIfAborted();

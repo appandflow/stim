@@ -8941,6 +8941,22 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 });
 
 describe('--plan', () => {
+  test('preserves the retry remedy when the engine store is busy during fingerprinting', async () => {
+    const remedy =
+      'Another Stim command holds the engine store for a moment (an engine switch, install or cleanup). Run the same command again in a few seconds.';
+    const error = new ClaimUnavailableError('the engine store is busy', { remedy });
+    const { logs, exitCode } = await run(
+      { plan: true, json: true },
+      {
+        fingerprint: async () => {
+          throw error;
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_NO_FINGERPRINT', message: error.message, remedy });
+  });
+
   test('reports the evaluator refusal and its redacted diagnostic', async () => {
     const { logs, errs, exitCode } = await run(
       { plan: true, json: true },
