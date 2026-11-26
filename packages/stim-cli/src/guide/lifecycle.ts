@@ -476,10 +476,11 @@ On this Mac, drive and test the app with Exact's own commands, with EXACT_SIM
 set to the simulator stim ios reported. Without it Exact picks a simulator by its own
 rule, which another worktree of the same app may be using.
 
-Exact names an app's crates after its folder. A worktree of an app whose own
-Cargo.toml files name its crates needs the same folder name as the checkout it
+Exact before mid-November 2026 took an app's crate names from its folder, so a
+worktree of an app pinned to it needs the same folder name as the checkout it
 was created in (otherwise the build fails with "Cargo has no <name>-apple
-target"); an app without them builds under any folder name. A worktree at
+target"). Later Exact reads them from the app's Cargo.toml files or
+package.json, and a worktree builds under any folder name. A worktree at
 another folder depth than the Exact checkout needs EXACT2 set to it (otherwise
 "no exact2 at ..."). Stim reports these Exact failures as they come.
 
