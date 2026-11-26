@@ -1113,7 +1113,8 @@ and Swift compilation caches, and Cargo targets) only from a measurement that
 succeeded in that same pass: the size check, or, while host load defers it,
 the Cargo-only cap measurement, which plans only the Cargo caps. A pass whose
 size check did not run or failed plans no cap trim, and leaves the trims that
-the last measuring pass kept in the plan until a pass that measures. The sizes
+the last measuring pass kept in the plan until a pass that measures; a
+Cargo-only measurement replaces them with its Cargo trims alone. The sizes
 saved in the maintenance state from earlier passes never decide a trim: an
 acting `stim gc`, a ladder trim or the idle stage can shrink a cache without
 updating them, and a cache refilled since then would be trimmed or emptied
