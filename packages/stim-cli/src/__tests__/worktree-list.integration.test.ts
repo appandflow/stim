@@ -137,8 +137,24 @@ test('JSON is one payload and splits kept totals by gc reason', async () => {
   });
   const partial = JSON.parse((await run({ json: true }))[0] ?? '');
   expect(partial.repositories[0].worktrees).toContainEqual(
-    expect.objectContaining({ path: roots[1], realBytes: null, apparentBytes: 4 * GIB, large: false }),
+    expect.objectContaining({ path: roots[1], realBytes: 2 * GIB, apparentBytes: 4 * GIB, partial: true, large: true }),
   );
+  expect(partial.total).toMatchObject({
+    realBytes: 2 * GIB + 100,
+    realPartial: true,
+    unmeasured: 1,
+    keptPartial: true,
+  });
+  expect(partial.total.removePartial).toBeUndefined();
+  expect(partial.total.kept).toContainEqual({ reason: 'dirty', count: 1, realBytes: 100 });
+  expect(partial.total.kept).toContainEqual(expect.objectContaining({ realBytes: 2 * GIB, partial: true }));
+  const plain = await run({});
+  expect(plain[0]).toContain(`at least ${formatBytes(2 * GIB)} real, at least ${formatBytes(4 * GIB)} apparent`);
+  expect(plain[3]).toContain(`; at least ${formatBytes(2 * GIB + 100)} real; 1 without a known real size;`);
+  expect(plain[3]).toContain(`dirty: 1, ${formatBytes(100)}`);
+  const [finding] = await linkedWorktreeFindings(repository);
+  expect(finding?.title).toContain(`use at least ${formatBytes(2 * GIB + 100)} real`);
+  expect(finding?.detail).toContain(`at least ${formatBytes(2 * GIB + 100)} real, `);
 });
 
 test('machine listing uses saved observations and leaves unobserved worktrees unchecked', async () => {

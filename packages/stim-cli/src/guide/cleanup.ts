@@ -13,7 +13,8 @@ or clone group changes (a day at most); the rest is walked hourly, a worktree
 with a local .pnpm-store or linked ios whole, within a two-minute budget.
 stim doctor notes the same summary from saved data only.
 Real size sums the parts' private bytes; apparent size is allocated bytes.
-Neither includes Stim workspace data outside the checkout.
+A partial walk prints "at least", as do totals with it. Neither includes Stim
+workspace data outside the checkout.
 
 DEVICE SLOTS
 
