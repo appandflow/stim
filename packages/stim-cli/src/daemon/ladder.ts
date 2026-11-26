@@ -60,6 +60,7 @@ import { rankDependencies, rankSourceDependencies, selectDependencies, type Rank
 import { savedDependencyReports } from './dependency-reports.ts';
 import { savedWorktreeReports } from './worktree-reports.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import { worktreeLockAsync } from '../workspace/worktree.ts';
 import {
   clearStoppedOutputs,
   deviceDataDirs,
@@ -191,6 +192,7 @@ export async function idleOutputBytes(
   config: Config,
   onVolume?: (path: string) => boolean,
 ): Promise<number> {
+  if (await worktreeLockAsync(path)) return 0;
   return pathsBytes((await idleOutputs(path, config, onVolume)).paths);
 }
 

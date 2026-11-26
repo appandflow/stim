@@ -79,7 +79,8 @@ Exact's cache and Xcode device support.
   a workspace with a device on another Mac still stops when idle and still
   loses build outputs.
 - A workspace pinned with `maintenance.keep`.
-- A worktree locked with `git worktree lock`, and its dependencies.
+- A worktree locked with `git worktree lock`, its dependencies and its build
+  outputs.
 - Simulators and emulators you created, physical devices, `ios/build`, and
   Xcode DerivedData outside Stim, except its compilation cache at critical.
 - Checkouts no `stim` command ran in, unless
@@ -96,8 +97,8 @@ Exact's cache and Xcode device support.
 - You reinstall the main checkout's dependencies yourself.
 - A pinned workspace still has its logs trimmed, its recordings expire, its
   hosted device stopped and its booted device shut down for a waiting run.
-- A locked worktree still goes idle and dormant; only the worktree and its
-  dependencies stay.
+- A locked worktree still goes idle and dormant; only the worktree, its
+  dependencies and its build outputs stay.
 - `daemon.mode off` still stops an idle dev server that `stimd` runs, and its
   devices. In every mode logs rotate, recordings expire, and stim-server on a
   Mac hosting others deletes stopped sessions' homes; it stops abandoned

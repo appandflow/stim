@@ -52,6 +52,7 @@ import {
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import type { DaemonLog } from './step-timing.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
+import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
@@ -404,11 +405,15 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const volumes = input.disk?.volumes;
-            const outputs = await idleOutputs(
-              path,
-              config,
-              volumes ? (output) => onShortVolume([output], volumes) : undefined,
-            );
+            // @ref LLP 0001#one-idle-day-reduces-a-workspace -- a locked worktree keeps its build outputs
+            const lock = await worktreeLockAsync(path, {
+              env: input.operation?.env,
+              signal: input.operation?.signal,
+              declareFor: input.operation,
+            });
+            const outputs = lock
+              ? { paths: [], targets: [], kept: [`kept its build outputs: ${lockReason(lock)}`] }
+              : await idleOutputs(path, config, volumes ? (output) => onShortVolume([output], volumes) : undefined);
             const freed = await deleteOutputs(outputs.paths, input.operation?.signal, {
               ...outputs,
               operation: input.operation,
