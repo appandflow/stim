@@ -119,7 +119,8 @@ stim gc --dry-run --json`}
   `stim engine status` shows it, `stim engine update` follows its channel, and
   `stim engine rollback` returns to the previous build.
 - 2.0 workers use peer compatibility version 3 and build compatibility
-  version 6. Workers: run `stim remote update <machine>`. A worker that still
+  version 6. Workers: run `stim remote update <machine> --to <version>` with the
+  version this machine runs. A worker that still
   runs 1.x cannot take that update, so on the worker install 2.0 and rerun `stim service install`
   with its existing options. On Windows, reinstall the service after an engine
   update too. If an old server still holds the serving port, stop it or pick
@@ -321,7 +322,7 @@ Do this after steps 1 to 3: `stim start` refuses while a refusing setting or exp
 **Migrate (ask first):**
 
 - A service that a 1.x Stim installed: run `stim service install` with its existing options. `stim service status` prints the exact command on its `stale:` line when the LaunchAgent or systemd unit is out of date.
-- A worker that still runs 1.x cannot take `stim remote update`. On the worker itself, install the target Stim, reinstall its service with `stim service install` and the same options, then check the connection with `stim remote list` and the next offloaded build. A worker that already runs a 2.x Stim takes `stim remote update <machine>` from here.
+- A worker that still runs 1.x cannot take `stim remote update`. On the worker itself, install the target Stim, reinstall its service with `stim service install` and the same options, then check the connection with `stim remote list` and the next offloaded build. A worker that already runs a 2.x Stim takes `stim remote update <machine> --to <version>`, with the version this machine runs, from here.
 
 ### 7. First build
 
