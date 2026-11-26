@@ -2028,10 +2028,11 @@ first: a folder again 5 minutes after its last walk ended while the environment
 is active and an hour after otherwise, or 20 times as long as that walk took
 when that is longer. No watcher on the machine starts a walk sooner than 4
 times as long as the previous one took, so a slow disk is walked less often. It measures
-`node_modules` when its install changes, after 6 hours if a checkout of the
+`node_modules` and `ios/Pods` when their install changes, after 6 hours if a checkout of the
 repository was added or removed or its copy changed, and after a day in any case, and
-`worktreeBytes` counts the checkout's own `node_modules` from that measurement,
-so it is `null` with `nodeModulesBytes` after a reinstall. A walk that fails
+checkout walks skip those trees at the root and every environment path.
+`worktreeBytes` adds their trusted sizes, and is `null` until all are known
+after a reinstall. A walk that fails
 is retried after the same 5 minutes or hour.
 One-shot `stim status` reads the cached sizes.
 

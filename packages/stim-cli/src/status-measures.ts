@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import {
   agentSessionsCacheFile,
   buildEndMarkerFilesOf,
@@ -55,12 +55,27 @@ const GIT_TIMEOUT_MS = 5000;
 const AGENT_DISCOVERY_MS = 15_000;
 const AGENT_CACHE_MAX_AGE_MS = 2 * 60_000;
 
-/**
- * The cache key of a checkout's size without its own node_modules: the checkout path with a trailing separator. Stim
- * versions that walked the whole checkout keep their entry under the plain path, so neither version misreads the other.
- */
-function checkoutKey(checkout: string): string {
-  return `${checkout}${sep}`;
+/** The cache key of a checkout excluding dependency trees for the named app paths, separate from older size entries. */
+function checkoutKey(checkout: string, apps: readonly string[]): string {
+  return `${checkout}${sep}${sep}${apps
+    .map((app) => relative(checkout, app) || '.')
+    .toSorted()
+    .join(',')}`;
+}
+
+/** The paths of the environments in each checkout, by checkout. */
+function checkoutApps(states: EnvironmentState[]): Map<string, string[]> {
+  const apps = new Map<string, string[]>();
+  for (const state of states) {
+    const checkout = checkoutDir(state);
+    const known = apps.get(checkout) ?? [];
+    if (!known.includes(state.path)) apps.set(checkout, [...known, state.path]);
+  }
+  return apps;
+}
+
+function dependencyTrees(checkout: string, apps: readonly string[]): string[] {
+  return [...new Set([checkout, ...apps])].flatMap((root) => [join(root, 'node_modules'), join(root, 'ios', 'Pods')]);
 }
 
 export function forgetStatusMeasures(worktree: string, workspaces: readonly string[]): void {
@@ -69,11 +84,13 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
     pullRequestCacheFile(worktree),
     gitMergeCacheFile(worktree),
     ...roots.flatMap(buildEndMarkerFilesOf),
+    diskUsageCacheFile(checkoutKey(worktree, roots)),
+    diskUsageFailureFile(checkoutKey(worktree, roots)),
     ...roots.flatMap((root) => [
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),
-      diskUsageCacheFile(checkoutKey(root)),
-      diskUsageFailureFile(checkoutKey(root)),
+      diskUsageCacheFile(`${root}${sep}`),
+      diskUsageFailureFile(`${root}${sep}`),
       diskUsageCacheFile(join(root, 'node_modules')),
       diskUsageFailureFile(join(root, 'node_modules')),
       diskUsageLinksFile(join(root, 'node_modules')),
@@ -134,13 +151,16 @@ function environmentFolders(state: EnvironmentState): {
 
 /**
  * The environment's disk use from the cached measurements; null before any folder was measured. The checkout's walk
- * leaves out its own node_modules, so `worktreeBytes` adds that tree's size back while it is the current install's.
+ * leaves out dependency trees, so `worktreeBytes` adds their trusted sizes back.
  */
-function environmentDisk(folders: ReturnType<typeof environmentFolders>): EnvironmentDisk | null {
+function environmentDisk(folders: ReturnType<typeof environmentFolders>, apps: string[]): EnvironmentDisk | null {
   const whole = readDiskUsage(folders.worktree);
-  const rest = readDiskUsage(checkoutKey(folders.worktree));
-  const own = trustedMeasure(join(folders.worktree, 'node_modules'));
-  const counted = rest && own ? { ...rest, bytes: rest.bytes + own.bytes } : null;
+  const rest = readDiskUsage(checkoutKey(folders.worktree, apps));
+  const trees = dependencyTrees(folders.worktree, apps).map((path) => trustedMeasure(path));
+  const counted =
+    rest && trees.every((tree) => tree !== null)
+      ? { ...rest, bytes: rest.bytes + trees.reduce((sum, tree) => sum + tree.bytes, 0) }
+      : null;
   const worktree =
     counted && (!whole || Date.parse(counted.measuredAt) >= Date.parse(whole.measuredAt)) ? counted : whole;
   const modules = folders.nodeModules.map((path) => trustedMeasure(path));
@@ -242,8 +262,10 @@ function recordEndedAgents(
  */
 export function applyStatusMeasures(states: EnvironmentState[], worktrees: WorktreeFacts[]): void {
   applyAgentSessions(states, Date.now());
+  const apps = checkoutApps(states);
   for (const state of states) {
-    const disk = environmentDisk(environmentFolders(state));
+    const folders = environmentFolders(state);
+    const disk = environmentDisk(folders, apps.get(folders.worktree) ?? [state.path]);
     if (disk) state.disk = disk;
     for (const { device, path } of deviceFolders(state)) {
       const measure = readDiskUsage(path);
@@ -256,15 +278,11 @@ export function applyStatusMeasures(states: EnvironmentState[], worktrees: Workt
   }
 }
 
-/**
- * The folders inside a checkout that another measurement owns: its linked worktrees, Stim's workspace folder and its
- * own node_modules.
- */
-function nestedFolders(state: EnvironmentState): string[] {
+function nestedFolders(state: EnvironmentState, apps: string[]): string[] {
   const common = gitCommonDirOnDisk(state.path);
   return [
-    workspaceDir(state.path),
-    join(canonicalPath(checkoutDir(state)), 'node_modules'),
+    ...apps.map(workspaceDir),
+    ...dependencyTrees(canonicalPath(checkoutDir(state)), apps.map(canonicalPath)),
     ...(common ? linkedWorktreesOnDisk(common).map((entry) => entry.path) : []),
   ];
 }
@@ -323,6 +341,7 @@ function walkTargets(root: string, nested: readonly string[]): string[] {
 interface MeasuredFolder {
   path: string;
   maxAgeMs: number;
+  knownToExist?: true;
   /** The entries to sum instead of `path`; read only when the walk is due. */
   targets?: () => string[];
 }
@@ -339,7 +358,7 @@ export interface StatusMeasurer {
  * session discovery at most every 15 seconds, which status ignores once it is over 2 minutes old, one disk walk at a
  * time on the whole machine through `refreshMeasure` (an ownership claim; a failed walk is recorded so other watchers
  * do not repeat it), at low priority, the folder whose last walk or failed walk is oldest first, a checkout without the
- * linked worktrees nested in it and without its own node_modules, each folder other than node_modules again 5 minutes
+ * linked worktrees nested in it, workspace folders and all environments' dependency trees; each other folder again 5 minutes
  * after its last walk ended while its environment is live and an hour after otherwise, or 20 times as long as that walk
  * took when that is longer (a failed walk is retried after the same 5 minutes or hour), no walk by any status measurer on the machine sooner after the previous one ended than 4 times as long as it
  * took, and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or
@@ -365,7 +384,7 @@ export function createStatusMeasurer({
   let discoveredAt = -Infinity;
 
   async function measure(folders: MeasuredFolder[]): Promise<void> {
-    for (const { path, maxAgeMs, targets } of folders) {
+    for (const { path, maxAgeMs, targets, knownToExist } of folders) {
       if (stopped) return;
       let startedAt: number | null = null;
       const rest = () => {
@@ -379,6 +398,7 @@ export function createStatusMeasurer({
         now,
         claim: true,
         failures: true,
+        knownToExist,
         ...(targets ? { targets } : {}),
         admit: () => {
           if (now() < restUntil()) return false;
@@ -424,18 +444,26 @@ export function createStatusMeasurer({
       return;
     }
     const folders = new Map<string, MeasuredFolder>();
+    const appsByCheckout = checkoutApps(latest);
     for (const state of latest.toSorted((a, b) => Number(b.live) - Number(a.live))) {
       if (!existsSync(state.path)) continue;
       const maxAgeMs = state.live ? LIVE_DISK_MAX_AGE_MS : IDLE_DISK_MAX_AGE_MS;
-      const { worktree, nodeModules, build } = environmentFolders(state);
-      const checkout = checkoutKey(worktree);
-      for (const path of [checkout, ...nodeModules, build, ...deviceFolders(state).map((folder) => folder.path)]) {
+      const { worktree, build } = environmentFolders(state);
+      const apps = appsByCheckout.get(worktree) ?? [state.path];
+      const checkout = checkoutKey(worktree, apps);
+      for (const path of [
+        checkout,
+        ...dependencyTrees(worktree, apps),
+        build,
+        ...deviceFolders(state).map((folder) => folder.path),
+      ]) {
         const known = folders.get(path);
         folders.set(path, {
           path,
+          knownToExist: path === checkout ? true : undefined,
           maxAgeMs: Math.min(known?.maxAgeMs ?? Infinity, maxAgeMs),
           targets:
-            known?.targets ?? (path === checkout ? () => walkTargets(worktree, nestedFolders(state)) : undefined),
+            known?.targets ?? (path === checkout ? () => walkTargets(worktree, nestedFolders(state, apps)) : undefined),
         });
       }
     }

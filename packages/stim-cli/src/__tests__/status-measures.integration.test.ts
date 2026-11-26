@@ -193,7 +193,7 @@ test('status reports node_modules only while its install is the one that was mea
   const state = environment();
   createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([state], []);
   await vi.waitFor(() => expect(readDiskUsage(join(app, 'node_modules'))?.signature).toBeDefined());
-  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep + sep + '.')).not.toBeNull());
 
   const measured = environment();
   applyStatusMeasures([measured], []);
@@ -223,13 +223,13 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
   const state = environment();
   const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
   measurer.schedule([state], []);
-  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep + sep + '.')).not.toBeNull());
 
   const checkoutWalk = duWalks().find((targets) => targets.some((path) => path.startsWith(root)))!;
   expect(checkoutWalk.toSorted()).toEqual(
     [join(root, '.git'), join(root, '.worktrees', 'plain'), join(root, 'src')].toSorted(),
   );
-  expect(readDiskUsage(app + sep)?.bytes).toBe(3 * 1024);
+  expect(readDiskUsage(app + sep + sep + '.')?.bytes).toBe(3 * 1024);
 
   const checkout = join(home, 'separate-checkout');
   const metadata = join(home, 'separate-metadata');
@@ -240,8 +240,8 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
   kilobytes[apps] = 2999;
   const siblings = ['one', 'two'].map((name, index) => {
     const path = join(checkout, 'apps', name);
-    mkdirSync(path, { recursive: true });
-    kilobytes[path] = (index + 1) * 1000;
+    mkdirSync(join(path, 'src'), { recursive: true });
+    kilobytes[join(realpathSync(path), 'src')] = (index + 1) * 1000;
     const sibling = environment();
     sibling.path = path;
     sibling.checkout = checkout;
@@ -252,9 +252,86 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
   createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule(siblings, []);
   await vi.waitFor(() => {
     applyStatusMeasures(siblings, []);
-    expect(siblings.map((sibling) => sibling.disk?.worktreeBytes)).toEqual([3000 * 1024, 3000 * 1024]);
+    expect(siblings.map((sibling) => sibling.disk?.worktreeBytes)).toEqual([3001 * 1024, 3001 * 1024]);
   });
-  expect(duWalks().filter((targets) => targets.includes(apps))).toHaveLength(1);
+  expect(duWalks().filter((targets) => targets.includes(join(apps, 'one', 'src')))).toHaveLength(1);
+});
+
+function mobileEnvironment(): EnvironmentState {
+  const state = environment();
+  state.path = join(app, 'apps', 'mobile');
+  state.checkout = app;
+  state.android = null;
+  state.worktree = null;
+  for (const path of [join(app, 'ios', 'Pods'), join(state.path, 'node_modules'), join(state.path, 'ios', 'Pods')]) {
+    mkdirSync(path, { recursive: true });
+    kilobytes[path] = 100;
+  }
+  mkdirSync(join(state.path, 'src'), { recursive: true });
+  kilobytes[join(realpathSync(state.path), 'src')] = 50;
+  return state;
+}
+
+test('a nested app excludes its dependency trees from the checkout and adds their trusted sizes', async () => {
+  const state = mobileEnvironment();
+  const key = app + sep + sep + join('apps', 'mobile');
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  measurer.schedule([state], []);
+  await vi.waitFor(() => {
+    applyStatusMeasures([state], []);
+    expect(state.disk?.worktreeBytes).toBe(1350 * 1024);
+  });
+  expect(readDiskUsage(key)?.bytes).toBe(650 * 1024);
+  expect(duWalks()[0]?.toSorted()).toEqual(
+    [join(realpathSync(app), 'src'), join(realpathSync(state.path), 'src')].toSorted(),
+  );
+  expect(state.disk?.nodeModulesBytes).toBe(500 * 1024);
+});
+
+test('checkout refreshes reuse installs and a Pods reinstall invalidates the composed size until measured', async () => {
+  const state = mobileEnvironment();
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  measurer.schedule([state], []);
+  await vi.waitFor(() => {
+    applyStatusMeasures([state], []);
+    expect(state.disk?.worktreeBytes).toBe(1350 * 1024);
+  });
+  calls = [];
+  clock += 6 * 60_000;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(1));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toHaveLength(1);
+  expect(duWalks()[0]).toContain(join(realpathSync(app), 'src'));
+  const pods = join(state.path, 'ios', 'Pods');
+  writeFileSync(join(pods, 'Manifest.lock'), 'new install');
+  const reinstalled: EnvironmentState = { ...state, disk: undefined };
+  applyStatusMeasures([reinstalled], []);
+  expect(reinstalled.disk?.worktreeBytes).toBeNull();
+  kilobytes[pods] = 200;
+  calls = [];
+  clock += 6 * 60_000;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => {
+    applyStatusMeasures([state], []);
+    expect(state.disk?.worktreeBytes).toBe(1450 * 1024);
+  });
+  expect(duWalks().filter((targets) => targets.includes(pods))).toEqual([[pods]]);
+});
+
+test('root and nested environments share one checkout walk and both sets of dependency sizes', async () => {
+  const mobile = mobileEnvironment();
+  const root = environment();
+  const states = [mobile, root];
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule(states, []);
+  await vi.waitFor(() => {
+    applyStatusMeasures(states, []);
+    expect(states.map((state) => state.disk?.worktreeBytes)).toEqual([1350 * 1024, 1350 * 1024]);
+  });
+  expect(duWalks().filter((targets) => targets.includes(join(realpathSync(app), 'src')))).toEqual([
+    [join(realpathSync(app), 'apps', 'mobile', 'src'), join(realpathSync(app), 'src')],
+  ]);
+  expect(readDiskUsage(app + sep + sep + '.,' + join('apps', 'mobile'))).not.toBeNull();
 });
 
 test('the walk claim records the du process while it runs and drops it afterwards', async () => {
@@ -303,7 +380,7 @@ test('watchers in separate processes share one walk and one failure', async () =
   clock += 5 * 60_000;
   duFails = false;
   second.schedule([state], []);
-  await vi.waitFor(() => expect(readDiskUsage(app + sep)?.measuredAt).toBe(new Date(clock).toISOString()));
+  await vi.waitFor(() => expect(readDiskUsage(app + sep + sep + '.')?.measuredAt).toBe(new Date(clock).toISOString()));
 });
 
 test('a slow walk holds every watcher for 4 times its duration and its own folder for 20 times', async () => {
@@ -364,7 +441,7 @@ test('a checkout without node_modules is walked by its entries, so one installed
   rmSync(join(app, 'node_modules'), { recursive: true });
   const src = join(realpathSync(app), 'src');
   createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([environment()], []);
-  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep + sep + '.')).not.toBeNull());
   expect(duWalks().filter((targets) => targets.includes(src))).toEqual([[src]]);
 });
 
@@ -375,7 +452,7 @@ test('a walk the machine slept through counts as 125 seconds for the rest and th
   const state = environment();
   const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
   measurer.schedule([state], []);
-  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep + sep + '.')).not.toBeNull());
   await vi.waitFor(() => expect(readStatusWalkRest()?.writtenAt).toBe(clock));
   const walkedAt = clock;
   expect(readStatusWalkRest()?.until).toBe(walkedAt + 4 * 125_000);
@@ -410,7 +487,7 @@ test('a whole-checkout entry an older Stim wrote is read as is, and the newer of
 
   clock += 60_000;
   createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([environment()], []);
-  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep + sep + '.')).not.toBeNull());
   expect(read()).toBe(1000 * 1024);
 
   legacy(1500 * 1024, at(1));
