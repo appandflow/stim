@@ -408,8 +408,8 @@ async function planNativeXcode(
     if (errors.length) throw new NativeXcodeError(errors.join('; '), 'Correct the project settings and retry.');
     if (options.remote !== undefined ? parseIosRemote(options.remote) : remoteIosSetting(settings))
       throw new NativeXcodeError(
-        'Native Xcode planning does not resolve hosted placement.',
-        'Unset ios.remote to plan a local build, or run stim ios without --plan.',
+        `Native Xcode planning does not resolve hosted placement, which ${options.remote !== undefined ? '--remote' : 'ios.remote'} asks for.`,
+        'Plan again with --remote local to plan a local build, or run stim ios without --plan.',
       );
     const layers = DEFAULT_DEPS.settingsLayers(context);
     const modelRefusal = await deviceModelRefusal({
