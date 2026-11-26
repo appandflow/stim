@@ -174,7 +174,11 @@ refusal names both; it calls Node the likely cause only when every differing
 source is a `config` or `autolinking` row, which Stim produces by running project
 JavaScript, and pod install or prebuild rewrote no synced file, else it notes
 the versions without blaming them. The worker does not look for an installed
-Node matching the client's.
+Node matching the client's. Both machines take the pin from the app directory
+or the nearest directory above it up to the repository root, where Metro and
+the worker's dependency install find it, so a monorepo's root `.nvmrc` selects
+the Node that evaluates as well as the one that installs
+([#6459](https://github.com/appandflow/stim/issues/6459)).
 
 Recorded in [#5812](https://github.com/appandflow/stim/issues/5812):
 

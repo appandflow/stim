@@ -20,6 +20,7 @@ import { clearCrashHold } from '../stimd/crash-hold.ts';
 import { probeDaemonAnswer, unansweredFindings, withAnswer } from '../daemon/answering.ts';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
+import { nodePinScope } from '../fingerprint/git-index.ts';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import chalk from 'chalk';
 import { defineOp, type Op } from '../cli/define-op.ts';
@@ -188,8 +189,9 @@ export interface ToolchainReport {
 
 export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.env): ToolchainReport {
   const { entries } = discoverToolchain(env);
-  const pin = projectNodePin(root);
-  const pinned = pin ? projectNodeBin(root, env) : null;
+  const scope = nodePinScope(root);
+  const pin = projectNodePin(scope.root, undefined, scope.top);
+  const pinned = pin ? projectNodeBin(scope.root, env, undefined, scope.top) : null;
   return {
     entries,
     projectNode: pin
