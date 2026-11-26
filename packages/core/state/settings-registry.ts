@@ -785,7 +785,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 20,
     env: 'STIM_DISK_CRITICAL_FREE_GB',
     description:
-      'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',
+      'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches, deletes the owned devices of workspaces idle 2 minutes, archiving their logs; no pressure rung deletes node_modules or Pods; 0 turns the critical disk level off',
   },
   {
     key: 'maintenance.logMaxMb',
