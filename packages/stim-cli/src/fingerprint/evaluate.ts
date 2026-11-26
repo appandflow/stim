@@ -442,8 +442,13 @@ export interface FingerprintRuntime {
   packages: Record<string, string | null>;
 }
 
+function pinnedNode(root: string, env: NodeJS.ProcessEnv) {
+  const real = realpathSync.native(root);
+  return projectNodeBin(real, env, undefined, gitLocation(real)?.top ?? real);
+}
+
 export function fingerprintRuntime(root: string, env: NodeJS.ProcessEnv): FingerprintRuntime | Uncertain {
-  const node = projectNodeBin(root, env)?.version ?? process.version;
+  const node = pinnedNode(root, env)?.version ?? process.version;
   const version = /^v?(\d+\.\d+)/.exec(node)?.[1];
   if (!version) return { uncertain: `cannot identify the project's Node version ${node}` };
   const expo = findPackage(root, 'expo');
@@ -716,7 +721,7 @@ async function evaluate(
     return keyed;
   };
   const env = evaluatorEnv(opts.env, root, platform);
-  const pinned = projectNodeBin(root, opts.env);
+  const pinned = pinnedNode(root, opts.env);
   const node = pinned ? join(pinned.bin, process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath;
   const evaluator = join(SHIMS, 'fp-eval.cjs');
   if (!existsSync(evaluator)) return { uncertain: 'the Stim installation is missing shim/fp-eval.cjs' };
@@ -1135,7 +1140,7 @@ async function fingerprintOwned(
       : new IndexSession(
           indexDir(target.platform, project, targetLayout(target), opts.operation?.home),
           roots,
-          { evaluator: evaluatorKey(), runtime: projectNodeBin(project, opts.env)?.version ?? process.version },
+          { evaluator: evaluatorKey(), runtime: pinnedNode(project, opts.env)?.version ?? process.version },
           since,
           opts.index !== 'refresh',
           opts.operation?.home,

@@ -2,16 +2,29 @@ import {
   MOBILE_MODULES,
   SLOW,
   spawned,
+  temps,
   write,
   expoApp,
   baseEnv,
   recordSpawns,
   key,
 } from './fingerprint-evaluate-harness.ts';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { fingerprint } from '../fingerprint/evaluate.ts';
+import { fingerprint, fingerprintRuntime } from '../fingerprint/evaluate.ts';
 import { isUncertain } from '../fingerprint/key.ts';
 
 const embedSpawns = () => spawned.filter((argv) => argv.includes('embed')).length;
@@ -257,6 +270,56 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
       ).includes('loadProjectEnv');
       expect((await key(root, baseEnv(), 'production')).hash === release.hash).toBe(!byMode);
       expect((await key(root, baseEnv({ NODE_ENV: 'production' }), 'production')).hash).not.toBe(nodeEnvRelease.hash);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a pnpm monorepo app evaluates with the Node its repository root pins, locally and in worker replay',
+    SLOW,
+    async () => {
+      const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-monorepo-')));
+      const tools = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-nvm-')));
+      temps.push(repo, tools);
+      const workspace = join(MOBILE_MODULES, '..', '..', '..');
+      const app = join(repo, 'apps', 'mobile');
+      write(join(repo, 'package.json'), JSON.stringify({ name: 'monorepo', private: true }));
+      write(join(repo, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\n");
+      write(join(repo, 'pnpm-lock.yaml'), readFileSync(join(workspace, 'pnpm-lock.yaml'), 'utf8'));
+      write(join(repo, '.nvmrc'), '99.0.0\n');
+      write(
+        join(app, 'package.json'),
+        JSON.stringify({
+          name: 'mobile',
+          version: '1.0.0',
+          dependencies: { expo: '*', 'expo-constants': '*', 'react-native': '*' },
+        }),
+      );
+      write(join(app, 'app.json'), JSON.stringify({ expo: { name: 'fp', slug: 'fp' } }));
+      symlinkSync(join(workspace, 'node_modules'), join(repo, 'node_modules'));
+      symlinkSync(MOBILE_MODULES, join(app, 'node_modules'));
+      spawnSync('git', ['init', '-q'], { cwd: repo });
+      const ran = join(tools, 'pinned-node-ran');
+      const node = join(tools, 'nvm', 'versions', 'node', 'v99.0.0', 'bin', 'node');
+      write(node, `#!/bin/sh\necho ran >> '${ran}'\nexec '${process.execPath}' "$@"\n`);
+      chmodSync(node, 0o755);
+      const env = baseEnv({ NVM_DIR: join(tools, 'nvm') });
+
+      expect(fingerprintRuntime(app, env)).toMatchObject({ node: '99.0' });
+      const initial = await key(app, env);
+      expect(existsSync(ran)).toBe(true);
+      rmSync(ran);
+      const sources = initial.inputs.map(({ name, kind, hash }) => ({ id: name, kind, hash }));
+      const replayed = await fingerprint(
+        app,
+        { platform: 'ios' },
+        {
+          env,
+          embedMode: 'development',
+          replay: { native: initial.native, sources },
+        },
+      );
+      expect(isUncertain(replayed) ? replayed : replayed.hash).toBe(initial.hash);
+      expect(existsSync(ran)).toBe(true);
     },
   );
 });
