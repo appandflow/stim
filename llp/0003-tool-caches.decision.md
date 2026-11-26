@@ -12,9 +12,10 @@
 Rung 9 empties caches Stim does not own, each through the tool's own command
 and only while no process of that tool runs: `npm cache clean --force`,
 `yarn cache clean`, `pnpm store prune`, `pod cache clean --all`. Gradle's
-`modules-2`, `transforms-N` and `build-cache-N` and the SwiftPM cache have no
-clean command, so Stim renames each aside on the same volume and deletes it,
-only while no Stim build lock or build slot is live or unresolved. Android
+`modules-2`, `transforms-N` and `build-cache-N`, the SwiftPM cache and Xcode's
+`DerivedData/CompilationCache.noindex` have no clean command, so Stim renames
+each aside on the same volume and deletes it, only while no Stim build lock or
+build slot is live or unresolved. Android
 NDKs, system images no AVD uses and `~/.cache/exact` are reported with the
 command that removes them, never deleted.
 
@@ -22,6 +23,24 @@ The rules below answer a question the maintainer asked on 2026-11-11: "Can
 critical also delete caches stim dont own (maybe just if it is unable to free
 enough space? or the cache is getting really big?)". The question approves
 nothing by itself; the choices below record what was decided.
+
+## Xcode's compilation cache goes with rung 9
+
+Xcode's own `DerivedData/CompilationCache.noindex` is a cache Stim does not
+own: Stim's builds compile with Stim's shared compilation cache under
+`$STIM_HOME` (LLP 0028), and this folder fills only from Xcode builds outside
+Stim. So rung 3, which empties the caches Stim registered, lists it as
+report-only and never empties it. Rung 9 removes it whole, under the rules
+below and only while no `xcodebuild`, Xcode build service, `swift-frontend` or
+Xcode app process runs.
+
+Reason: rung 3 emptied it with no check for an Xcode build in flight, since
+only Stim's own builds take the claim that guards a cache it empties (#6461).
+Rung 9 is where caches of other tools go, last and only while their tool is
+idle, which still frees it at critical as LLP 0001 asks of everything Stim can
+delete.
+
+Chosen by the implementer of #6461, not the maintainer.
 
 ## Rung 9 runs only at critical
 
@@ -64,7 +83,7 @@ Chosen in the review of #5514, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512. Pull request: #5514.
+- Issues: #5492, #5512, #6461. Pull request: #5514.
 - Code: `packages/stim-cli/src/daemon/ladder.ts` (`unownedRung`),
   `packages/stim-cli/src/stimd/passes/unowned.ts`,
   `packages/stim-cli/src/daemon/passes.ts` (`runCommandLadder`).

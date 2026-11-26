@@ -40,8 +40,8 @@ function compilationCache(env: NodeJS.ProcessEnv): CacheDescriptor | null {
   return {
     name: 'Xcode compilation cache',
     dir,
-    prune: 'atomic',
-    note: 'index-backed, so it can only be emptied whole',
+    prune: 'report-only',
+    note: "Xcode's own, shared with every Xcode build; Stim never empties it as a registered cache, and only gc's last rung removes it, at critical",
   };
 }
 

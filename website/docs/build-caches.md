@@ -756,7 +756,8 @@ runs, and lists each with its size before and after: `npm cache clean --force`,
 `yarn cache clean`, `pnpm store prune`, `pod cache clean --all`, and Gradle's
 version-independent caches (`caches/modules-2`, `caches/transforms-N` and
 `caches/build-cache-N` under `GRADLE_USER_HOME`, removed by Stim because Gradle
-has no command), and SwiftPM's cache, those two only while no Stim build lock or
+has no command), SwiftPM's cache and Xcode's
+`DerivedData/CompilationCache.noindex`, those three only while no Stim build lock or
 build slot is live or unresolved and no matching tool process runs, by renaming
 the directory aside to a `.stim-delete-*` sibling on the same volume and deleting
 it; a later run finishes any leftover. A cache directory that is itself a

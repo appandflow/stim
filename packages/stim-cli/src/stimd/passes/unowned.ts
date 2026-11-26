@@ -109,6 +109,8 @@ function gradleSharedCaches(env: NodeJS.ProcessEnv): string[] {
   ];
 }
 
+const XCODE_COMPILATION_CACHE = 'CompilationCache.noindex';
+
 /** The caches of the package managers and build tools installed on this machine, with where each keeps its data. */
 function discoverToolCaches(env: NodeJS.ProcessEnv): ToolCache[] {
   const exec = getExecutor();
@@ -170,6 +172,19 @@ function discoverToolCaches(env: NodeJS.ProcessEnv): ToolCache[] {
       paths: swiftpmPaths,
       command: null,
       running: /swift-build|swift-package|swift-frontend|xcodebuild|SourceKitService/,
+    });
+  const derivedData = join(homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
+  const xcodePaths = [
+    ...(existsSync(join(derivedData, XCODE_COMPILATION_CACHE)) ? [join(derivedData, XCODE_COMPILATION_CACHE)] : []),
+    ...stagedLeftovers(derivedData, [XCODE_COMPILATION_CACHE]),
+  ];
+  if (xcodePaths.length)
+    found.push({
+      tool: 'Xcode',
+      label: "Xcode's compilation cache",
+      paths: xcodePaths,
+      command: null,
+      running: /xcodebuild|XCBBuildService|SWBBuildService|swift-frontend|Contents\/MacOS\/Xcode(\s|$)/,
     });
   const gradle = gradleSharedCaches(env);
   if (gradle.length)

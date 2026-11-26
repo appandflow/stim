@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { discoverCaches, jestCacheDir, pruneCache, pruneCacheAsync, sizeCaches } from '../cache/caches.ts';
-import { emptyCaches } from '../commands/gc/caches.ts';
+import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import assert from 'node:assert';
@@ -128,6 +128,22 @@ test('a registration cannot make the shared Gradle build cache deletable', async
     if (previous === undefined) delete process.env.GRADLE_USER_HOME;
     else process.env.GRADLE_USER_HOME = previous;
     rmSync(gradleHome, { recursive: true, force: true });
+  }
+});
+
+test("no cache sweep empties Xcode's own compilation cache in the default home", () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-xcode-home-'));
+  const blob = join(home, 'Library', 'Developer', 'Xcode', 'DerivedData', 'CompilationCache.noindex', 'aa', 'blob');
+  mkdirSync(join(blob, '..'), { recursive: true });
+  writeFileSync(blob, 'x');
+  const env = { HOME: home, USERPROFILE: home };
+  try {
+    const xcode = planCacheEmptying(discoverCaches(env), true, env).find((cache) =>
+      cache.dir.endsWith('CompilationCache.noindex'),
+    );
+    expect(xcode).toMatchObject({ source: 'detected', prune: 'report-only', willEmpty: false });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
