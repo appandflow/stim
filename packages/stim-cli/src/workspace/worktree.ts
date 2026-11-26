@@ -846,13 +846,12 @@ export async function dirtyPathsAsync(
   { limit = 10 }: { limit?: number } = {},
   options: AsyncReadOptions = {},
 ): Promise<string[] | null> {
-  const out = await removalCheckAsync(dir, ['-c', 'core.quotePath=false', 'status', '--porcelain'], options);
+  const out = await removalCheckAsync(dir, ['-c', 'core.quotePath=false', 'status', '--porcelain'], {
+    ...options,
+    untrimmed: true,
+  });
   if (out === null) return null;
-  return out
-    .split('\n')
-    .map((line) => normalizePorcelainLine(line.trimEnd()))
-    .filter(Boolean)
-    .slice(0, limit);
+  return out.split('\n').map(normalizePorcelainLine).filter(Boolean).slice(0, limit);
 }
 
 function normalizePorcelainLine(line: string): string {

@@ -44,6 +44,10 @@ test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath('R  old/name.js -> new/name.js')).toBe('new/name.js');
   expect(porcelainPath('?? "we\u00e4rd path"')).toBe('we\u00e4rd path');
   expect(porcelainPath('?? "a\\"q\\\\b"')).toBe('a"q\\b');
+  expect(porcelainPath('?? "caf\\303\\251\\r.txt"')).toBe('caf\u00e9\r.txt');
+  expect(porcelainPath('?? "untr -> acked"')).toBe('untr -> acked');
+  expect(porcelainPath('R  "old name" -> "new name"')).toBe('new name');
+  expect(porcelainPath('?? \u00a0x\u00a0')).toBe('\u00a0x\u00a0');
   expect(porcelainPath('   ')).toBe(null);
 });
 
@@ -2358,7 +2362,7 @@ test.skipIf(process.platform === 'win32')(
     try {
       const { wt, git } = realRepoWithWorktree(base);
       const tracked = 'caf\u00e9.txt';
-      const untracked = 'na\u00efve.txt';
+      const untracked = '\u00a0na\u00efve.txt\u00a0';
       writeFileSync(join(wt, tracked), 'tracked');
       git('git add -A && git commit -q -m utf8', wt);
       writeFileSync(join(wt, tracked), 'edited');
