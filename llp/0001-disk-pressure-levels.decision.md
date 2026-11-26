@@ -1128,7 +1128,11 @@ over an hour old. Reason: ignored build output in the rest changes by gigabytes
 without moving git or any install signature, so no cheap signal holds it
 longer. A worktree with a project-local `.pnpm-store` is walked whole hourly,
 because real-size counts a file shared between two measured paths as private in
-neither, and the store shares its files with `node_modules`. The composition
+neither, and the store shares its files with `node_modules`. The rest is
+measured as its top-level entries, so the same holds for a file linked between
+two of them; real-size takes directories only, so a top-level file with one
+link counts its allocated bytes, overstating a clone. Both errors are bounded
+by files a regular worktree rarely has. The composition
 and that fallback were chosen by the implementer of #6385, not by the
 maintainer.
 

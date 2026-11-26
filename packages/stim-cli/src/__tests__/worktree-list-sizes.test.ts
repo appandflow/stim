@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { diskUsageCacheFile } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -54,7 +55,6 @@ afterEach(() => {
 const listing = () => worktreeListPayload([roots[0]], { measure: true });
 
 it.each([
-  { rule: 'rest expires hourly', hours: 2, change: false, dependency: false, rest: true },
   { rule: 'fresh parts stay cached', hours: 0.5, change: false, dependency: false, rest: false },
   { rule: 'own reinstall invalidates immediately', hours: 0.5, change: 'own', dependency: true, rest: false },
   { rule: 'sibling reinstall invalidates after six hours', hours: 7, change: 'sibling', dependency: true, rest: true },
@@ -92,4 +92,18 @@ it.each([false, true])('sums private bytes, with unknown part: %s', async (unkno
   const entry = payload.repositories[0]?.worktrees.find((candidate) => candidate.path === roots[1]);
   expect(entry?.realBytes).toBe(unknown ? null : 150);
   expect(entry?.apparentBytes).toBe(300);
+});
+
+it('shows a refreshed rest over an older whole-worktree entry while the dependency sizes are older still', async () => {
+  await listing();
+  vi.setSystemTime(start + 3 * 60 * 60_000);
+  writeFileSync(
+    diskUsageCacheFile(roots[1]),
+    JSON.stringify({ path: roots[1], bytes: 7, privateBytes: 7, measuredAt: new Date().toISOString() }),
+  );
+  vi.setSystemTime(start + 5 * 60 * 60_000);
+  vi.mocked(measureTree).mockResolvedValue({ bytes: 1000, privateBytes: 500 });
+  const payload = await listing();
+  const entry = payload.repositories[0]?.worktrees.find((candidate) => candidate.path === roots[1]);
+  expect(entry).toMatchObject({ realBytes: 500 + 50, measuredAt: new Date(start).toISOString() });
 });

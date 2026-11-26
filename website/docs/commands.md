@@ -2611,7 +2611,9 @@ day; the rest of the worktree is walked again when its measure is over an hour
 old, and a worktree with a project-local `.pnpm-store` is walked whole. The walks
 share a two-minute budget for the whole command; what the
 budget leaves unwalked keeps its older measure, with its date in `measuredAt`, or prints `not measured` when it has none. JSON includes measurement and check dates.
-Real size is the private bytes of the whole worktree; apparent size is its
+Real size sums the private bytes of those parts; a file hard-linked between two
+of them, or between two top-level entries, counts in neither, and a top-level
+file counts in full unless it has other links. Apparent size is its
 allocated bytes. Shared clone and hard-link bytes are excluded from real size
 when the volume can count them (APFS on macOS; ext2/3/4, tmpfs, btrfs and XFS on Linux); otherwise,
 or when the walk could not read every file, real size is unknown. Neither size includes Stim workspace data outside the checkout.

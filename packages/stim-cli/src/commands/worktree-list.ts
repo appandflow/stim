@@ -123,7 +123,8 @@ function sizes(root: string) {
     const parts = paths.map((path) => trustedMeasure(path));
     if (parts.every((part) => part !== null)) {
       const measuredAt = parts.map((part) => part.measuredAt).toSorted()[0] ?? null;
-      if (measuredAt !== null && (!whole || whole.measuredAt <= measuredAt))
+      const rest = parts.at(-1)!;
+      if (measuredAt !== null && (!whole || Date.parse(whole.measuredAt) <= Date.parse(rest.measuredAt)))
         return {
           realBytes: parts.some(
             (part, index) => part.privateBytes == null || readDiskUsagePartial(paths[index] ?? root),

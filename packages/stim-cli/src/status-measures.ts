@@ -92,6 +92,7 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),
       diskUsageCacheFile(`${root}${sep}`),
+      diskUsageCacheFile(`${root}${sep}.`),
       diskUsageFailureFile(`${root}${sep}`),
       diskUsageCacheFile(join(root, 'node_modules')),
       diskUsageFailureFile(join(root, 'node_modules')),

@@ -97,22 +97,27 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
   const binary = counted && process.platform !== 'win32' ? binaryPath() : null;
   let privateUnknown: TreeSize['privateUnknown'] = binary || process.platform === 'darwin' ? 'walk' : 'volume';
   if (Date.now() >= deadline) return null;
-  // real-size measures directories only: a file target counts its allocated bytes as private, an upper bound.
+  // real-size measures directories only: a file target with one link counts its allocated bytes as private, which
+  // overstates a clone, and one with several links counts none.
   const dirs: string[] = [];
   let fileBytes = 0;
+  let filePrivate = 0;
   for (const target of binary ? (options.targets ?? []) : []) {
     const info = lstatSync(target, { throwIfNoEntry: false });
     if (info?.isDirectory()) dirs.push(target);
-    else if (info?.isFile()) fileBytes += info.blocks * 512;
+    else if (info?.isFile()) {
+      fileBytes += info.blocks * 512;
+      if (info.nlink === 1) filePrivate += info.blocks * 512;
+    }
   }
-  if (binary && options.targets && !dirs.length) return { bytes: fileBytes, privateBytes: fileBytes };
-  if (binary) {
+  const walked = binary && (!options.targets || dirs.length) ? binary : null;
+  if (walked) {
     try {
       const { total, paths }: RealSizeResult = JSON.parse(
-        await walk(binary, ['--json', '--', ...(options.targets ? dirs : [path])]),
+        await walk(walked, ['--json', '--', ...(options.targets ? dirs : [path])]),
       );
       const size = options.targets ? total : paths[0];
-      if (size) return { bytes: size.allocated + fileBytes, privateBytes: size.private + fileBytes };
+      if (size) return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate };
     } catch (error) {
       const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
@@ -122,7 +127,7 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
           const { total, paths }: RealSizeResult = JSON.parse(stdout);
           const size = options.targets ? total : paths[0];
           if (total.skipped > 0 && size)
-            return { bytes: size.allocated + fileBytes, privateBytes: size.private + fileBytes, partial: true };
+            return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate, partial: true };
         } catch {}
       }
     }

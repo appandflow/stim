@@ -12,7 +12,7 @@ across repositories. Both only report and never delete. --json prints one payloa
 or clone group changes (a day at most); the rest is walked hourly, a worktree
 with a local .pnpm-store whole, within a two-minute budget.
 stim doctor notes the same summary from saved data only.
-Real size is whole-worktree private bytes; apparent size is allocated bytes.
+Real size sums the parts' private bytes; apparent size is allocated bytes.
 Neither includes Stim workspace data outside the checkout.
 
 DEVICE SLOTS
