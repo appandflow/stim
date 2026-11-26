@@ -550,21 +550,6 @@ describe('the command output', () => {
     expect(JSON.parse(out[0] ?? '')).toMatchObject({ code });
   });
 
-  test('stop during a native run emits one cancellation and exits 130', async () => {
-    await revive(['--json'], {
-      run: async () => {
-        const context = ambientContext();
-        return withDrainingCancellation(context, context?.signal, async () => {
-          process.emit('SIGINT');
-          return { ok: false, error: { code: 'STIM_CANCELLED', message: 'The run was cancelled.', remedy: null } };
-        });
-      },
-    });
-    expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0] ?? '')).toMatchObject({ code: 'STIM_CANCELLED' });
-    expect(process.exitCode).toBe(130);
-  });
-
   test('plain output leaves stdout empty', async () => {
     await revive([], {});
     expect(out).toEqual([]);

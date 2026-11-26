@@ -58,7 +58,7 @@ export interface ReviveFacts {
   };
 }
 
-export type ReviveResult = { ok: true; facts: ReviveFacts } | { ok: false; error: ReviveFailure };
+type ReviveResult = { ok: true; facts: ReviveFacts } | { ok: false; error: ReviveFailure };
 
 interface RunOutcome {
   ok: boolean;
