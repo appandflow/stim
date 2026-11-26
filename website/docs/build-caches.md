@@ -178,14 +178,9 @@ stim gc                     # one maintenance pass now
 stim gc --pressure critical # free everything; the next builds are cold`}
 />
 
-`stim gc` deletes regenerable data: build outputs of idle workspaces, caches
-over their caps, devices of removed projects, and the `node_modules` and Pods
-of linked worktrees idle for `idle.dormantDays` (1 day), and those of the main
-checkout idle for `idle.sourceDormantDays` (7 days). It never touches a
-workspace that is building, driven, leased, hosted or pinned with
-`maintenance.keep`. `--pressure critical` also empties every shared cache and
-cleans other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM,
-Xcode's `CompilationCache.noindex`). Use plain `stim gc` for routine cleanup.
+`stim gc` deletes what can be rebuilt, never touches a workspace in use, and
+removes finished worktrees. [How cleanup works](./maintenance.md) lists what it
+and the daemon delete, when, and the exceptions. Use plain `stim gc` for routine cleanup.
 
 The next Stim command in a worktree whose dependencies were cleaned restores
 them with `stim worktree warm`, or refuses with `STIM_DEPS_FAILED` and asks
@@ -198,32 +193,14 @@ machine config, to absolute paths.
 ## Automatic maintenance {/* #automatic-maintenance */}
 
 The Stim daemon trims caches, idle build outputs and parked devices on its own,
-and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk).
-It is on by default outside CI.
+cleans harder when free disk drops under 40 GB, and removes finished
+worktrees. It is on by default outside CI. To see what it would do first:
 
 <StimTabs code="stim settings set daemon.mode report --scope machine" />
 
-- `daemon.mode`: `on`, `report` (plan only, delete nothing) or `off`.
-- `maintenance.keep`: protect a workspace from cleanup.
-- Caps: `caches.buildCacheMaxGb` (10), `caches.metroCacheMaxGb` (5),
-  `caches.ccacheMaxGb` (5), `maintenance.workspaceOutputsMaxGb` (20),
-  `maintenance.cargoTargetMaxGb` (25).
-- `maintenance.discoverRoots` and `maintenance.autoDiscover` let it reach
-  [checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in).
-
-See [maintenance settings](./settings.md#automatic-maintenance) for the rest.
-
-### Low disk
-
-When free disk drops under `disk.minFreeGb` (40 GB), the daemon cleans harder
-until there is room again: parked devices first, then caches, then idle
-workspaces. Under `disk.criticalFreeGb` (20 GB) it empties shared caches and
-cleans other tools' caches. A native build that may not fit asks for cleanup
-first and builds anyway. Under `disk.hardFloorGb` (5 GB), `start`, `ios` and
-`android` refuse with `STIM_LOW_DISK`: run `stim gc` or free space yourself,
-then retry.
-
-Run `stim logs --source gc` to see what cleanup removed.
+[How cleanup works](./maintenance.md) has the phases, the disk pressure levels,
+what automatic cleanup deletes at each and the settings that change it. Run
+`stim logs --source gc` to see what cleanup removed.
 
 The agent gets the full cache, fingerprint and cleanup rules from
 `stim guide lifecycle builds`, `stim guide lifecycle budget` and

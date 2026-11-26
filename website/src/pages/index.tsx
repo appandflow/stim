@@ -64,8 +64,8 @@ const pillars: Pillar[] = [
   {
     title: 'Watches the whole machine',
     body: 'Concurrency limits make builds, devices and test runs wait their turn instead of overloading the machine. When disk or memory runs low, Stim reclaims it.',
-    doc: '/docs/build-caches#automatic-maintenance',
-    docLabel: 'View doc: automatic maintenance',
+    doc: '/docs/maintenance',
+    docLabel: 'View doc: how cleanup works',
     art: 'cleanup',
     width: 338,
     height: 433,

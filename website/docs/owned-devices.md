@@ -92,7 +92,9 @@ so a quick restart skips the boot. Set it to `0` to shut down at once.
 
 After `idle.minutes` (15 by default) with no activity, Stim stops Metro and
 shuts down the workspace's devices. App logs alone do not count as activity.
-Set it to `0` to turn idle stop off:
+Its build outputs are deleted too, and after `idle.dormantDays` (1 day) its
+owned devices are deleted; [How cleanup works](./maintenance.md) has every
+phase. Set it to `0` to turn idle stop off:
 
 <StimTabs code="stim settings set idle.minutes 60 --scope machine" />
 
@@ -144,10 +146,9 @@ run, such as agent-device, brings it back.
 
 Each platform parks up to three devices by default (`pool.iosParkedMax`,
 `pool.androidParkedMax`), and Stim clears the previous app's data before
-reusing one. `stim gc` deletes a simulator runtime only when no simulator on
-the machine uses it and simctl marks it deletable. It keeps the only installed
-runtime, the newest one when none is used, and any runtime a project pins with
-`ios.runtime`. Stim never touches simulators you created or physical devices.
+reusing one. Stim also deletes iOS simulator runtimes no simulator uses; [How
+cleanup works](./maintenance.md#deletion-rules) has that rule and the rest.
+Stim never touches simulators you created or physical devices.
 
 ## Devices on other machines
 

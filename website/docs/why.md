@@ -65,7 +65,7 @@ machine. It sets concurrency limits so builds, devices and test runs wait their
 turn instead of overloading it. When disk or memory runs low, Stim reclaims it.
 With `maintenance.autoDiscover` on, or folders named in
 `maintenance.discoverRoots`, it also reaches checkouts no `stim` command ran in.
-[Automatic maintenance](./build-caches.md#automatic-maintenance) lists what it frees.
+[How cleanup works](./maintenance.md) lists what it frees.
 
 ## Why run locally
 

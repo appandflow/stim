@@ -87,14 +87,16 @@ Automatic maintenance, and `stim gc` when you run it:
   prove were merged.
 - Saves a recovery archive before removing a finished worktree with
   uncommitted changes, and prints the restore commands. The archive can contain
-  secrets.
+  secrets. A git-ignored file the main checkout lacks or holds differently, such as a `.env.local`,
+  keeps the worktree.
 - Shrinks a worktree idle for `idle.dormantDays` (1 day): its build outputs,
   devices, `node_modules` and Pods go. The next Stim command there restores
   the dependencies with `stim worktree warm`.
 
 To protect a checkout, run `git worktree lock` or pin it with
 `maintenance.keep`. To stop automatic removal, set
-`maintenance.removeFinishedWorktrees` to `false`.
+`maintenance.removeFinishedWorktrees` to `false`. [How cleanup
+works](./maintenance.md) has the automatic rules and settings.
 
 ## Checkouts Stim never ran in {/* #checkouts-stim-never-ran-in */}
 
@@ -107,18 +109,12 @@ stim gc --dry-run`}
 />
 
 In those folders Stim treats recognised projects and their linked worktrees
-like its own: idle build outputs and dependencies are reduced, and finished
-linked worktrees are removed. A worktree is removed only when it is clean,
-idle, and every ignored file it holds also exists in the main checkout, apart
-from regenerable folders such as `node_modules` and `build`. It never runs
-`git fetch` there.
-
-`maintenance.autoDiscover` (off by default) also reaches the folders next to
-your registered projects and the linked worktrees of every repository Stim
-knows, with the same rules: finished linked worktrees there can be removed. It
-also adds `~/.codex/worktrees` and a scan of your home folder; checkouts found
-those two ways are only reduced, never removed. `stim doctor` reports how much build
-output such checkouts hold and the command that adds their folder.
+like its own, and removes a finished worktree only when it is clean, idle, and
+holds no ignored file the main checkout lacks or holds differently. `maintenance.autoDiscover`
+(off by default) reaches further. [Which checkouts it
+maintains](./maintenance.md#which-checkouts-it-maintains) has the rules.
+`stim doctor` reports how much build output such checkouts hold and the command
+that adds their folder.
 
 <PromptBox title="Find reclaimable checkouts">
 {`Add my Developer folder to maintenance.discoverRoots, run stim gc --dry-run, and tell me which discovered checkouts hold the most regenerable space and why each is kept or cleared.`}

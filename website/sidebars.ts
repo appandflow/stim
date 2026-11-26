@@ -12,6 +12,7 @@ const sidebars: SidebarsConfig = {
       label: 'Understand Stim',
       collapsed: false,
       items: [
+        'maintenance',
         'build-caches',
         'eas-builds',
         'worktrees',
