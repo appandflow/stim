@@ -102,6 +102,7 @@ import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../d
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  hostPlatform: () => NodeJS.Platform;
   ensureIosRuntime: typeof ensureIosRuntime;
   installHostedIosRuntime: typeof installHostedIosRuntime;
   projectRegistry: Pick<ProjectRegistry, 'selectIos'>;
@@ -226,6 +227,7 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  hostPlatform: () => process.platform,
   ensureIosRuntime,
   installHostedIosRuntime: async (...args) =>
     (await import('../../device-host/ios-runtime.ts')).installHostedIosRuntime(...args),

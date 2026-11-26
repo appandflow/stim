@@ -92,6 +92,7 @@ import {
 import {
   PLATFORM,
   buildLogFile,
+  iosPlacementHostRefusal,
   resolveConfiguration,
   resolveDeviceType,
   resolveSchemeSelection,
@@ -830,6 +831,14 @@ async function runIos(
   });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
+  const hostRefusal = iosPlacementHostRefusal(
+    d.hostPlatform(),
+    physical,
+    remoteSelection,
+    buildMachine,
+    opts.easProfile !== undefined,
+  );
+  if (hostRefusal) return fail(hostRefusal);
   await writeDevicePlacementAsync(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
   const viewer = resolveSimulatorAppFlag(

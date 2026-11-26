@@ -28,6 +28,7 @@ import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../build-placement.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
+import * as planPlacement from '../device-host/plan-placement.ts';
 import * as iosDevices from '../devices/ios.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import * as sharedState from '@stim-cli/core/state';
@@ -313,6 +314,7 @@ function harness(overrides: LooseDeps = {}) {
   const appPath = join(root, 'build', 'Fixture.app');
 
   const deps: LooseDeps = {
+    hostPlatform: () => 'darwin',
     ensureRemoteBootOwned: (args) => ensureRemoteBootOwned({ ...args, ledgerRoot: join(tmpHome, 'machine-eas') }),
     findProjectRoot: () => root,
     gitCommonDir: () => null,
@@ -688,7 +690,13 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
       };
       const { deps } = harness(external);
       assert(deps.projectRegistry);
-      return original(context, path, options, { ...external, projectRegistry: deps.projectRegistry }, onFailure);
+      return original(
+        context,
+        path,
+        options,
+        { ...external, projectRegistry: deps.projectRegistry, hostPlatform: () => 'darwin' },
+        onFailure,
+      );
     });
   try {
     await expect(
@@ -10427,6 +10435,109 @@ describe('strict remote machine selection', () => {
     return choose;
   }
 
+  describe('on a linux host', () => {
+    const device: HostedIosPlacement['device'] = {
+      udid: '12345678-1234-1234-1234-123456789abc',
+      name: 'iPhone 17 Pro',
+      runtime: '27.0',
+      deviceType: 'iPhone 17 Pro',
+      deviceTypeId: 'iphone',
+      runtimeId: 'ios27',
+      architecture: 'x86_64',
+    };
+    const hosted: HostedIosPlacement = {
+      machine: 'mini',
+      selected: 'mini',
+      session: '23456789-1234-1234-1234-123456789abc',
+      appAttempt: 'attempt',
+      device,
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    };
+    const linux: LooseDeps = {
+      hostPlatform: () => 'linux',
+      planPrebuild: () => 'generate',
+      prepareHostedIos: async () => ({
+        host: { machine: 'mini', connection: { close() {} } },
+        choice: device,
+        session: null,
+      }),
+      placeHostedIos: async (_target, args) => {
+        args.reserved(hosted);
+        return { placement: hosted, launched: 'unverified' };
+      },
+    };
+    const hostRefusal = { code: 'STIM_BUILD_FAILED', remedy: expect.stringContaining('--remote-build <mac>') };
+
+    beforeEach(() => {
+      vi.spyOn(planPlacement, 'planHostedDevice').mockResolvedValue({
+        kind: 'hosted',
+        choice: device,
+        placement: 'on mini',
+      });
+    });
+
+    test.each(['local', 'auto', 'remote'])(
+      'a %s build with no paired Mac refuses before prebuild, and the plan agrees',
+      async (remoteBuild) => {
+        reserve();
+        const result = await run({ json: true, remote: 'mini', remoteBuild }, linux);
+        expect(result.exitCode).toBe(1);
+        for (const step of ['runPrebuild', 'buildIos']) expect(result.calls.order).not.toContain(step);
+        expect(parseFirst(result.logs)).toMatchObject(hostRefusal);
+
+        const plan = await run({ plan: true, json: true, remote: 'mini', remoteBuild }, linux);
+        expect(parseFirst(plan.logs)).toMatchObject({ outcome: null, refusal: hostRefusal });
+      },
+    );
+
+    test('an automatic build goes to the paired Mac, and the plan says so', async () => {
+      reserve();
+      configureMini();
+      const choose = offloadedRelease(false);
+      const result = await run({ json: true, remote: 'mini' }, linux);
+      expect(result.exitCode).toBeNull();
+      expect(choose.mock.calls[0]?.[0]).toMatchObject({ selected: 'auto', cacheOnly: false, localEnabled: false });
+      expect(offloadClient.offloadBuild).toHaveBeenCalledTimes(1);
+      expect(result.calls.order).not.toContain('buildIos');
+      expect(parseFirst(result.logs)).toMatchObject({ builtOn: 'mini', offloadedTo: 'mini' });
+
+      const plan = parseFirst((await run({ plan: true, json: true, remote: 'mini' }, linux)).logs);
+      expect(plan).toMatchObject({ outcome: 'cold', buildPlacement: { preference: 'auto' } });
+      expect(plan.buildPlacement.reason).toContain('approved Mac');
+      expect(plan.refusal).toBeUndefined();
+    });
+
+    test('an automatic build the paired Mac declines refuses with its reason and compiles nothing', async () => {
+      reserve();
+      configureMini();
+      offloadedRelease(false).mockResolvedValue('mini: offline');
+      const result = await run({ json: true, remote: 'mini' }, linux);
+      expect(result.exitCode).toBe(1);
+      expect(result.calls.order).not.toContain('buildIos');
+      expect(result.stderr).not.toContain('building here');
+      expect(parseFirst(result.logs)).toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        message: expect.stringContaining('mini: offline'),
+        remedy: hostRefusal.remedy,
+      });
+    });
+
+    test('macOS still builds here when the paired Mac does not take a remote build', async () => {
+      reserve();
+      configureMini();
+      const choose = offloadedRelease(false).mockResolvedValue('mini: offline');
+      const mac: LooseDeps = { ...linux, hostPlatform: () => 'darwin' };
+      const result = await run({ json: true, remote: 'mini', remoteBuild: 'remote' }, mac);
+      expect(result.exitCode).toBeNull();
+      expect(choose.mock.calls[0]?.[0]).not.toHaveProperty('localEnabled');
+      expect(result.calls.order).toContain('buildIos');
+
+      const plan = parseFirst((await run({ plan: true, json: true, remote: 'mini', remoteBuild: 'remote' }, mac)).logs);
+      expect(plan.refusal).toBeUndefined();
+      expect(plan.buildPlacement.reason).toContain('local fallback');
+    });
+  });
+
   test('keeps unused signing files out of an iOS build offload', async () => {
     reserve();
     configureMini();
@@ -11797,4 +11908,16 @@ test('provider upload cancellation after launch emits one iOS refusal and record
   expect(result.logs).toHaveLength(1);
   expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
   expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ status: 'failed', errorCode: 'STIM_CANCELLED' });
+});
+
+test('a linux host with no Mac refuses a local simulator before any work, and the plan agrees', async () => {
+  const result = await run({ json: true }, { hostPlatform: () => 'linux' });
+  expect(result.exitCode).toBe(1);
+  for (const step of ['startDevServer', 'runPrebuild', 'buildIos']) expect(result.calls.order).not.toContain(step);
+  const refusal = { code: 'STIM_NO_DEVICE', remedy: expect.stringContaining('--remote-build <mac>') };
+  expect(parseFirst(result.logs)).toMatchObject(refusal);
+
+  const plan = await run({ plan: true, json: true }, { hostPlatform: () => 'linux' });
+  expect(plan.exitCode ?? 0).toBe(0);
+  expect(parseFirst(plan.logs)).toMatchObject({ platform: 'ios', outcome: null, refusal });
 });

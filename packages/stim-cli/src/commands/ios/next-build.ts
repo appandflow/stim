@@ -1,3 +1,5 @@
+import { iosHostRefusal, iosLocalBuildHostRefusal } from './support.ts';
+import { automaticBuild } from '../../build-placement.ts';
 import type { StimContext } from '@stim-cli/core';
 import { readBuildPlan, planBuild } from '../android/next-build.ts';
 import { DEFAULT_DEPS } from './dependencies.ts';
@@ -16,12 +18,12 @@ function runOnlyFlag(opts: IosCommandOptions): string | null {
   return null;
 }
 
-export function readIosBuildPlan(
+export async function readIosBuildPlan(
   operation: StimContext,
   opts: IosCommandOptions,
   d: IosDeps = DEFAULT_DEPS,
 ): Promise<ProjectPlanResult> {
-  return readBuildPlan('ios', operation, opts, runOnlyFlag(opts), {
+  const plan = await readBuildPlan('ios', operation, opts, runOnlyFlag(opts), {
     findRoot: d.findProjectRoot,
     select: (root) => {
       const selected = d.projectRegistry.selectIos(root);
@@ -35,6 +37,28 @@ export function readIosBuildPlan(
       return { context, settings: d.resolveSettings(context) };
     },
   });
+  const host = d.hostPlatform();
+  if (!('platform' in plan) || host === 'darwin') return plan;
+  const easProfile = opts.easProfile !== undefined;
+  const preference = plan.buildPlacement?.preference ?? 'auto';
+  const offloads = !easProfile && !plan.cacheHit && automaticBuild(preference);
+  const { buildPlacementCandidates } = await import('../../offload/client.ts');
+  const refusal = (plan.placement ?? '').startsWith('this machine')
+    ? iosHostRefusal(host)
+    : (iosLocalBuildHostRefusal(host, preference, easProfile) ??
+      (offloads && buildPlacementCandidates(preference, false).machines.length === 0
+        ? iosHostRefusal(host, true)
+        : null));
+  if (refusal) return { ...plan, outcome: null, expectedMs: null, basis: 0, refusal };
+  return offloads
+    ? {
+        ...plan,
+        buildPlacement: {
+          preference,
+          reason: 'builds on an approved Mac chosen at run time; this machine cannot build iOS',
+        },
+      }
+    : plan;
 }
 
 export function planIos(opts: IosCommandOptions, d: IosDeps): Promise<void> {
