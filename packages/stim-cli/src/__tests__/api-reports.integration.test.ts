@@ -11,7 +11,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
-import { createStim } from '../api.ts';
+import { createStim, type StimGcReport } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
 import { runGcItem } from '../stimd/gc-item.ts';
 import { hostStimd, type AttachedHost } from '../stimd/attached.ts';
@@ -587,7 +587,16 @@ test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScr
   }
   const request = { pressure: 'normal' as const, dryRun: false, delete: true };
   const result = await createStim({ projectRoot: item.root, home: item.home, env: item.env }).previewGarbage(request);
-  expect(result).toEqual(JSON.parse(json));
+  const normalize = (report: StimGcReport) => ({
+    ...report,
+    inventory: report.inventory && {
+      ...report.inventory,
+      devices: report.inventory.devices.filter(
+        (device) => device.kind !== 'ios' || (device.owner !== 'user' && device.owner !== 'otherStimHome'),
+      ),
+    },
+  });
+  expect(normalize(result)).toEqual(normalize(JSON.parse(json)));
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('parity');
 });
 

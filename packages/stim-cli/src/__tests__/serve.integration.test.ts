@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { connect, createServer } from 'node:net';
 import { createHmac } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -92,7 +93,11 @@ const proofFor = (key: string, nonce: string) =>
 
 test('stimd starts its net thread only when asked, and serves pairings, local clients and its Desktop key through it', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-net-thread-'));
-  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const bin = join(home, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'tailscale'), `#!${process.execPath}\nprocess.exit(1);\n`);
+  chmodSync(join(bin, 'tailscale'), 0o755);
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: bin };
   const version = JSON.parse(readFileSync(join(root, 'packages/stim-cli/package.json'), 'utf8')).version;
   const previousHome = process.env.STIM_HOME;
   process.env.STIM_HOME = home;
