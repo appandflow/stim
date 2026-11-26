@@ -658,7 +658,9 @@ export function porcelainPath(line: string): string | null {
   const raw = String(line).slice(3).trim();
   if (raw === '') return null;
   const renamed = raw.includes(' -> ') ? raw.slice(raw.lastIndexOf(' -> ') + 4) : raw;
-  return renamed.replace(/^"(.*)"$/, '$1');
+  const quoted = /^"(.*)"$/.exec(renamed);
+  if (!quoted) return renamed;
+  return (quoted[1] ?? '').replace(/\\(["\\tn])/g, (_, c: string) => (c === 't' ? '\t' : c === 'n' ? '\n' : c));
 }
 
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
