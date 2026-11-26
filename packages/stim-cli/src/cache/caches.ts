@@ -412,6 +412,7 @@ export async function pruneCache(
     protect,
     evictBytes,
     byMtime = false,
+    dryRun = false,
     signal,
     entrySizes = 'walk',
     between,
@@ -421,6 +422,7 @@ export async function pruneCache(
     protect?: (entry: string) => string | null;
     evictBytes?: number;
     byMtime?: boolean;
+    dryRun?: boolean;
     signal?: AbortSignal;
     /**
      * How a directory entry is sized for the bytes it frees: a blocking walk with no time limit, a non-blocking walk
@@ -497,7 +499,7 @@ export async function pruneCache(
         if (!removed && !failed) return { removed: 0, bytes: 0, skipped: busy };
         break;
       }
-      rmSync(entry, { recursive: true, force: true });
+      if (!dryRun) rmSync(entry, { recursive: true, force: true });
       removed++;
       if (entryBytes === null) break;
       bytes += entryBytes;

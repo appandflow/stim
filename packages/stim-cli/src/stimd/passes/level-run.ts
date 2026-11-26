@@ -9,7 +9,7 @@ import { discoveredKeepReason, dormantAfterMs } from '../../daemon/stages.ts';
 import { PRESSURE_IDLE_MS } from '../../daemon/idle.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
-import { executeAction, type ActionOutcome } from './act.ts';
+import { executeAction, trimCache, type ActionOutcome } from './act.ts';
 import { fromLadder, fromOutcome } from './ladder-run.ts';
 import { measureCargoTargets, measuredDiskLevel, planCargoTargetsAtPressure, keepCargoTarget } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
@@ -202,10 +202,16 @@ export async function runMaintenanceAtLevel({
   for (const action of plan.actions.toSorted((a, b) => executionRank(a) - executionRank(b))) {
     operation?.signal.throwIfAborted();
     if (!act) {
-      take({
-        ...fromOutcome(action, { status: 'done', bytes: action.bytes, detail: 'stim gc would do this' }),
-        outcome: 'would',
-      });
+      const outcome =
+        action.kind === 'would-trim-cache' && action.olderThanDays === undefined
+          ? await trimCache(action, context, true)
+          : { status: 'done' as const, bytes: action.bytes, detail: 'stim gc would do this' };
+      const row = fromOutcome(action, outcome);
+      if (outcome.status === 'done') {
+        row.outcome = 'would';
+        row.detail = 'stim gc would do this';
+      }
+      take(row);
       continue;
     }
     if (action.kind === 'would-clear-outputs' || action.kind === 'would-clear-build-dirs') await between?.();

@@ -187,7 +187,11 @@ async function cacheOf(action: MaintenanceAction): Promise<CacheDescriptor | nul
   return discovered.find((cache) => cacheLabel(cache) === action.target) ?? null;
 }
 
-async function trimCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+export async function trimCache(
+  action: MaintenanceAction,
+  context: ActContext,
+  dryRun = false,
+): Promise<ActionOutcome> {
   const cache = await cacheOf(action);
   if (!cache) return kept('it is no longer a cache Stim may trim');
   const [planned] = planCacheEmptying([cache], false);
@@ -196,6 +200,7 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
   const result = await pruneCache(cache, {
     olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     byMtime: true,
+    dryRun,
     protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
     ...(context.operation ? { signal: context.operation.signal } : {}),
