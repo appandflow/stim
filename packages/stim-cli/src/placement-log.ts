@@ -1,3 +1,4 @@
+import type { BuildRefusalReason } from '@stim-cli/core/protocol';
 import type { PlacementSkip } from './device-host/placement.ts';
 import { buildPlacementSettings } from './build-placement.ts';
 
@@ -13,6 +14,7 @@ export interface PlacementCandidate {
   machine: string;
   code: string;
   msg: string;
+  refusalReason?: BuildRefusalReason;
   /** Finer codes behind `code`, such as the toolchain parts of a version mismatch. */
   detail?: string[];
   /**

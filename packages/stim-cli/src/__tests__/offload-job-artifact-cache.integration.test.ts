@@ -30,6 +30,21 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+test('low disk classifies an upload refusal as capacity before accepting any blobs', async () => {
+  const host = new BuildHost({ worker: 'unused', env: process.env, limits: { minFreeBytes: Number.MAX_SAFE_INTEGER } });
+  await mkdir(host.clientDir('builder'), { recursive: true });
+  const session = host.session('builder', { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} }, () => {});
+  try {
+    expect(session.sync({ repo: 'app-1', files: [], done: true })).toMatchObject({
+      error: { code: 'build-busy', reason: 'capacity', message: expect.stringContaining('declines the upload') },
+    });
+    expect(host.running()).toBe(0);
+  } finally {
+    session.close();
+    await host.close();
+  }
+});
+
 test('a completed worker archive survives cleanup and streams while the operator pauses builds', async () => {
   {
     const worker = join(root, 'worker.mjs');
@@ -93,7 +108,9 @@ if (process.argv[2] !== 'build') {
       host.forget(job);
       await rm(join(host.clientDir('builder'), 'repos', 'app-1', 'out'), { recursive: true, force: true });
       const reason = 'server.buildsPaused';
-      expect(await launch()).toMatchObject({ error: { code: 'build-busy', message: expect.stringContaining(reason) } });
+      expect(await launch()).toMatchObject({
+        error: { code: 'build-busy', reason: 'capacity', message: expect.stringContaining(reason) },
+      });
       const artifact = descriptor('verified archive');
       expect(await host.offer('builder', { repo: 'app-1', native: 'xcode', artifact: identity })).toMatchObject({
         result: { artifact: { ...identity, ...artifact }, capacity: { declined: expect.stringContaining(reason) } },

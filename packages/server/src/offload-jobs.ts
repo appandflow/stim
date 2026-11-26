@@ -33,7 +33,9 @@ type InstallFailure = { failure: string; mismatch: boolean } | null;
 
 type Answer = { result: JobStartResult } | { error: ProtocolError };
 
-const refused = (code: ProtocolError['code'], message: string): Answer => ({ error: { code, message } });
+const refused = (code: ProtocolError['code'], message: string, reason?: ProtocolError['reason']): Answer => ({
+  error: { code, message, ...(reason ? { reason } : {}) },
+});
 
 /** A connection's client: its build approval's id and name. */
 export interface JobClient {
@@ -73,7 +75,7 @@ export interface OffloadJobsOptions {
   env: () => NodeJS.ProcessEnv;
   limits: BuildLimits;
   /** Called before each job starts: why it cannot start now, or null. */
-  admit: (client: string) => string | null;
+  admit: (client: string) => Pick<ProtocolError, 'message' | 'reason'> | null;
   /** Called after the last job of `client` exits. */
   idle: (client: string) => void;
   /**
@@ -190,6 +192,7 @@ export class OffloadJobs {
       return refused(
         'build-busy',
         'This machine is serving from an attached Stim command. After that command ends, run `stim serve` outside the agent command, then retry.',
+        'attached',
       );
     if (this.spliced.has(socket)) return refused('bad-request', 'This connection already runs a job.');
     if (isJsonObject(params) && typeof params.attach === 'string') return this.attach(client, socket, params.attach);
@@ -207,7 +210,7 @@ export class OffloadJobs {
     const kind = params.kind as OffloadJobKind;
     const { stim, build, repo } = params;
     const why = this.refusal(client);
-    if (why) return refused('build-busy', why);
+    if (why) return refused('build-busy', why.message, why.reason);
     let entry = this.entry(build);
     if (entry && typeof entry !== 'string') this.recordUse(build, stim);
     if (!entry) {
@@ -248,7 +251,7 @@ export class OffloadJobs {
     }
     if (typeof entry === 'string') return refused('job-refused', entry);
     const late = this.refusal(client);
-    if (late) return refused('build-busy', late);
+    if (late) return refused('build-busy', late.message, late.reason);
     if (socket.readyState !== socket.OPEN) return refused('build-refused', 'The connection closed.');
     const job = this.spawn(kind, client, repo, entry);
     void job.exited?.then(() => this.count());
@@ -273,8 +276,8 @@ export class OffloadJobs {
     } catch {}
   }
 
-  private refusal(client: JobClient): string | null {
-    return this.closed ? 'This machine is stopping.' : this.options.admit(client.id);
+  private refusal(client: JobClient): Pick<ProtocolError, 'message' | 'reason'> | null {
+    return this.closed ? { message: 'This machine is stopping.', reason: 'draining' } : this.options.admit(client.id);
   }
 
   private cannotInstall(stim: string, failure: string): string {

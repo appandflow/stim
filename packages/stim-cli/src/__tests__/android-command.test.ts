@@ -7964,6 +7964,11 @@ test('a named Android run scopes allocation, launch verification and collector s
 });
 
 describe('strict remote machine selection', () => {
+  const strictChoice = {
+    machine: 'mini',
+    offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+  } as offloadClient.OffloadChoice;
+
   beforeEach(() => {
     setExecutor(makeExecutor());
     vi.spyOn(iosDevices, 'simulatorRuntime').mockReturnValue('iOS-27-0');
@@ -7996,6 +8001,32 @@ describe('strict remote machine selection', () => {
         }),
       );
   }
+
+  test.each([
+    ['access', 'This machine no longer grants this device build access.', 'stim remote add mini'],
+    ['capacity', 'This machine declines the build: no free build slots.', 'mini is not taking builds now'],
+    ['draining', 'This machine is stopping.', 'mini is not taking builds now'],
+    ['attached', 'Run stim serve outside the agent command.', "Follow mini's message above"],
+    [undefined, 'This machine no longer grants this device build access.', 'doctor --fix'],
+  ] as const)(
+    'uses the %s worker remedy on choice and build.start refusals',
+    async (refusalReason, message, remedy) => {
+      configureMini();
+      const reason = `start: build-busy: ${message}`;
+      vi.spyOn(offloadClient, 'chooseBuildMachine').mockImplementation(async ({ onCandidates }) => {
+        onCandidates?.([{ machine: 'mini', code: 'unreachable', msg: reason, refusalReason }]);
+        return `mini: ${reason}`;
+      });
+      const result = await harness({ buildMachine: 'mini', build: never('local Gradle') }).run();
+      const failure = result.error;
+      expect(failure).toMatchObject({ code: 'STIM_OFFLOAD_REFUSED', remedy: expect.stringContaining(remedy) });
+      vi.mocked(offloadClient.chooseBuildMachine).mockResolvedValue(strictChoice);
+      vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason, refusalReason });
+      const started = await harness({ buildMachine: 'mini', build: never('local Gradle') }).run();
+      const startFailure = started.error;
+      expect(startFailure).toMatchObject({ code: 'STIM_OFFLOAD_REFUSED', remedy: expect.stringContaining(remedy) });
+    },
+  );
 
   test.each(['invalid', 'not listed', 'not paired'])(
     'setup refusal %s neither looks up a cache nor records a failed run',
@@ -8116,11 +8147,7 @@ describe('strict remote machine selection', () => {
     ['fingerprint-mismatch: The worker resolved a different native artifact identity.', /doctor --fix/],
   ])('remote %s never falls back to Gradle', async (reason, remedy) => {
     configureMini();
-    const choice = {
-      machine: 'mini',
-      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
-    } as offloadClient.OffloadChoice;
-    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(strictChoice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
     const build = vi.fn<() => never>();
     const slot = vi.fn<() => never>();

@@ -832,7 +832,7 @@ export async function acquireIosArtifact(
             missingPackageManagerRemedy(choice.machine, outcome.reason) ??
             podsFailedRemedy(choice.machine, outcome.reason, localCocoapods) ??
             prebuildFailedRemedy(choice.machine, outcome.reason) ??
-            busyBuildMachineRemedy(choice.machine, [], outcome.reason)),
+            busyBuildMachineRemedy(choice.machine, [], outcome.refusalReason)),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;

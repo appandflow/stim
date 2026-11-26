@@ -210,7 +210,11 @@ const protocolError: JsonSchema = {
   type: 'object',
   required: ['code', 'message'],
   additionalProperties: false,
-  properties: { code: { enum: [...ERROR_CODES] }, message: { type: 'string' } },
+  properties: {
+    code: { enum: [...ERROR_CODES] },
+    message: { type: 'string' },
+    reason: { enum: ['capacity', 'draining', 'access', 'attached'] },
+  },
 };
 
 const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };

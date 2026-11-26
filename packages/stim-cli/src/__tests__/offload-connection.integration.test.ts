@@ -1,4 +1,5 @@
-import { PEER } from '@stim-cli/core/protocol';
+import type { PlacementCandidate } from '../placement-log.ts';
+import { PEER, type BuildRefusalReason } from '@stim-cli/core/protocol';
 import { PassThrough } from 'node:stream';
 import { JobFrameReader, jobFrame } from '@stim-cli/core/noise-session';
 import { serveOffloadJob } from '../job/offload/serve.ts';
@@ -88,13 +89,14 @@ const FAILED = { ok: false, code: 'worker-failed', message: 'xcodebuild failed' 
 async function fakeMachine(
   machine: string,
   offer: BuildOffer,
-  start: { error: { code: string; message: string } } | { result: { job: string } },
+  start: { error: { code: string; message: string; reason?: BuildRefusalReason } } | { result: { job: string } },
   {
     jobWorker = undefined,
     drop = false,
     closeAfterStart = null,
     hello = () => ({ result: { capabilities: ['build'], peer: PEER } }),
     dropOnSync = false,
+    syncReply = { result: { missing: [] } },
     attach = { result: { outcome: null } },
     artifact = null,
     pause = null,
@@ -107,6 +109,7 @@ async function fakeMachine(
     drop?: boolean;
     closeAfterStart?: number | null;
     dropOnSync?: boolean;
+    syncReply?: object;
     attach?: object;
     hello?: () => object;
     artifact?: {
@@ -183,7 +186,7 @@ async function fakeMachine(
       if (method === 'build.offer') return reply({ result: offer });
       if (jobWorker) return void input.write(jobFrame(data, false));
       if (method === 'build.fingerprint') return reply({ result: {} });
-      if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
+      if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply(syncReply);
       const fail = (job: string) =>
         deliver(pause === 'build.start' || pause === 'build.attach' ? pause : 'build.progress', () =>
           socket.send(
@@ -621,6 +624,74 @@ describe('offloadBuild', () => {
       );
     },
   );
+
+  it.each(['capacity', 'draining', 'access', 'attached'] as const)(
+    'carries a %s refusal from job.start into placement and from build.start into the outcome',
+    async (reason) => {
+      const error = { code: 'build-busy', message: 'Worker refused the build.', reason };
+      machines.push(await fakeMachine('mini', offer(0.1), { error }, { jobStart: () => ({ error }) }));
+      const candidates = vi.fn<(each: PlacementCandidate[]) => void>();
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: TARGET,
+        here: HERE,
+        selected: 'mini',
+        machines: [credential('mini')],
+        note: () => {},
+        onCandidates: candidates,
+      });
+      expect(choice).toContain('build-busy: Worker refused the build.');
+      expect(candidates).toHaveBeenCalledWith([
+        expect.objectContaining({ machine: 'mini', code: 'unreachable', refusalReason: reason }),
+      ]);
+      machines.push(await fakeMachine('mini', offer(0.1), { error }));
+      expect(await run(['mini'], () => {})).toMatchObject({ ok: false, refusalReason: reason });
+    },
+  );
+
+  it('carries a low-disk upload refusal into the failed outcome before starting a build', async () => {
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        syncReply: {
+          error: { code: 'build-busy', message: 'This machine declines the upload: low disk.', reason: 'capacity' },
+        },
+      },
+    );
+    machines.push(machine);
+    expect(await run(['mini'], () => {})).toMatchObject({
+      ok: false,
+      refusalReason: 'capacity',
+      reason: expect.stringContaining('declines the upload'),
+    });
+    expect(machine.methods).not.toContain('build.start');
+  });
+
+  it('preserves an attached-command refusal when reconnecting to a running job', async () => {
+    machines.push(
+      await fakeMachine(
+        'mini',
+        offer(0.1),
+        { result: { job: 'build-1' } },
+        {
+          drop: true,
+          jobStart: (params) =>
+            params.attach
+              ? {
+                  error: {
+                    code: 'build-busy',
+                    message: 'Run stim serve outside the agent command.',
+                    reason: 'attached',
+                  },
+                }
+              : { result: { job: 'job-1' } },
+        },
+      ),
+    );
+    expect(await run(['mini'], () => {})).toMatchObject({ ok: false, refusalReason: 'attached' });
+  });
 
   it('keeps the removal command of a start refusal that names a claim', async () => {
     const claimPath = join(repo, 'home', 'engine', 'claims', 'b'.repeat(40), 'shared', `${'c'.repeat(36)}.claim`);

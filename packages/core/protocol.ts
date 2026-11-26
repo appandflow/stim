@@ -2038,9 +2038,12 @@ export type ClientRequest = {
   [M in Method]: { id: RequestId; method: M } & Pick<Methods[M], 'params'>;
 }[Method];
 
+export type BuildRefusalReason = 'capacity' | 'draining' | 'access' | 'attached';
+
 export interface ProtocolError {
   code: ErrorCode;
   message: string;
+  reason?: BuildRefusalReason;
 }
 
 export type ServerResponse =
