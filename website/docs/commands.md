@@ -554,6 +554,8 @@ Lists the plugins Stim loads and tests one against the plugin contract. See
 
 Plain output is for agents and people. Use `--json` when a script parses the
 result: it prints one payload on stdout and sends progress to stderr.
+`logs --json` writes NDJSON, one record per line, and nothing when no record
+matches. `status --watch --json` prints one payload per line.
 
 Commands exit 0 on success. A refusal exits nonzero and prints a `STIM_*` code,
 a message and a remedy. An empty `logs` result exits 0.

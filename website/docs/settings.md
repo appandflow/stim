@@ -90,7 +90,8 @@ review a committed value the way you review a build script.
 
 - `disk.minFreeGb` (`40`), `disk.criticalFreeGb` (`20`), `disk.hardFloorGb`
   (`5`): below the first two, the Stim daemon starts reclaiming caches, devices
-  and idle dependencies, deeper at critical. Below the hard floor, `start`,
+  and dormant workspaces, deeper at critical. It only reports the
+  `node_modules` and Pods of idle worktrees. Below the hard floor, `start`,
   `ios` and `android` refuse with `STIM_LOW_DISK`. `0` turns a threshold off.
 - `caches.buildCache`, `caches.metroCache` and `tempDir` move the large
   caches and temporary copies to another volume (absolute paths, machine only).
@@ -132,7 +133,9 @@ stim settings set concurrency.maxDevices 4 --scope machine
 
 - `daemon.mode` (default `on`, `off` in CI): the per-home `stimd` runs the
   idle and dormant stages, the disk pressure ladder and automatic maintenance.
-  `report` logs what it would do and deletes nothing. `off` runs no pass.
+  `report` logs what it would do and deletes nothing. `off` runs no pass, but
+  `stimd` still stops a dev server it runs and the workspace's devices after
+  `idle.minutes`.
 - `idle.dormantDays` (default `1`): after this many days without activity a
   workspace shrinks to its minimal size. Its build outputs and owned devices
   are deleted, and a linked worktree's `node_modules` and Pods are deleted
