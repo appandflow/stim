@@ -551,7 +551,11 @@ function macosOp(): Op {
       const root = findProjectRoot(process.cwd());
       if (options.plan) {
         try {
-          if (!root) throw new Error('Run stim macos from the Swift Package directory.');
+          if (!root)
+            throw Object.assign(new Error('No Swift package was found from this directory.'), {
+              code: 'STIM_NO_PROJECT',
+              remedy: 'Run stim macos from the Swift Package directory.',
+            });
           if (options.remote !== undefined)
             throw Object.assign(new Error('--remote selects a launch host and does not apply to --plan.'), {
               code: 'STIM_BAD_ARG',
@@ -564,18 +568,24 @@ function macosOp(): Op {
             console.log(phaseLine('expect', 'unknown: SwiftPM determines incremental work when the build runs'));
           }
         } catch (error) {
+          const remedy = (error as { remedy?: string }).remedy;
           const failure = {
             code: (error as { code?: string }).code ?? 'STIM_BAD_ARG',
             message: error instanceof Error ? error.message : String(error),
-            remedy: (error as { remedy?: string }).remedy ?? 'Check the macOS project settings in stim guide macos.',
+            remedy: remedy ?? 'Check the macOS project settings in stim guide macos.',
           };
           console.error(failure.message);
+          if (remedy) console.error(`remedy: ${remedy}`);
           if (options.json) console.log(JSON.stringify(failure));
           process.exitCode = 1;
         }
         return;
       }
-      if (!root) throw new Error('Run stim macos from the Swift Package directory.');
+      if (!root)
+        throw Object.assign(new Error('No Swift package was found from this directory.'), {
+          code: 'STIM_NO_PROJECT',
+          remedy: 'Run stim macos from the Swift Package directory.',
+        });
       const { value: record } = await runProcessOperation(root, (context) =>
         runMacos(context, root, console.error, options.remote, options.remoteBuild),
       ).catch((error) => {

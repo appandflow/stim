@@ -295,3 +295,17 @@ test('live listing keeps a merged registered worktree when removal is off', asyn
     }),
   );
 });
+
+test('listing outside a repository prints one JSON refusal', async () => {
+  repository = join(home, 'empty');
+  mkdirSync(repository);
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const output = await run({ json: true });
+  expect(output).toHaveLength(1);
+  expect(JSON.parse(output.join('\n'))).toEqual({
+    code: 'STIM_BAD_ARG',
+    message: 'No git repository was found from this directory.',
+    remedy: 'Run stim worktree list inside a git repository, or pass --all.',
+  });
+  expect(process.exitCode).toBe(1);
+});
