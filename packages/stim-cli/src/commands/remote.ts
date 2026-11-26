@@ -224,7 +224,9 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
         const channel = opts.channel === 'latest' || opts.channel === 'next' ? opts.channel : undefined;
         if (opts.channel && !channel)
           throw refusal('STIM_BAD_ARG', `--channel ${opts.channel} is unknown.`, 'Use latest or next.');
-        if (opts.channel && opts.to)
+        if (opts.to === '')
+          throw refusal('STIM_BAD_ARG', '--to is empty.', 'Pass a published Stim version, such as --to 2.0.0.');
+        if (opts.channel && opts.to !== undefined)
           throw refusal(
             'STIM_BAD_ARG',
             '--to names one release, so --channel cannot also choose one.',
@@ -237,7 +239,7 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
               processContext(process.cwd()),
               machine,
               version,
-              opts.to ? { version: opts.to } : { channel },
+              opts.to !== undefined ? { version: opts.to } : { channel },
               io,
             ),
           );

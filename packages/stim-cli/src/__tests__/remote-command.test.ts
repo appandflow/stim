@@ -169,6 +169,7 @@ test('update --to sends that exact release even when the channel would pick anot
 test.each([
   { args: ['--to', '9.12.0'], refusal: 'STIM_BAD_ARG: stim 9.12.0 is not published on npm.' },
   { args: ['--to', '9.9.0', '--channel', 'next'], refusal: 'STIM_BAD_ARG: --to names one release' },
+  { args: ['--to', ''], refusal: 'STIM_BAD_ARG: --to is empty.' },
 ])('update $args refuses before asking the worker to update', async ({ args, refusal }) => {
   await approveMini();
   updating.open.mockResolvedValue(undefined);
