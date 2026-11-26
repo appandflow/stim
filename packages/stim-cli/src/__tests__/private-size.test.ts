@@ -121,7 +121,7 @@ test('file-only targets count their singly linked files without a real-size run'
   expect(runFileAsync).not.toHaveBeenCalled();
 });
 
-test('targets skip foreign volumes and retain local private bytes as a lower bound', async () => {
+test('unsupported targets retry local directories and retain private bytes as a lower bound', async () => {
   Object.defineProperty(process, 'platform', { value: 'linux' });
   const root = mkdtempSync(join(tmpdir(), 'stim-private-targets-'));
   onTestFinished(() => rmSync(root, { recursive: true, force: true }));
@@ -143,6 +143,8 @@ test('targets skip foreign volumes and retain local private bytes as a lower bou
   const runFileAsync = vi.fn<ReturnType<typeof getExecutor>['runFileAsync']>(async () =>
     JSON.stringify({ paths: [], total: { allocated: 300, private: 90, skipped: 0 } }),
   );
+  const unsupported = Object.assign(new Error('unsupported filesystem'), { status: 2 });
+  runFileAsync.mockRejectedValueOnce(unsupported);
   setExecutor({ ...getExecutor(), runFileAsync });
 
   expect(await measureTree(root, { timeoutMs: 1000, targets: [local, foreign, file] })).toEqual({
@@ -150,15 +152,26 @@ test('targets skip foreign volumes and retain local private bytes as a lower bou
     privateBytes: 90 + fileBytes,
     partial: true,
   });
-  expect(runFileAsync).toHaveBeenCalledTimes(1);
-  expect(runFileAsync.mock.calls[0]?.[1].slice(-3)).toEqual(['--json', '--', local]);
-  expect(runFileAsync.mock.calls[0]?.[1]).not.toContain(foreign);
+  expect(runFileAsync).toHaveBeenCalledTimes(2);
+  expect(runFileAsync.mock.calls[0]?.[1].slice(-4)).toEqual(['--json', '--', local, foreign]);
+  expect(runFileAsync.mock.calls[1]?.[1].slice(-3)).toEqual(['--json', '--', local]);
+  expect(runFileAsync.mock.calls[1]?.[1]).not.toContain(foreign);
 
   runFileAsync.mockClear();
+  runFileAsync.mockRejectedValueOnce(unsupported);
   expect(await measureTree(root, { timeoutMs: 1000, targets: [foreign, file] })).toEqual({
     bytes: fileBytes,
     privateBytes: fileBytes,
     partial: true,
   });
-  expect(runFileAsync).not.toHaveBeenCalled();
+  expect(runFileAsync).toHaveBeenCalledTimes(1);
+
+  runFileAsync.mockClear();
+  vi.mocked(lstatSync).mockImplementation(fs.lstatSync);
+  expect(await measureTree(root, { timeoutMs: 1000, targets: [local, foreign, file] })).toEqual({
+    bytes: 300 + fileBytes,
+    privateBytes: 90 + fileBytes,
+  });
+  expect(runFileAsync).toHaveBeenCalledTimes(1);
+  expect(runFileAsync.mock.calls[0]?.[1].slice(-4)).toEqual(['--json', '--', local, foreign]);
 });

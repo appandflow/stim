@@ -102,36 +102,42 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
   const dirs: string[] = [];
   let fileBytes = 0;
   let filePrivate = 0;
-  const rootDev = binary && options.targets ? lstatSync(path, { throwIfNoEntry: false })?.dev : undefined;
-  let partial: true | undefined;
   for (const target of binary ? (options.targets ?? []) : []) {
     const info = lstatSync(target, { throwIfNoEntry: false });
-    if (info?.isDirectory()) {
-      if (info.dev !== rootDev) partial = true;
-      else dirs.push(target);
-    } else if (info?.isFile()) {
+    if (info?.isDirectory()) dirs.push(target);
+    else if (info?.isFile()) {
       fileBytes += info.blocks * 512;
       if (info.nlink === 1) filePrivate += info.blocks * 512;
     }
   }
-  if (binary && options.targets && !dirs.length)
-    return { bytes: fileBytes, privateBytes: filePrivate, ...(partial ? { partial } : {}) };
+  if (binary && options.targets && !dirs.length) return { bytes: fileBytes, privateBytes: filePrivate };
   if (binary) {
     try {
       const { total, paths }: RealSizeResult = JSON.parse(
         await walk(binary, ['--json', '--', ...(options.targets ? dirs : [path])]),
       );
       const size = options.targets ? total : paths[0];
-      if (size)
-        return {
-          bytes: size.allocated + fileBytes,
-          privateBytes: size.private + filePrivate,
-          ...(partial ? { partial } : {}),
-        };
+      if (size) return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate };
     } catch (error) {
       const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
-      if (status === UNSUPPORTED_STATUS) privateUnknown = 'volume';
+      if (status === UNSUPPORTED_STATUS) {
+        privateUnknown = 'volume';
+        if (options.targets) {
+          try {
+            const rootDev = lstatSync(path).dev;
+            const localDirs = dirs.filter((dir) => lstatSync(dir).dev === rootDev);
+            if (localDirs.length < dirs.length) {
+              if (!localDirs.length) return { bytes: fileBytes, privateBytes: filePrivate, partial: true };
+              const { total }: RealSizeResult = JSON.parse(await walk(binary, ['--json', '--', ...localDirs]));
+              if (total)
+                return { bytes: total.allocated + fileBytes, privateBytes: total.private + filePrivate, partial: true };
+            }
+          } catch (retryError) {
+            failed(retryError);
+          }
+        }
+      }
       if (status === 1 && typeof stdout === 'string') {
         try {
           const { total, paths }: RealSizeResult = JSON.parse(stdout);
