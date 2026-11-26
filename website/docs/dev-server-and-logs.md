@@ -255,8 +255,10 @@ window, Stim also observes up to three seconds of launch logs, fewer once the
 app's JavaScript reports `Running "<name>"`. The summary can report
 that bundling is still in progress or that launch is unverified. If the wait
 window closes and the app process is gone, the run fails with `the app process
-exited` and the device log's errors instead. Release runs check process
-liveness without Metro.
+exited` and the device log's errors instead. When Android killed the app for
+not responding (an ANR), the run says so, prints the ANR reason, and names the
+host load, so an overloaded host is not mistaken for an app crash. Release runs
+check process liveness without Metro.
 
 The wait for the app's bundle request is 20 seconds. An Expo development
 client asks the dev server for its manifest before it asks for the bundle, and

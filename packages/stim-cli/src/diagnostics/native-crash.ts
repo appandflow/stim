@@ -467,7 +467,7 @@ export async function readAndroidAnrKill(
     const text = await crashCommand(
       'adb',
       ['-s', target.deviceId, 'logcat', '-b', 'system', '-d', '-v', 'time,epoch', '-s', 'ActivityManager'],
-      { timeoutMs: 3000, cwd: androidToolCwd() },
+      { timeoutMs: 10000, cwd: androidToolCwd() },
       signal,
     );
     return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;

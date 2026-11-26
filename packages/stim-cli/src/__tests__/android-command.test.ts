@@ -4431,7 +4431,7 @@ describe('launch verification', () => {
       expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
       expect(text.includes('Android killed the app for not responding (ANR)')).toBe(anr);
       expect(text.includes('ANR reason: Process ProcessRecord{c0daa15 6004:com.example.app/u0a145} failed')).toBe(anr);
-      expect(/host load [\d.]+ on \d+ cores/.test(text)).toBe(anr);
+      expect(/host load [\d.]+ on \d+ cores/.test(text)).toBe(anr && process.platform !== 'win32');
       expect(text.includes('again once the load drops')).toBe(anr);
       expect(text.includes('Fix the crash')).toBe(!anr);
       expect(text.includes('Pinning is deprecated')).toBe(!anr);

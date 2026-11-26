@@ -230,11 +230,12 @@ async function reportAnrKill({
   if (anr.reason) phase('', chalk.red(`ANR reason: ${anr.reason}`));
   if (!physical && process.platform !== 'win32')
     phase('load', `host load ${Math.round((loadavg()[0] ?? 0) * 10) / 10} on ${availableParallelism()} cores`);
-  const busy = physical ? 'the device' : 'the host';
   phase(
     'remedy',
     chalk.yellow(
-      `An ANR while ${busy} is overloaded is not an app bug: run \`${runCommand}\` again once the load drops. If it repeats while ${busy} is idle, the app blocks its main thread during startup; fix that, then run \`${runCommand}\` again.`,
+      physical
+        ? `An ANR while the device is busy is not an app bug: run \`${runCommand}\` again once it is idle. If it repeats on an idle device, the app blocks its main thread during startup; fix that, then run \`${runCommand}\` again.`
+        : `An ANR while the host is overloaded is not an app bug: run \`${runCommand}\` again once the load drops. If it repeats while the host is idle, the app blocks its main thread during startup; fix that, then run \`${runCommand}\` again.`,
     ),
   );
   return true;
