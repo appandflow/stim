@@ -26,7 +26,8 @@ or one of the exceptions below.
 
 ## What it never touches
 
-- Your source: tracked files, and untracked files git does not ignore.
+- Your source: tracked files, and untracked files git does not ignore,
+  unless you run `stim worktree remove --force`.
 - Commits that are not pushed.
 - Anything building, driven by an agent or leased.
 - A workspace pinned with `maintenance.keep`: no idle or dormant stage, and
@@ -85,15 +86,17 @@ or one of the exceptions below.
 - `stim stop` stops the dev server, its tunnel and log collectors, shuts the
   owned devices down (an iOS simulator may stay booted for
   `pool.bootedGraceMinutes`), closes the owned Chrome, quits the macOS app or
-  ends its session on another Mac, ends an EAS session,
-  stops devices hosted on another Mac, cancels a running `ios` or `android`
-  run, ends web shares, releases device leases and removes adb reverses. It
-  deletes no device.
+  ends its session on another Mac, ends an EAS session, cancels a running
+  `ios` or `android` run, ends web shares, releases device leases and removes
+  adb reverses. It deletes no local device. A device hosted on another Mac is
+  parked there, or deleted when the host parks none or parking fails.
 - `stim worktree remove` does the same, runs each service's `teardown`, parks
-  the owned devices (deletes them at critical disk pressure), deletes the
-  owned Chrome profile and archives the logs, then deletes the workspace's
-  folder in the Stim home, build outputs included, frees the Metro port, and
-  removes the worktree and the branch when Stim created it.
+  the owned devices (deletes them at critical disk pressure, with parking set
+  to `0`, or when parking fails), deletes the owned Chrome profile and
+  archives the logs, then deletes the workspace's folder in the Stim home,
+  build outputs included, frees the Metro port, and removes the worktree and
+  the branch when Stim created it. With `--force` it discards uncommitted and
+  untracked work without archiving it.
 
 ## Phases
 
