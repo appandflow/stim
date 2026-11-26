@@ -102,6 +102,7 @@ interface WorkerRun {
   settled?: Promise<void>;
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
   cancel: () => void;
+  gone: () => boolean;
 }
 
 interface OwnedSession {
@@ -111,7 +112,7 @@ interface OwnedSession {
   reachedReady?: boolean;
   run?: WorkerRun;
   data?: Promise<void>;
-  logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void> };
+  logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void>; claim?: ClaimHandle };
   stopping?: Promise<void>;
   stopGeneration?: number;
   installing?: { attempt: string; done: Promise<void> };
@@ -1541,6 +1542,7 @@ export class DeviceHost {
       } finally {
         if (pending && owned.data === pending) delete owned.data;
         if (!run || settled) releaseClaim(claim);
+        else void run.settled?.then(() => releaseClaim(claim));
         if (run) this.probes.delete(run);
       }
     } catch (error) {
@@ -1612,12 +1614,12 @@ export class DeviceHost {
   }
 
   private collectLogs(record: HostedDeviceSession, owned: OwnedSession, final = false): Promise<void> {
-    if (owned.logs?.pending) return owned.logs.pending;
+    if (owned.logs?.pending && !this.reapLogs(owned.logs)) return owned.logs.pending;
     const attempt = owned.installedAttempt ?? record.appAttempt;
     if (record.platform === 'macos' || !attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
       return Promise.resolve();
     const claim = this.takeLogsClaim(owned.claim);
-    const logs = (owned.logs = { started: Date.now(), more: false } as NonNullable<OwnedSession['logs']>);
+    const logs = (owned.logs = { started: Date.now(), more: false, claim } as NonNullable<OwnedSession['logs']>);
     try {
       const run = (logs.run = this.run(record, owned, 'logs', attempt, claim, final));
       logs.pending = run.done.then((outcome) => {
@@ -1644,12 +1646,22 @@ export class DeviceHost {
   }
 
   private async settleLogs(owned: OwnedSession): Promise<void> {
-    const run = owned.logs?.run;
-    if (!run) return;
+    const logs = owned.logs;
+    const run = logs?.run;
+    if (!logs || !run) return;
     run.cancel();
-    await owned.logs?.pending?.catch(() => {});
-    if (!(await run.done).settled)
+    await logs.pending?.catch(() => {});
+    if (!(await run.done).settled && !this.reapLogs(logs))
       throw new Error('The log worker group is unresolved. Its claim and device were retained.');
+  }
+
+  private reapLogs(logs: NonNullable<OwnedSession['logs']>): boolean {
+    if (!logs.run) return true;
+    if (!logs.run.gone()) return false;
+    if (logs.claim) releaseClaim(logs.claim);
+    delete logs.pending;
+    delete logs.run;
+    return true;
   }
 
   appLaunch(client: string, params: unknown): AppAnswer<HostedAppLaunch> {
@@ -1947,16 +1959,17 @@ export class DeviceHost {
     await owned.data;
     await this.settleLogs(owned);
     releaseClaim(takeHostedInputClaim(owned.claim));
-    if (owned.run) {
-      owned.run.cancel();
-      const outcome = await owned.run.done;
+    const prior = owned.run;
+    if (prior) {
+      prior.cancel();
+      const outcome = await prior.done;
       const value = outcome.value;
       healthy &&=
         !outcome.notice &&
         outcome.settled &&
         isJsonObject(value) &&
         (value.state === 'ready' || value.state === 'installed');
-      if (!outcome.settled)
+      if (!outcome.settled && !prior.gone())
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
       if (
         (owned.imagePhase || (isJsonObject(value) && value.state === 'stopped' && value.device === null)) &&
@@ -2196,9 +2209,10 @@ export class DeviceHost {
         const owned = this.owned.get(record.id);
         if (!owned || this.resuming.has(record.id) || this.idleUnresolved(record.id) !== null) continue;
         try {
-          const unsettled = (await owned.run?.done)?.settled === false;
+          const run = owned.run;
+          const unsettled = run !== undefined && !(await run.done).settled && !run.gone();
           await owned.logs?.pending?.catch(() => {});
-          if (unsettled || owned.logs?.run) {
+          if (unsettled || (owned.logs && !this.reapLogs(owned.logs))) {
             this.logIdleKept(record.id, 'a worker group of this session is unresolved; its claim and device are kept');
             continue;
           }
@@ -2478,6 +2492,13 @@ export class DeviceHost {
       );
     } finally {
       if (owned && settled) this.release(record.id, owned);
+      else if (owned) {
+        const kept = owned;
+        void kept.run?.settled?.then(() => {
+          if (this.owned.get(record.id) === kept) this.release(record.id, kept);
+          return undefined;
+        });
+      }
     }
   }
 
@@ -2518,8 +2539,9 @@ export class DeviceHost {
     const owned = this.owned.get(record.id);
     if (!owned || !this.detachable(record, owned)) return false;
     try {
-      owned.run?.cancel();
-      if (owned.run && !(await owned.run.done).settled) return false;
+      const run = owned.run;
+      run?.cancel();
+      if (run && !(await run.done).settled && !run.gone()) return false;
       await this.settleLogs(owned);
       releaseClaim(takeHostedInputClaim(owned.claim));
     } catch {
@@ -2740,6 +2762,7 @@ export class DeviceHost {
               ? this.limits.offerMs
               : this.limits.prepareMs,
       maxOutputBytes: 16_384,
+      trackSettlement: true,
     });
   }
 
@@ -2792,6 +2815,11 @@ export class DeviceHost {
           proveSettlement = resolve;
         })
       : undefined;
+    let gone = false;
+    const prove = () => {
+      gone = true;
+      proveSettlement?.();
+    };
     let settle!: (result: { value: unknown; settled: boolean; notice?: string }) => void;
     const done = new Promise<{ value: unknown; settled: boolean; notice?: string }>((resolve) => {
       settle = resolve;
@@ -2806,7 +2834,7 @@ export class DeviceHost {
       const groupAlive = closed && child.pid ? processGroupAlive(child.pid) : null;
       const settled = closed && groupAlive !== true;
       diagnostic('settled', { closed, groupAlive, settled, cancelling });
-      if (settled) proveSettlement?.();
+      if (settled) prove();
       else if (options.trackSettlement) groupTimer = setTimeout(finishGroup, 250).unref();
       if (settled && options.claim) clearClaimChild(options.claim);
       let value: unknown = null;
@@ -2846,7 +2874,7 @@ export class DeviceHost {
       if (finished) {
         if (!options.trackSettlement) return;
         clearTimeout(groupTimer);
-        if (closed && (!child.pid || !processGroupAlive(child.pid))) proveSettlement?.();
+        if (closed && (!child.pid || !processGroupAlive(child.pid))) prove();
         else groupTimer = setTimeout(finishGroup, 250).unref();
         return;
       }
@@ -2900,7 +2928,11 @@ export class DeviceHost {
         cancel('request-write');
       }
     }
-    return { done, cancel, ...(settlement ? { settled: settlement } : {}) };
+    const groupGone = () => {
+      if (!gone && finished && closed && (!child.pid || !processGroupAlive(child.pid))) prove();
+      return gone;
+    };
+    return { done, cancel, gone: groupGone, ...(settlement ? { settled: settlement } : {}) };
   }
 }
 
