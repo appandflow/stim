@@ -55,6 +55,10 @@ for a busy warm worker. An explicit machine selects only that worker and
 bypasses the automatic load filter. `auto` and `remote` fall back after an offload
 failure only while local placement is enabled. `remote-only` and named
 placement refuse when remote placement fails. No failure path writes the cache.
+On a client without macOS, this machine is never a candidate for an iOS build:
+`auto` and `remote` place it on an enabled worker and refuse when none takes it,
+`local` refuses before the dev server starts, and `--plan` reports the same decision.
+Chosen by the coordinating session for #6441, not by the maintainer.
 
 Explicit selection fixes where a build may run. Automatic selection can
 keep development moving when workers are busy or unreachable. An existing

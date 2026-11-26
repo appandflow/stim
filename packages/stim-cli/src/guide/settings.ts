@@ -1239,6 +1239,8 @@ answer, an incompatible Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
 Bundler for an app whose Gemfile.lock pins CocoaPods, no installed simulator
 runtime that \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
+On Linux or Windows, stim ios refuses a simulator here and --remote-build
+local; auto and remote build only on an enabled paired Mac.
 A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
 Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
 build's toolchain, the client leaves pod install to it, and \`stim ios --remote

@@ -67,7 +67,7 @@ import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build
 import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
-import { isReleaseConfiguration, PLATFORM, printDiagnostics, xcodeFailureReport } from './support.ts';
+import { iosHostRefusal, isReleaseConfiguration, PLATFORM, printDiagnostics, xcodeFailureReport } from './support.ts';
 import {
   IosRecipeRefusal as ArtifactRefusal,
   type IosArtifactRecipe,
@@ -113,19 +113,20 @@ interface IosArtifactRequest {
   };
 }
 
-type IosArtifactDeps = Pick<
-  IosDeps,
-  | 'loadCacheProvider'
-  | 'checkEasAuth'
-  | 'resolveRemote'
-  | 'uploadRemote'
-  | 'acquireBuildLock'
-  | 'releaseBuildLock'
-  | 'waitForBuild'
-  | 'acquireBuildSlot'
-  | 'releaseBuildSlot'
-  | 'now'
->;
+type IosArtifactDeps = Partial<Pick<IosDeps, 'hostPlatform'>> &
+  Pick<
+    IosDeps,
+    | 'loadCacheProvider'
+    | 'checkEasAuth'
+    | 'resolveRemote'
+    | 'uploadRemote'
+    | 'acquireBuildLock'
+    | 'releaseBuildLock'
+    | 'waitForBuild'
+    | 'acquireBuildSlot'
+    | 'releaseBuildSlot'
+    | 'now'
+  >;
 
 /** The caller owns this installable app's temporary copies until release(). */
 export interface PreparedIosArtifact {
@@ -219,6 +220,7 @@ export async function acquireIosArtifact(
   let hereReason = 'no remote machine is paired';
   let slotWaitMs: number | undefined;
   let builtOn: string | undefined;
+  const hostRefusal = d.hostPlatform ? iosHostRefusal(d.hostPlatform(), true) : null;
   const fallBack = (
     reason: string,
     line: string = reason,
@@ -233,7 +235,8 @@ export async function acquireIosArtifact(
         fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
       }),
     );
-    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
+    if (namedBuildMachine(buildMachine) || hostRefusal)
+      throw new OffloadRefusal(buildMachine, reason, info.remedy ?? hostRefusal?.remedy);
     requireLocalBuild(buildMachine, reason);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
@@ -475,6 +478,7 @@ export async function acquireIosArtifact(
 
   async function takeBuildSlot(): Promise<void> {
     requireLocalBuild(buildMachine);
+    if (hostRefusal) fail({ ...hostRefusal, build: buildFailure });
     await recipe.beforeLocalBuild?.();
     if (!maxBuilds) return;
     try {
@@ -510,12 +514,14 @@ export async function acquireIosArtifact(
   /** Whether this build should leave this machine, before any machine is asked; null builds here. */
   async function placeBuild(): Promise<Candidate | null> {
     if (cacheIneligible && !recipe.offload?.uncached) {
-      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
+      if (namedBuildMachine(buildMachine) || hostRefusal) throw new OffloadRefusal(buildMachine, cacheIneligible);
       hereReason = cacheIneligible;
       return null;
     }
     const { buildPlacementCandidates, offloadPlacement, offloadCheck } = await import('../../offload/client.ts');
-    const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const { machines, localEnabled } = buildPlacementCandidates(buildMachine, !hostRefusal);
+    if (hostRefusal && machines.length === 0 && !namedBuildMachine(buildMachine))
+      fail({ ...hostRefusal, build: buildFailure });
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
     const { runtime, unsupported } =
@@ -532,6 +538,7 @@ export async function acquireIosArtifact(
       here,
       unsupported,
       selected: buildMachine,
+      ...(hostRefusal ? { localDisabled: 'this machine cannot build iOS' } : {}),
     });
     if (!placement.offload) {
       hereReason = placement.reason;
@@ -607,6 +614,7 @@ export async function acquireIosArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
+      ...(hostRefusal && !namedBuildMachine(buildMachine) ? { localEnabled: false } : {}),
       ...(queryPeer && storeHash ? { reactNativeArtifact: { fingerprint: storeHash, request } } : {}),
       ...(useBuildCache &&
       cachePolicy.remote &&

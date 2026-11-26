@@ -111,7 +111,10 @@ const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
-export function buildPlacementCandidates(selected: string): {
+export function buildPlacementCandidates(
+  selected: string,
+  hostBuilds = true,
+): {
   machines: BuildMachineCredential[];
   localEnabled: boolean;
 } {
@@ -119,7 +122,9 @@ export function buildPlacementCandidates(selected: string): {
   const word = placementWord(selected);
   return {
     localEnabled:
-      word === null || word === 'local' || (mayRunHere(word) && automaticMachineEnabled('build', 'local', config)),
+      word === null ||
+      word === 'local' ||
+      (hostBuilds && mayRunHere(word) && automaticMachineEnabled('build', 'local', config)),
     machines:
       word === 'local'
         ? []
@@ -196,6 +201,7 @@ export function offloadPlacement({
   here,
   unsupported,
   localEnabled = true,
+  localDisabled = 'local is disabled in remote.buildPoolDisabled',
   selected = 'auto',
 }: {
   selected?: string;
@@ -203,6 +209,7 @@ export function offloadPlacement({
   here: MachineCapacity;
   unsupported: string | null;
   localEnabled?: boolean;
+  localDisabled?: string;
 }): { offload: boolean; code: string; reason: string } {
   const word = placementWord(selected);
   if (word === null) {
@@ -217,8 +224,7 @@ export function offloadPlacement({
   }
   if (word === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
   if (!localEnabled || !mayRunHere(word)) {
-    const why =
-      word === 'remote-only' ? 'remote-only never builds here' : 'local is disabled in remote.buildPoolDisabled';
+    const why = word === 'remote-only' ? 'remote-only never builds here' : localDisabled;
     if (unsupported) throw new OffloadRefusal(selected, `${unsupported}; ${why}`, UNSUPPORTED_OFFLOAD_REMEDY);
     if (machines === 0) throw new OffloadRefusal(selected, `no enabled remote machine is paired; ${why}`);
     return { offload: true, code: word === 'remote-only' ? 'remote-only' : 'local-disabled', reason: why };
@@ -990,6 +996,7 @@ export interface OffloadChoice extends OfferingMachine {
   workspace: string;
   runnersUp: OfferingMachine[];
   cacheOnly?: boolean;
+  localEnabled?: boolean;
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
   swiftpmArtifact?: BuildSwiftpmArtifactQuery;
@@ -1120,6 +1127,7 @@ export async function chooseBuildMachine({
   reactNativeArtifact,
   swiftpmArtifact,
   cacheOnly = false,
+  localEnabled = buildPlacementCandidates(selected).localEnabled,
 }: {
   projectRoot: string;
   target: BuildTarget;
@@ -1127,6 +1135,7 @@ export async function chooseBuildMachine({
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
   selected?: string;
+  localEnabled?: boolean;
   onCandidates?: (candidates: PlacementCandidate[]) => void;
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: Omit<BuildGradleArtifactQuery, 'project'>;
@@ -1195,12 +1204,12 @@ export async function chooseBuildMachine({
           ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
           warmth: { platform: target.platform, project: identity.warmthProject },
         },
-        { install: !buildPlacementCandidates(selected).localEnabled },
+        { install: !localEnabled },
       ),
     ),
   );
   const { order, reasons, candidates } = pickOffer({
-    localEnabled: buildPlacementCandidates(selected).localEnabled,
+    localEnabled,
     selected,
     here,
     target,
@@ -1244,6 +1253,7 @@ export async function chooseBuildMachine({
     workspace: projectRoot,
     runnersUp: rest,
     cacheOnly,
+    localEnabled,
     ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
     ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
     ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
@@ -1950,7 +1960,7 @@ export async function offloadBuild(
       here: choice.here,
       target: choice.target,
       selected: choice.selected,
-      localEnabled: buildPlacementCandidates(choice.selected).localEnabled,
+      localEnabled: choice.localEnabled ?? buildPlacementCandidates(choice.selected).localEnabled,
       offers: [{ machine: choice.machine, offer: probe.offer }],
     });
     if (placement.order.length === 0) {

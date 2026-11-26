@@ -496,3 +496,37 @@ export function createIosDeviceWaitRun(
     },
   };
 }
+
+export function iosHostRefusal(
+  platform: NodeJS.Platform,
+  build = false,
+): { code: string; message: string; remedy: string } | null {
+  if (platform === 'darwin') return null;
+  return {
+    code: build ? 'STIM_BUILD_FAILED' : 'STIM_NO_DEVICE',
+    message: `${build ? 'iOS compilation needs' : 'iOS devices need'} macOS; this machine runs ${platform}.`,
+    remedy: build
+      ? 'Pair a Mac that builds with `stim remote add <mac>`; the default --remote-build auto then builds there, or name it with --remote-build <mac>.'
+      : 'Run on a paired Mac with `stim ios --remote <mac> --remote-build <mac>` (see `stim remote add`), or on EAS with `stim ios --remote eas --eas-profile <profile>`.',
+  };
+}
+
+export function iosPlacementHostRefusal(
+  platform: NodeJS.Platform,
+  physical: boolean,
+  selection: { machine?: string | null; backend?: string | null },
+  buildMachine: string,
+  easProfile: boolean,
+): FailArgs | null {
+  return physical || (!selection.machine && !selection.backend)
+    ? iosHostRefusal(platform)
+    : iosLocalBuildHostRefusal(platform, buildMachine, easProfile);
+}
+
+export function iosLocalBuildHostRefusal(
+  platform: NodeJS.Platform,
+  buildMachine: string,
+  easProfile: boolean,
+): { code: string; message: string; remedy: string } | null {
+  return !easProfile && buildMachine === 'local' ? iosHostRefusal(platform, true) : null;
+}

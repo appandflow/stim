@@ -50,7 +50,9 @@ again under a supported one. The tools Stim starts inherit the override.
   (`stim ios --remote <mac> --remote-build <mac>`, see
   [remote machines](./remote-machines.md)), or on an EAS build and EAS
   Simulator (`stim ios --remote eas --eas-profile <profile>`), which can be
-  billable.
+  billable. There `stim ios` never boots a simulator or compiles locally: a
+  local simulator and `--remote-build local` refuse before Metro starts, and
+  the default `--remote-build auto` refuses when no paired Mac takes the build.
 
 ## Android
 
