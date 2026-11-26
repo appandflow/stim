@@ -1,3 +1,4 @@
+import { refuseNoProject } from '../command-output.ts';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { getProject } from '../workspace/config.ts';
 import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
@@ -18,10 +19,10 @@ function warnFailed(reports: ReverseDeviceReport[]): void {
       console.error(`could not remove the reverse from ${report.device}: ${report.detail}`);
 }
 
-async function inProject(action: (root: string) => Promise<void>): Promise<void> {
+async function inProject(json: boolean, action: (root: string) => Promise<void>): Promise<void> {
   try {
     const root = findCommandWorkspace(process.cwd());
-    if (!root) throw new Error('No package.json found. Run stim ports from the workspace that owns the server.');
+    if (!root) return refuseNoProject({ json });
     await action(root);
   } catch (error) {
     console.error((error as Error).message);
@@ -34,7 +35,7 @@ const getCommand = defineOp({
   arguments: '<label>',
   description: 'Allocate once and print only the port number',
   run: ({ args: [label] }) =>
-    inProject(async (root) => {
+    inProject(false, async (root) => {
       console.log(await getNamedPort(root, label));
     }),
 });
@@ -50,7 +51,7 @@ const stopCommand = defineOp({
     },
   },
   run: ({ args: [label], options: opts }) =>
-    inProject(async (root) => {
+    inProject(false, async (root) => {
       if (!opts.dryRun) warnFailed(await dropLabelReverses(root, label));
       await clearNamedPorts(root, { label, stop: true, dryRun: opts.dryRun });
     }),
@@ -61,7 +62,7 @@ const releaseCommand = defineOp({
   arguments: '[label]',
   description: 'Release named ports without stopping their listeners; excludes Metro',
   run: ({ args: [label] }) =>
-    inProject(async (root) => {
+    inProject(false, async (root) => {
       warnFailed(await dropLabelReverses(root, label));
       await clearNamedPorts(root, { label });
     }),
@@ -76,7 +77,7 @@ const reverseCommand = defineOp({
     json: { flags: '--json', description: 'print one JSON payload' },
   },
   run: ({ args: [target], options: opts }) =>
-    inProject(async (root) => {
+    inProject(opts.json ?? false, async (root) => {
       const port = resolveReversePort(root, target);
       const action = opts.remove ? 'remove' : 'add';
       const recorded = await recordReversePort(root, port, !opts.remove);
@@ -97,7 +98,7 @@ const portsOp: Op = defineOp({
   options: { json: { flags: '--json', description: 'print one JSON payload' } },
   commands: [getCommand, stopCommand, releaseCommand, reverseCommand],
   run: ({ options: opts }) =>
-    inProject(async (root) => {
+    inProject(opts.json ?? false, async (root) => {
       const project = getProject(root);
       const reversed = reversePorts(readWorkspaceState(root));
       const labels = Object.entries(project?.ports ?? {});

@@ -551,7 +551,11 @@ function macosOp(): Op {
       const root = findProjectRoot(process.cwd());
       if (options.plan) {
         try {
-          if (!root) throw new Error('Run stim macos from the Swift Package directory.');
+          if (!root)
+            throw Object.assign(new Error('No Swift package was found from this directory.'), {
+              code: 'STIM_NO_PROJECT',
+              remedy: 'Run stim macos from the Swift Package directory.',
+            });
           if (options.remote !== undefined)
             throw Object.assign(new Error('--remote selects a launch host and does not apply to --plan.'), {
               code: 'STIM_BAD_ARG',
@@ -575,7 +579,11 @@ function macosOp(): Op {
         }
         return;
       }
-      if (!root) throw new Error('Run stim macos from the Swift Package directory.');
+      if (!root)
+        throw Object.assign(new Error('No Swift package was found from this directory.'), {
+          code: 'STIM_NO_PROJECT',
+          remedy: 'Run stim macos from the Swift Package directory.',
+        });
       const { value: record } = await runProcessOperation(root, (context) =>
         runMacos(context, root, console.error, options.remote, options.remoteBuild),
       ).catch((error) => {

@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { CliUsageError, runCli, type Op } from '../cli/define-op.ts';
 import deviceCommand from '../commands/device.ts';
@@ -520,3 +522,29 @@ test('help agent-device prints its usage instead of running it', async () => {
   expect(ran).toBe(false);
   expect(out.join('')).toMatch(/^Usage: stim agent-device \[args\.\.\.\]\n/);
 });
+
+test.each([['--json'], ['reverse', '8081', '--json']])(
+  'ports refuses outside a project with one JSON payload (%j)',
+  async (...args) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-ports-refusal-'));
+    const previousExit = process.exitCode;
+    vi.stubEnv('STIM_HOME', join(dir, 'state'));
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runCli(portsOp, args, { version: 'test' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls.map(([value]) => value).join('\n'))).toMatchObject({
+        code: 'STIM_NO_PROJECT',
+        message: expect.any(String),
+        remedy: expect.any(String),
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExit;
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

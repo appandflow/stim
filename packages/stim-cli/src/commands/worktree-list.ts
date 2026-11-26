@@ -308,7 +308,13 @@ export const listOp: Op = defineOp({
         declareFor: operation,
       });
       if (!options.all && 'refusal' in source) {
-        console.error(source.refusal);
+        const noRepository = !source.entries.length;
+        const message = noRepository ? 'No git repository was found from this directory.' : source.refusal;
+        const remedy = noRepository
+          ? 'Run stim worktree list inside a git repository, or pass --all.'
+          : 'Run the commands in the message, then run it again.';
+        console.error(noRepository ? `${message} ${remedy}` : message);
+        if (options.json) console.log(JSON.stringify({ code: 'STIM_BAD_ARG', message, remedy }));
         return 1;
       }
       const repositories = new Set<string>('refusal' in source ? [] : [source.path]);

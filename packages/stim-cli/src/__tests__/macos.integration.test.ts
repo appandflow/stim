@@ -2011,13 +2011,16 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
       await runCli(program, ['--plan', '--json'], { version: '0.0.0' });
       expect(stdout).toHaveBeenCalledTimes(1);
       expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
-        code: 'STIM_BAD_ARG',
-        message: 'Run stim macos from the Swift Package directory.',
+        code: 'STIM_NO_PROJECT',
+        message: 'No Swift package was found from this directory.',
+        remedy: 'Run stim macos from the Swift Package directory.',
       });
       stdout.mockClear();
-      await expect(runCli(program, [], { version: '0.0.0' })).rejects.toThrow(
-        'Run stim macos from the Swift Package directory.',
-      );
+      await expect(runCli(program, ['--json'], { version: '0.0.0' })).rejects.toMatchObject({
+        code: 'STIM_NO_PROJECT',
+        message: 'No Swift package was found from this directory.',
+        remedy: 'Run stim macos from the Swift Package directory.',
+      });
       expect(stdout).not.toHaveBeenCalled();
     } finally {
       process.exitCode = previousExit;
