@@ -521,6 +521,34 @@ export async function cloneIgnoredEntries({
         failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
       }
     }
+    if (copied.length) {
+      const status = await gitQuietAsync(
+        target,
+        [
+          'status',
+          '--porcelain=v1',
+          '-z',
+          '--untracked-files=normal',
+          '--',
+          ...copied.map((rel) => `:(literal)${rel}`),
+        ],
+        options,
+      );
+      const untracked = (status ?? '')
+        .split('\0')
+        .filter((entry) => entry.startsWith('?? '))
+        .map((entry) => entry.slice(3).replace(/\/$/, ''));
+      for (const rel of copied.filter((entry) =>
+        untracked.some((path) => path === entry || path.startsWith(`${entry}/`)),
+      )) {
+        await removeTemporaryEntryAsync(join(target, rel));
+        copied.splice(copied.indexOf(rel), 1);
+        withheld.push({
+          file: rel,
+          reason: 'the destination branch does not ignore it, so it would be untracked here',
+        });
+      }
+    }
     const outcomes = await Promise.allSettled(checks.values());
     const failure = outcomes.find((outcome) => outcome.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
