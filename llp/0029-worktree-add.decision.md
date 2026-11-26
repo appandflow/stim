@@ -103,9 +103,12 @@ first and can then overwrite what a `git add` staged meanwhile.
 
 The refresh costs about what the checkout it replaces costs. On a clone of this
 repository with 18 `node_modules` folders (3.9 GB), creating a worktree 50
-commits behind took about the same time either way, a `clonefile` of the
-dependency folders being most of it in both, and the new worktree held 8.8 MB
-of private disk against 113.4 MB.
+commits behind took a median 3.3 s against 3.0 s for `git worktree add` then
+`stim worktree warm` (six alternating runs on a loaded machine), a `clonefile`
+of the dependency folders being about 2 s of both. The first `git status` took
+0.04 s against 0.2 s, and the new worktree held 8.8 MB of private disk against
+113.4 MB. Git work started beside the `clonefile` call waited for it, so the
+two do not overlap.
 
 ## Not decided
 
