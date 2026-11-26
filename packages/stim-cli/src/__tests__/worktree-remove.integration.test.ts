@@ -1444,7 +1444,7 @@ function realGitFakeSimctl(simctlList: string) {
 }
 
 test('against a real repo: a locked worktree is refused before its owned sim is torn down, even with --force', async () => {
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-locked-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim test remove (locked) ')));
   const errs: string[] = [];
   const originalError = console.error;
   try {
@@ -1463,7 +1463,9 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     expect(existsSync(wt)).toBe(true);
     expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
     expect(errs.join('\n')).toMatch(/locked/);
-    expect(errs.join('\n')).toContain(`git -C ${repo} worktree unlock ${wt}`);
+    const quoted = (path: string) =>
+      process.platform === 'win32' ? `'${path.replaceAll("'", "''")}'` : `'${path.replaceAll("'", "'\\''")}'`;
+    expect(errs.join('\n')).toContain(`git -C ${quoted(repo)} worktree unlock ${quoted(wt)}`);
   } finally {
     console.error = originalError;
     rmSync(base, { recursive: true, force: true });
@@ -2297,6 +2299,20 @@ test('intent-to-add paths get no checkout remedy and spaced worktree paths are q
   expect(remedy).not.toContain('intent');
   expect(remedy).toContain("git -C '/tmp/my wt' checkout -- edited");
   expect(remedy).toContain("git -C '/tmp/my wt' clean -fd new");
+});
+
+test('on Windows the remedy quotes paths for PowerShell', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    const remedy = removalRemedy([' M edited', '?? "it\'s new"'], {
+      worktree: "C:\\Users\\o'brien\\it\u2019s wt",
+    }).join('\n');
+    expect(remedy).toContain("git -C 'C:\\Users\\o''brien\\it\u2019\u2019s wt' checkout -- edited");
+    expect(remedy).toContain("git -C 'C:\\Users\\o''brien\\it\u2019\u2019s wt' clean -fd 'it''s new'");
+  } finally {
+    if (platform) Object.defineProperty(process, 'platform', platform);
+  }
 });
 
 test('real git: detached unique commits have a recovery branch command before discard advice', async () => {
