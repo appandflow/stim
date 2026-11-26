@@ -46,11 +46,13 @@ helper available, the command does not check files out:
    `--no-checkout` skipped it. It runs last so the ignored files it writes
    stay. A hook that fails is reported, the command exits 1 and the worktree
    stays, as with `git worktree add`. On the plain path git runs the hook, and
-   a worktree git created before failing is warmed the same way.
+   a worktree git created before failing is warmed the same way. The hook's
+   output goes to stderr on both paths.
 
 Reason: a checkout writes every tracked file again, and the warm then clones
 the dependency folders beside them. A clone shares the source's disk blocks, so
-a new worktree at the source's commit takes almost no disk.
+a new worktree at the source's commit takes no disk of its own. The clone path
+saves disk, not time.
 
 The cloned index keeps the source index's modification time, so git still
 rereads a file changed in the second that index was written. An edit that keeps
@@ -69,11 +71,6 @@ carried ones is removed. This runs whether the warm succeeds, refuses or is
 interrupted, so a refused warm leaves the worktree as `git worktree add` alone
 does.
 
-The command holds one shared warm claim on the source checkout from the clone
-until the warm has checked what it carried, so a `stim worktree warm
---refresh` cannot fast-forward and reinstall the source between the two and
-have the warm compare an older clone with the newer source.
-
 An entry the warm checks under a claim before carrying it, such as an Expo
 `ios/` whose prebuild record it compares while holding the source's native-run
 claim, is deleted and copied again under that claim. The first clone ran
@@ -82,6 +79,21 @@ folder.
 
 A submodule folder is emptied by removing files, and no git command runs inside
 it. Submodules are supported, not refused.
+
+## The source claim spans the clone and the warm
+
+On the clone path the command takes one shared warm claim on the source
+checkout before `git worktree add --no-checkout` and releases it when the warm
+has checked what it carried, before the prune and `post-checkout`.
+
+Reason: a `stim worktree warm --refresh` between the clone and the warm could
+fast-forward and reinstall the source, and the warm would then compare an older
+clone with the newer source. Taking the claim first means an interrupt, a lock
+timeout or an unavailable claim while the command waits leaves nothing behind:
+git has not registered the worktree or created the branch yet. Releasing it
+before the hook lets a hook run `stim worktree warm --refresh`, which needs the
+source exclusively, and keeps a slow hook from holding off a refresh or
+maintenance.
 
 ## It falls back instead of refusing
 
@@ -118,12 +130,12 @@ first and can then overwrite what a `git add` staged meanwhile.
 
 The refresh costs about what the checkout it replaces costs. On a clone of this
 repository with 18 `node_modules` folders (3.9 GB), creating a worktree 50
-commits behind took a median 3.3 s against 3.0 s for `git worktree add` then
-`stim worktree warm` (six alternating runs on a loaded machine), a `clonefile`
-of the dependency folders being about 2 s of both. The first `git status` took
-0.04 s against 0.2 s, and the new worktree held 8.8 MB of private disk against
-113.4 MB. Git work started beside the `clonefile` call waited for it, so the
-two do not overlap.
+commits behind took about the same time as `git worktree add` then
+`stim worktree warm`: a median 3.4 s against 3.2 s over six alternating runs
+on a loaded machine, a `clonefile` of the dependency folders being about 2 s of
+both. The new worktree held 9 MB of private disk against 113 MB, and 0 MB
+against 113 MB at the source's own commit. Git work started beside the
+`clonefile` call waited for it, so the two do not overlap.
 
 ## Not decided
 

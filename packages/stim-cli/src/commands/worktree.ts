@@ -118,6 +118,7 @@ import {
   endsOperation,
   pruneUncarried,
   runPostCheckout,
+  showOutput,
 } from '../workspace/worktree-add.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
@@ -704,7 +705,7 @@ export async function addWorktreeTarget(opts: {
     timeoutMs: 'unbounded',
     write: true,
   };
-  const add = (...flags: string[]) =>
+  const add = (flags: string[], onSpawn?: ReturnType<typeof showOutput>) =>
     gitAsync(
       opts.cwd,
       [
@@ -716,10 +717,10 @@ export async function addWorktreeTarget(opts: {
         path,
         ...(opts.commitish ? [opts.commitish] : []),
       ],
-      { ...git, signal: operation.signal },
+      { ...git, signal: operation.signal, onSpawn },
     );
   const bounded = () => ({ ...git, signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS) });
-  const warm = async (cloned: { head: string } | null, slow: string | null, failed: string | null) => {
+  const carry = async (cloned: boolean, slow: string | null) => {
     const target = realpathSync(path);
     out(
       chalk.dim(
@@ -735,31 +736,38 @@ export async function addWorktreeTarget(opts: {
     const refresh = cloned ? gitAsync(target, ['update-index', '-q', '--refresh'], git).catch(() => null) : null;
     const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
     let carried: string[] = [];
-    let exitCode: 0 | 1 = 1;
-    try {
-      ({ exitCode } = await warmWorktreeTarget({
-        cwd: existsSync(inside) ? inside : target,
+    const warmed = await warmWorktreeTarget({
+      cwd: existsSync(inside) ? inside : target,
+      operation,
+      precloned: cloned,
+      carried: (copied) => {
+        carried = copied;
+      },
+    }).then(
+      ({ exitCode }) => ({ exitCode }),
+      (error: unknown) => ({ error }),
+    );
+    return { target, refresh, carried, warmed };
+  };
+  const settle = async (
+    { target, refresh, carried, warmed }: Awaited<ReturnType<typeof carry>>,
+    head: string | null,
+    failed: string | null,
+  ) => {
+    await refresh;
+    if (head !== null) {
+      await pruneUncarried(
+        target,
+        carried,
         operation,
-        precloned: cloned !== null,
-        carried: (copied) => {
-          carried = copied;
-        },
-      }));
-    } finally {
-      await refresh;
-      if (cloned) {
-        await pruneUncarried(
-          target,
-          carried,
-          operation,
-          operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
-        );
-        // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
-        if (!operation.signal.aborted) failed = await runPostCheckout(target, cloned.head, operation);
-      }
-      if (failed !== null) out(chalk.red(phaseLine('worktree', `post-checkout failed: ${failed}`)));
+        operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
+      );
+      // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
+      if (!operation.signal.aborted) failed = await runPostCheckout(target, head, operation);
     }
-    return { exitCode: failed === null ? exitCode : 1, path: target };
+    if (failed !== null) out(chalk.red(phaseLine('worktree', `post-checkout failed: ${failed}`)));
+    if ('error' in warmed) throw warmed.error;
+    return { exitCode: failed === null ? warmed.exitCode : 1, path: target };
   };
   const state = operationState(operation);
   const wasDraining = state.draining;
@@ -776,13 +784,13 @@ export async function addWorktreeTarget(opts: {
           })
         ).split('\n'),
       );
-      await add('--no-checkout');
-      // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- one source claim from the clone to the warm's checks
-      const added = await withWarmClaim(
+      let head = '';
+      // @ref LLP 0029#the-source-claim-spans-the-clone-and-the-warm -- taken before git registers anything, gone before the hook
+      const cloned = await withWarmClaim(
         { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
         async () => {
+          await add(['--no-checkout']);
           let gitDir = '';
-          let head = '';
           let ref = '';
           try {
             [gitDir = '', head = '', ref = ''] = (
@@ -805,13 +813,13 @@ export async function addWorktreeTarget(opts: {
             slow = `cloning failed (${lastLine(error)})`;
             return null;
           }
-          return warm({ head }, null, null);
+          return carry(true, null);
         },
       );
-      if (added) return added;
+      if (cloned) return await settle(cloned, head, null);
     }
     const existed = existsSync(path);
-    const failed = await add().then(
+    const failed = await add([], showOutput(operation)).then(
       () => null,
       (error: unknown) => {
         // git-worktree(1) keeps the worktree it created when post-checkout fails, and exits with the hook's status.
@@ -819,7 +827,7 @@ export async function addWorktreeTarget(opts: {
         return lastLine(error);
       },
     );
-    return await warm(null, slow, failed);
+    return await settle(await carry(false, slow), null, failed);
   } finally {
     state.draining = wasDraining;
   }

@@ -20,7 +20,7 @@ import { addOp, removeOp, warmOp } from '../commands/worktree.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { processContext } from '../cli-operation.ts';
 import { warmClaimPath } from '../engine/warm-claim.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { cloneIgnoredEntries } from '../workspace/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
 
@@ -260,10 +260,12 @@ test.skipIf(process.platform === 'win32')(
   'post-checkout runs once in the new worktree with the arguments git worktree add gives it (POSIX hook script; skipped on win32)',
   async () => {
     const log = join(base, 'hook.log');
-    write(root, '.git/hooks/post-checkout', `#!/bin/sh\necho "$PWD $*" >> '${log}'\n`);
+    write(root, '.git/hooks/post-checkout', `#!/bin/sh\necho "$PWD $*" >> '${log}'\necho printed by the hook\n`);
     chmodSync(join(root, '.git/hooks/post-checkout'), 0o755);
 
-    expect((await run(addOp, root, ['-b', 'added', '../added', 'HEAD~1'])).code).toBe(0);
+    const added = await run(addOp, root, ['-b', 'added', '../added', 'HEAD~1']);
+    expect(added).toMatchObject({ code: 0, stdout: '' });
+    expect(added.stderr).toContain('printed by the hook\n');
 
     const first = git(root, 'rev-parse', 'HEAD~1');
     expect(readFileSync(log, 'utf-8')).toBe(`${join(base, 'added')} ${'0'.repeat(first.length)} ${first} 1\n`);
@@ -345,23 +347,55 @@ test('an entry the warm checks before carrying is copied again under that check'
 }, 60_000);
 
 test.skipIf(!clones)(
-  'the source checkout stays claimed from the clone until the warm has checked what it carried (APFS clonefile; darwin only)',
+  'the source checkout is claimed from before git registers the worktree until the warm has checked what it carried, and free for the hook (APFS clonefile; darwin only)',
   async () => {
     const real = getExecutor();
-    const readers: number[] = [];
+    const readers: [string, number][] = [];
+    let refreshCouldStart = false;
     setExecutor({
       ...real,
       async runFileAsync(file, args, opts) {
-        if (file === 'git' && (args.includes('update-index') || args.includes('--untracked-files=normal')))
-          readers.push(readClaimSet(warmClaimPath(root)).live.length);
+        const step = ['--no-checkout', 'update-index', '--untracked-files=normal', 'hook'].find((arg) =>
+          args.includes(arg),
+        );
+        if (file === 'git' && step) readers.push([step, readClaimSet(warmClaimPath(root)).live.length]);
+        if (file === 'git' && step === 'hook') {
+          const refresh = tryAcquireClaim({ root: warmClaimPath(root), mode: 'exclusive', label: 'worktree warm' });
+          refreshCouldStart = Boolean(refresh.acquired);
+          releaseClaim(refresh.acquired ?? refresh.pending);
+        }
         return real.runFileAsync(file, args, opts);
       },
     });
 
     expect((await run(addOp, root, ['-b', 'added', '../added'])).code).toBe(0);
 
-    expect(readers).toEqual([1, 1]);
-    expect(readClaimSet(warmClaimPath(root)).live).toEqual([]);
+    expect(readers).toEqual([
+      ['--no-checkout', 1],
+      ['update-index', 1],
+      ['--untracked-files=normal', 1],
+      ['hook', 0],
+    ]);
+    expect(refreshCouldStart).toBe(true);
+  },
+  60_000,
+);
+
+test.skipIf(!clones)(
+  'an operation cancelled while it waits for the source claim creates no worktree and no branch (APFS clonefile; darwin only)',
+  async () => {
+    const refreshing = tryAcquireClaim({ root: warmClaimPath(root), mode: 'exclusive', label: 'worktree warm' });
+    onTestFinished(() => void releaseClaim(refreshing.acquired));
+    expect(refreshing.acquired).toBeTruthy();
+    const stim = createStim({ projectRoot: root, env: { ...process.env } });
+
+    await expect(
+      stim.addWorktree({ path: '../added', branch: 'added', signal: AbortSignal.timeout(1500) }),
+    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+
+    expect(existsSync(join(base, 'added'))).toBe(false);
+    expect(git(root, 'branch', '--list', 'added')).toBe('');
+    expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
   },
   60_000,
 );

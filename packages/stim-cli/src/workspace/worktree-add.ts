@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import type { StimContext } from '@stim-cli/core';
 import { isPathPrefix } from '@stim-cli/core/state';
 import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
@@ -111,6 +112,14 @@ export async function cloneCheckout({
   await gitAsync(target, ['clean', '-q', '-ffd'], write);
 }
 
+/** Passes what a git child prints on to the operation's stderr as it comes, as git shows a hook's output. */
+export function showOutput(operation: StimContext): (child: ChildProcess) => void {
+  return (child) => {
+    for (const stream of [child.stdout, child.stderr])
+      stream?.on('data', (chunk: Buffer) => operation.output('stderr', String(chunk)));
+  };
+}
+
 /**
  * Runs `post-checkout` in the cloned worktree `target`, as `git worktree add` does after its checkout, and returns
  * the failure of a hook that fails.
@@ -120,7 +129,7 @@ export async function runPostCheckout(target: string, head: string, operation: S
   return gitAsync(
     target,
     ['hook', 'run', '--ignore-missing', 'post-checkout', '--', '0'.repeat(head.length), head, '1'],
-    gitOptions(operation, true),
+    { ...gitOptions(operation, true), onSpawn: showOutput(operation) },
   ).then(
     () => null,
     (error: unknown) => {
