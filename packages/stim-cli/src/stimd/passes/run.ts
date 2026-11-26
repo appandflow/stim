@@ -532,7 +532,7 @@ export async function runMaintenance(
       ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees && settings.removeIdleWorktrees);
     const caps = measuredSizes || cap.ran;
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
-    if (!Object.values(partPlanned).some(Boolean)) {
+    if (!Object.values(partPlanned).some(Boolean) && !failures.length) {
       writeState(state);
       return;
     }

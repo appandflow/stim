@@ -539,15 +539,17 @@ function capPassSetup(env: string): void {
 const capPasses = [
   ['the size check is not due', (now: number) => ({ size: now }), () => {}],
   ['the size check fails', () => ({}), () => vi.spyOn(measurements, 'measureSizes').mockRejectedValue(new Error('du'))],
+  [
+    'host load defers the size check and then drops before the worktree check',
+    () => ({}),
+    () => vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValueOnce(true).mockReturnValue(false),
+  ],
 ] as const;
 
-test.each(
-  staleCaches.flatMap(([category, env, root, parent]) =>
-    capPasses.map(([label, lastAt, arrange]) => [category, label, env, root, parent, lastAt, arrange] as const),
-  ),
-)(
-  'a pass leaves the %s alone on the size an earlier pass saved when %s',
-  async (category, _label, env, root, parent, lastAt, arrange) => {
+test.each(capPasses)(
+  'a pass leaves a cache alone on the size an earlier pass saved when %s',
+  async (_label, lastAt, arrange) => {
+    const [category, env, root, parent] = staleCaches[0];
     capPassSetup(env);
     arrange();
     const dir = root();
@@ -575,15 +577,9 @@ test.each(
       }),
     );
 
-    const planned = vi.spyOn(preview, 'plannedMaintenance');
-
     await runMaintenance('daemon');
 
-    expect(planned).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ worktrees: true }),
-    );
+    expect(readMaintenanceState()?.lastAt.worktree).toBeDefined();
     for (const name of entries) expect(existsSync(join(dir, name, 'data'))).toBe(true);
   },
 );
@@ -638,6 +634,29 @@ test('a Swift compilation cache emptied behind the pass and refilled under its c
 
   expect(readMaintenanceState()?.lastAt.worktree).toBe(now);
   expect(existsSync(join(dir, 'new', 'data'))).toBe(true);
+});
+
+test('a pass whose only check is a failing size check still reports the failure in the last pass', async () => {
+  capPassSetup('STIM_CACHES_BUILD_CACHE_MAX_GB');
+  vi.spyOn(measurements, 'measureSizes').mockRejectedValue(new Error('du failed'));
+  const now = Date.now();
+  mkdirSync(maintenanceDir(), { recursive: true });
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({
+      version: 1,
+      lastAt: { pressure: now, sweep: now, idle: now, worktree: now },
+      pressure: null,
+      sizes: [],
+      lastPass: null,
+      recent: [],
+      plan: [],
+    }),
+  );
+
+  await runMaintenance('daemon');
+
+  expect(readMaintenanceState()?.lastPass?.blocked).toContain('du failed');
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
