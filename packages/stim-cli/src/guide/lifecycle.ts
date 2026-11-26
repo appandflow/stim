@@ -2927,7 +2927,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   \`stim worktree warm\` takes one flag, \`--refresh\`. Run it anywhere inside
   the current linked worktree to copy missing ignored entries from its source
-  checkout, regardless of either branch's HEAD. Both roots must be registered
+  checkout that this worktree's branch ignores. Both roots must be registered
   worktrees of the same Git repository; the source checkout must be available.
   Running it in the source checkout refuses.
 
