@@ -306,6 +306,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
       : `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds and shares it serves; its dev servers keep running and the next stimd takes them over`;
   const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
   const waiting = waitingChildren();
+  const sameVersion = version === stimBuild().version;
   const [why, remedy] = refusedByAttached
     ? [
         `${stimd} runs Stim ${version} as the child of another command.`,
@@ -332,8 +333,10 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
                 'Run the command again once those commands end.',
               ]
             : [
-                `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.${engineInstallable() ? ' To stop this recurring, stop stimd as above, then run `stim engine install`.' : ''}`,
+                sameVersion
+                  ? `${stimd} runs Stim ${version} build ${refusedBuild}, not this stim's build ${stimdBuildId()}, and has not restarted on this build.`
+                  : `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+                `Run the command with ${sameVersion ? `the stim of build ${refusedBuild}` : `Stim ${version}`}, or ${kill}; the next stim command starts one of this build.${engineInstallable() ? ' To stop this recurring, stop stimd as above, then run `stim engine install`.' : ''}`,
               ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
