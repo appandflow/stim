@@ -177,7 +177,6 @@ describe('the Cargo target cap over a root target/', () => {
     { label: 'expired', bytes: 100, hours: 6, fresh: true },
     { label: 'partial under cap', bytes: 100, hours: 1, fresh: true, partial: true },
   ])('Cargo reuse: $label', async ({ bytes, hours, fresh, partial }) => {
-    vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
     const dir = monorepoTarget(main);
     upsertProject(main, {});

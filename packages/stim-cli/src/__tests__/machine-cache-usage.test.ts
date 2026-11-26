@@ -259,7 +259,6 @@ const spoilers: [string, (file: string) => void][] = [
 if (posixModes) spoilers.push(['cannot be read', (file) => chmodSync(file, 0o000)]);
 
 test.each([30, 61])('private machine size after %i minutes', async (minutes) => {
-  vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
   const transforms = join(gradle, 'caches', '9.3.1', 'transforms');
   writeDirs(transforms);

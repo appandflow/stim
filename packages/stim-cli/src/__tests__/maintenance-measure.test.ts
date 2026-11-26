@@ -142,7 +142,6 @@ test.each([
   { label: 'partial sibling', cap: 1, age: 1, bytes: 100, walked: true, partial: true },
   { label: 'expired sibling', cap: 1, age: 1, bytes: 100, walked: true, expired: true },
 ])('cache reuse: $label', async ({ cap, age, bytes, walked, missing, partial, expired }) => {
-  vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
   vi.stubEnv('STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB', String(cap));
   saveConfig({ projects: {}, repos: {} });
@@ -174,7 +173,6 @@ test.each([
 });
 
 test('a capped category reuses its sizes when one of its folders does not exist', async () => {
-  vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
   vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '1');
   saveConfig({ projects: {}, repos: {} });
