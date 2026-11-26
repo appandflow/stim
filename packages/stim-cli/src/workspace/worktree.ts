@@ -531,10 +531,11 @@ export async function cloneIgnoredEntries({
                 (stat) => !stat.isDirectory(),
                 () => false,
               );
-              // Windows: a file symbolic link needs the create-symlink privilege; a junction does not.
-              await symlink(link, destination, file ? 'file' : 'junction').catch(async (error: unknown) => {
-                if (!file || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
-                await copyFile(source, destination);
+              // Windows: symbolic links need the create-symlink privilege; without it a junction stands in for a directory.
+              // Git for Windows leaves junctions behind on worktree remove: git-for-windows/git#6543.
+              await symlink(link, destination, file ? 'file' : 'dir').catch(async (error: unknown) => {
+                if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+                await (file ? copyFile(source, destination) : symlink(link, destination, 'junction'));
               });
               return false;
             },
