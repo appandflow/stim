@@ -608,12 +608,15 @@ test('warm carries pnpm directory links into the destination checkout', async ()
   mkdirSync(dirname(join(root, nested)), { recursive: true });
   symlinkSync('.pnpm/expo@1/node_modules/expo', join(root, 'node_modules/expo'), 'junction');
   symlinkSync('../../b@1/node_modules/b', join(root, nested), 'junction');
+  const cased = 'node_modules/b';
+  if (process.platform === 'win32') symlinkSync(join(root, b).toUpperCase(), join(root, cased), 'junction');
 
   const result = await warm();
   expect(result.failed).toEqual([]);
   for (const { link, name } of [
     { link: 'node_modules/expo', name: 'expo' },
     { link: nested, name: 'b' },
+    ...(process.platform === 'win32' ? [{ link: cased, name: 'b' }] : []),
   ]) {
     expect(readFileSync(join(target, link, 'package.json'), 'utf-8')).toBe(`{"name":"${name}"}`);
     const resolved = realpathSync(join(target, link));

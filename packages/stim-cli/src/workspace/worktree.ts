@@ -526,7 +526,8 @@ export async function cloneIgnoredEntries({
               operation.signal.throwIfAborted();
               if (!(await lstat(source)).isSymbolicLink()) return true;
               let link = await readlink(source);
-              if (isAbsolute(link) && isPathPrefix(root, link)) link = join(target, relative(root, link));
+              const inSource = isAbsolute(link) ? relative(root, link) : '..';
+              if (!inSource.startsWith('..') && !isAbsolute(inSource)) link = join(target, inSource);
               const file = await statAsync(source).then(
                 (stat) => !stat.isDirectory(),
                 () => false,
