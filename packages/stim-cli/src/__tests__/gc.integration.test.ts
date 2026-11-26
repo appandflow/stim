@@ -2928,7 +2928,7 @@ describe('gc and the Swift compilation cache cap', () => {
     setExecutor({
       ...base,
       runFileAsync: async (file, args, options) =>
-        file === 'du' || file === 'nice' ? `5\t${args?.at(-1) ?? ''}` : base.runFileAsync(file, args, options),
+        file === 'du' ? `5\t${args?.[1] ?? ''}` : base.runFileAsync(file, args, options),
     });
   });
   afterEach(() => {

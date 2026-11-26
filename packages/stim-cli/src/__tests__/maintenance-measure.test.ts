@@ -56,7 +56,7 @@ test('high load defers scans and every measured output/cache uses a bounded du c
   setExecutor({
     runFile: (file, args, opts) => {
       calls.push({ file, args, timeout: opts?.timeoutMs });
-      if (file === 'du' || file === 'nice') return `123\t${args.at(-1)}\n`;
+      if (file === 'du') return `123\t${args[1]}\n`;
       return '';
     },
     runFileQuiet: () => null,
@@ -78,10 +78,10 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     ]),
   );
   expect(failures).toEqual([]);
-  const duCalls = calls.filter((call) => call.file === 'du' || call.file === 'nice');
+  const duCalls = calls.filter((call) => call.file === 'du');
   expect(duCalls.length).toBeGreaterThanOrEqual(3);
   for (const call of duCalls) {
-    expect(call.args).toContain('-sk');
+    expect(call.args[0]).toBe('-sk');
     expect(call.timeout).toBe(120_000);
   }
   expect(existsSync(sentinel)).toBe(true);
@@ -93,7 +93,7 @@ test('the link left at the old compilation-cache name is measured once, as the r
   symlinkSync('compilation-cache.noindex', join(home, 'compilation-cache'), 'junction');
   register({ dir: join(home, 'compilation-cache'), name: 'Xcode compilation cache', prune: 'atomic' });
   setExecutor({
-    runFile: (file, args) => (file === 'du' || file === 'nice' ? `123\t${args.at(-1)}\n` : ''),
+    runFile: (file, args) => (file === 'du' ? `123\t${args[1]}\n` : ''),
     runFileQuiet: () => null,
     runQuiet: () => null,
     findExecutable: () => null,
@@ -140,13 +140,15 @@ test.each([
   { label: 'category total over cap', cap: 1, age: 1, bytes: 600_000_000, walked: true },
   { label: 'missing sibling', cap: 1, age: 1, bytes: 100, walked: true, missing: true },
   { label: 'partial sibling', cap: 1, age: 1, bytes: 100, walked: true, partial: true },
-])('cache reuse: $label', async ({ cap, age, bytes, walked, missing, partial }) => {
+  { label: 'expired sibling', cap: 1, age: 1, bytes: 100, walked: true, expired: true },
+])('cache reuse: $label', async ({ cap, age, bytes, walked, missing, partial, expired }) => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
   vi.stubEnv('STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB', String(cap));
   saveConfig({ projects: {}, repos: {} });
   const dirs = [sharedCompilationCache(), join(home, 'compilation-cache')];
   const measuredAt = Date.now() - age * 3_600_000;
+  const at = (i: number) => (expired && i === 1 ? Date.now() - 7 * 3_600_000 : measuredAt);
   for (const [i, dir] of dirs.entries()) {
     mkdirSync(dir, { recursive: true });
     const file = diskUsageCacheFile(dir);
@@ -158,7 +160,7 @@ test.each([
           path: dir,
           bytes,
           privateBytes: null,
-          measuredAt: new Date(measuredAt).toISOString(),
+          measuredAt: new Date(at(i)).toISOString(),
           ...(partial && i === 1 ? { partial: true } : {}),
         }),
       );

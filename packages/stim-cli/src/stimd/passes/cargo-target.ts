@@ -180,7 +180,7 @@ export async function measureCargoTargets(
       operation,
       maxAgeMs: 6 * 60 * 60_000,
       valid: (cached) => cached.bytes <= cap && !readDiskUsagePartial(dir),
-      ...(lowPriority ? { lowPriority: true } : {}),
+      lowPriority,
       knownToExist: true,
     });
     if (!measure || partial) scan.unmeasured.set(dir, root);

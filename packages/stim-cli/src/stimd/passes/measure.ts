@@ -78,6 +78,7 @@ function pressureFromObservations(
 }
 
 const SIZE_SCAN_MAX_LOAD_PER_CORE = 4;
+const CACHE_SIZE_MAX_AGE_MS = 6 * 60 * 60_000;
 
 export function sizeScanDeferred(): boolean {
   return loadavg()[0]! / Math.max(1, cpus().length) > SIZE_SCAN_MAX_LOAD_PER_CORE;
@@ -189,14 +190,13 @@ export async function measureSizes(
     ['metro-cache', settings.metroCacheMaxGb],
     ['compilation-cache', settings.swiftCompilationCacheMaxGb],
   ] as const) {
-    const measures = known.filter((entry) => entry.category === category).map((entry) => readDiskUsage(entry.dir));
-    reuse.set(
-      category,
-      capGb === 0 ||
-        (known.filter((entry) => entry.category === category).every((entry) => !readDiskUsagePartial(entry.dir)) &&
-          measures.every((measure) => measure !== null) &&
-          measures.reduce((total, measure) => total + (measure?.bytes ?? 0), 0) <= capGb * 1024 ** 3),
+    const dirs = known.filter((entry) => entry.category === category).map((entry) => entry.dir);
+    const measures = dirs.map((dir) => (readDiskUsagePartial(dir) ? null : readDiskUsage(dir)));
+    const reusable = measures.every(
+      (measure) => measure !== null && Date.now() - Date.parse(measure.measuredAt) < CACHE_SIZE_MAX_AGE_MS,
     );
+    const total = measures.reduce((sum, measure) => sum + (measure?.bytes ?? 0), 0);
+    reuse.set(category, capGb === 0 || (reusable && total <= capGb * 1024 ** 3));
   }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
@@ -204,7 +204,8 @@ export async function measureSizes(
     const { measure, partial } = await refreshMeasure(entry.dir, {
       timeoutMs: 120_000,
       operation,
-      maxAgeMs: 6 * 60 * 60_000,
+      maxAgeMs: CACHE_SIZE_MAX_AGE_MS,
+      lowPriority: false,
       valid: () => (reuse.get(entry.category) ?? true) && !readDiskUsagePartial(entry.dir),
     });
     if (!measure || partial) {

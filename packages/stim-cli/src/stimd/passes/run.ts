@@ -1,15 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { keepReserve, releaseReserveWhenFull } from '../../disk-reserve.ts';
-import { writeCacheFile } from '../../cache-file.ts';
 import { basename, join } from 'node:path';
 import { withDirLock, type StimContext } from '@stim-cli/core';
 import {
   maintenanceChildLogFile,
   maintenanceDir,
   maintenanceStateFile,
-  diskUsageCacheFile,
-  readJsonObject,
   readMaintenanceState,
   type MaintenanceAction,
   type MaintenanceCheck,
@@ -351,37 +348,7 @@ async function measureCapOnly(
     ...(between ? { between } : {}),
   });
   state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
-  keepScannedSizes(cargo);
   return true;
-}
-
-/**
- * Writes the size of each Cargo target the scan measured into the disk-usage cache, which keeps it across scans that
- * measure other targets, for the pressure ladder's largest-first order; the caps still plan from the scan's own list.
- * A newer record stays; an older one keeps its other fields but the private-size ones, which described its old bytes.
- */
-function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
-  for (const size of sizes) {
-    if (size.name !== 'Cargo target' || !existsSync(size.dir)) continue;
-    const file = diskUsageCacheFile(size.dir);
-    const recorded = readJsonObject(file);
-    const recordedAt = Date.parse(String(recorded?.measuredAt ?? ''));
-    if (recorded?.path === size.dir && Number.isFinite(recordedAt) && recordedAt >= size.measuredAt) continue;
-    const {
-      privateBytes: _private,
-      partial: _partial,
-      privateUnknown: _unknown,
-      ...kept
-    } = recorded?.path === size.dir ? recorded : {};
-    try {
-      writeCacheFile(file, {
-        ...kept,
-        path: size.dir,
-        measuredAt: new Date(size.measuredAt).toISOString(),
-        bytes: size.bytes,
-      });
-    } catch {}
-  }
 }
 
 async function measureAllSizes(
@@ -544,7 +511,6 @@ export async function runMaintenance(
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick, between))),
           ];
-          keepScannedSizes(state.sizes);
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
               check: {
