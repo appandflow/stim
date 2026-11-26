@@ -276,7 +276,7 @@ leased until <time>" for each one.`,
                   build the remote host's (a React Native Release build
                   offloaded to a worker may also contain other
                   architectures). A build of every architecture the project
-                  lists (stim build --arch all) has no suffix
+                  lists (stim ci build --arch all) has no suffix
   With --eas-profile, fingerprint is computed by EAS CLI using the selected
   profile/environment, and cacheKey identifies the EAS project and build ID
   separately from local native builds. cacheHit is "remote" for the EAS

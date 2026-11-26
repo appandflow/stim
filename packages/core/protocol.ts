@@ -1504,7 +1504,7 @@ export interface RemoteDiagnosis {
   remedy: string;
 }
 
-/** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
+/** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts payloads` defines the fields. */
 export interface BuildMachineReport {
   machine: string;
   state: string;

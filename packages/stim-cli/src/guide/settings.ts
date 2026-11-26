@@ -980,7 +980,7 @@ A remote machine doctor cannot use carries a diagnosis { layer, code, title,
 message, remedy } naming the first layer that failed: Tailscale on this machine,
 the peer, the serve route, stim-server, or compatibility. Tell the user its
 message and remedy; the remedies run on the remote machine or in Tailscale, so
-agents do not run them. \`stim guide facts doctor\` lists the codes.
+agents do not run them. \`stim guide facts payloads\` lists the codes.
 
 REMOTE MACHINES AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or

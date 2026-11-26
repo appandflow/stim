@@ -449,8 +449,10 @@ machine that has not been asked.
 
 A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim doctor` reports it as `outdated` and names the update: run
-`stim service update --release <version>` there with this machine's
-Stim version, then `stim remote add <machine>` here.
+`stim remote update <machine>` here, or `stim engine update` there, then
+`stim remote add <machine>` here. A stock 1.40 worker cannot take that update;
+follow [Services and remote machines](./migrate-to-2.md#6-services-and-remote-machines)
+on the worker itself.
 
 ### Linux worker
 

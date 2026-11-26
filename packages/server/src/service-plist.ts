@@ -322,7 +322,7 @@ const RELEASE_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 export function validateRelease(value: string): string | null {
   return RELEASE_PATTERN.test(value)
     ? null
-    : `--release takes an exact stim-server version such as 1.15.0, not a range or tag; got "${value}".`;
+    : `An update takes an exact stim version such as 2.0.0, not a range or tag; got "${value}".`;
 }
 
 /** A stim-server install: its package version and the digest of the `stim` build it runs. */
