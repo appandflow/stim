@@ -218,12 +218,15 @@ export async function planReactNativeAndroid(
     });
   }
 
+  const remoteSource = opts.remote !== undefined ? '--remote' : 'android.remote';
+  const remotePlanRemedy =
+    'Run `stim android` to build for the remote device, or plan again with --remote local to plan the owned emulator.';
   if (target.kind === 'physical') return refuse(planFlagRefusal('--device'));
   if (target.kind === 'remote') {
     return refuse({
       code: 'STIM_BAD_ARG',
-      message: `android.remote is ${target.backend}, whose ABI --plan cannot read without a session.`,
-      remedy: 'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
+      message: `${remoteSource} is ${target.backend}, whose ABI --plan cannot read without a session.`,
+      remedy: remotePlanRemedy,
     });
   }
   if (build.compilerCache === 'cas') {
@@ -302,9 +305,8 @@ export async function planReactNativeAndroid(
     if (hostedPlan.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',
-        message: `android.remote is ${target.placement ?? target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
-        remedy:
-          'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
+        message: `${remoteSource} is ${target.placement ?? target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
+        remedy: remotePlanRemedy,
       });
     }
     if (hostedPlan.kind === 'local' && replacement.refusal) return refuse(replacement.refusal);
