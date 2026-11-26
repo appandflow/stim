@@ -416,6 +416,13 @@ function withRustPanics(reports: NdjsonRecord[], panics: readonly string[]): Ndj
   return [{ ...newest, msg: `${String(newest.msg)}\n${panics.join('\n')}` }, ...older];
 }
 
+interface AndroidAnrKill {
+  reason: string | null;
+  pid: number;
+  ts: number;
+  deviceTs: number;
+}
+
 /**
  * Finds ActivityManager killing the target app's most recently started main process for an ANR, with the reason
  * its ANR report gave. Android logs an ANR kill as `bg anr`, or as a plain kill of the PID its `ANR in` report named.
@@ -424,12 +431,12 @@ export function parseAndroidAnrKill(
   text: string,
   target: Pick<CrashTarget, 'appId' | 'since'>,
   clockOffsetMs: number,
-): { reason: string | null } | null {
+): AndroidAnrKill | null {
   let startedPid: string | null = null;
   let anrPid: string | null = null;
   let inAppAnr = false;
   let reason: string | null = null;
-  let found: { reason: string | null } | null = null;
+  let found: AndroidAnrKill | null = null;
   for (const line of text.split('\n')) {
     const record = parseLogcatLine(line, { clockOffsetMs });
     if (!record || Number(record.ts) < target.since) continue;
@@ -452,7 +459,7 @@ export function parseAndroidAnrKill(
       kill[1] === startedPid &&
       (kill[1] === anrPid || /\banr\b/i.test(kill[3] ?? ''))
     ) {
-      found = { reason };
+      found = { reason, pid: Number(kill[1]), ts: Number(record.ts), deviceTs: Number(record.deviceTs) };
     }
   }
   return found;
@@ -462,7 +469,7 @@ export async function readAndroidAnrKill(
   target: Pick<CrashTarget, 'deviceId' | 'appId' | 'since'>,
   clockOffsetMs: number,
   signal?: AbortSignal,
-): Promise<{ reason: string | null } | null> {
+): Promise<AndroidAnrKill | null> {
   try {
     const text = await crashCommand(
       'adb',
@@ -475,6 +482,39 @@ export async function readAndroidAnrKill(
     signal?.throwIfAborted();
     return null;
   }
+}
+
+async function captureAndroidAnrKill(
+  target: CrashTarget,
+  clockOffsetMs: number,
+  logsDir: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const kill = await readAndroidAnrKill(target, clockOffsetMs, signal);
+  if (!kill) return;
+  const record: NdjsonRecord = {
+    ts: kill.ts,
+    deviceTs: kill.deviceTs,
+    pid: kill.pid,
+    src: 'device',
+    platform: 'android',
+    level: 'fatal',
+    event: 'anr_kill',
+    appId: target.appId,
+    deviceId: target.deviceId,
+    ...(target.slot && target.slot !== 'default' ? { slot: target.slot } : {}),
+    msg: `Android killed ${target.appId} for not responding (ANR)${kill.reason ? `\nReason: ${kill.reason}` : ''}`,
+  };
+  const key = createHash('sha256')
+    .update(JSON.stringify(['anr', record.slot, target.deviceId, kill.deviceTs, kill.pid]))
+    .digest('hex');
+  try {
+    await writeDiagnosticOnceAsync(
+      join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`),
+      `${JSON.stringify(record)}\n`,
+      signal,
+    );
+  } catch {}
 }
 
 export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
@@ -662,22 +702,21 @@ export async function captureWorkspaceCrashes(
           if (name?.split('\n')[0]?.trim() !== configured.avdName) continue;
         }
       }
-      await captureNativeCrashes(
-        {
-          root,
-          slot,
-          platform,
-          deviceId,
-          appId,
-          since: Number(since),
-          until,
-          physical: attempt?.physical === true,
-          appPath: (attempt?.appPath ?? readWorkspaceState(root)?.lastBuild?.appPath) as string | undefined,
-        },
-        logsDir,
-        signal,
-        env,
-      );
+      const clockOffsetMs = platform === 'android' ? await androidCrashClockOffset(deviceId, signal) : undefined;
+      const target: CrashTarget = {
+        root,
+        slot,
+        platform,
+        deviceId,
+        appId,
+        since: Number(since),
+        until,
+        physical: attempt?.physical === true,
+        appPath: (attempt?.appPath ?? readWorkspaceState(root)?.lastBuild?.appPath) as string | undefined,
+        clockOffsetMs,
+      };
+      await captureNativeCrashes(target, logsDir, signal, env);
+      if (typeof clockOffsetMs === 'number') await captureAndroidAnrKill(target, clockOffsetMs, logsDir, signal);
     } catch {}
   }
   signal?.throwIfAborted();

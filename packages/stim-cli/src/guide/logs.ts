@@ -666,7 +666,8 @@ WHAT WRITES WHAT
                        Native iOS simulator reports match app ID, simulator ID
                        and launch time. atos resolves app addresses only after
                        the local binary UUID matches the report. Android reads
-                       the crash buffer even when the app PID has exited. Java
+                       the crash buffer even when the app PID has exited, and
+                       records an ActivityManager ANR kill of the launch. Java
                        traces remain readable; C/C++ resolution uses NDK tools
                        and matching local ELF build IDs. General OS noise remains
                        excluded from --errors. Full native evidence is in
