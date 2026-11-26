@@ -309,3 +309,18 @@ test('listing outside a repository prints one JSON refusal', async () => {
   });
   expect(process.exitCode).toBe(1);
 });
+
+test('listing a repository when git cannot run prints one JSON refusal', async () => {
+  const emptyPath = join(home, 'empty-path');
+  mkdirSync(emptyPath);
+  vi.stubEnv('PATH', emptyPath);
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const output = await run({ json: true });
+  expect(output).toHaveLength(1);
+  expect(JSON.parse(output.join('\n'))).toEqual({
+    code: 'STIM_BAD_ARG',
+    message: `git could not list the worktrees of the repository at ${repository}.`,
+    remedy: 'Run git worktree list here to see why, fix it, then run stim worktree list again.',
+  });
+  expect(process.exitCode).toBe(1);
+});

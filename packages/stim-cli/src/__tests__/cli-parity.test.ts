@@ -537,8 +537,8 @@ test.each([['--json'], ['reverse', '8081', '--json']])(
       expect(stdout).toHaveBeenCalledTimes(1);
       expect(JSON.parse(stdout.mock.calls.map(([value]) => value).join('\n'))).toMatchObject({
         code: 'STIM_NO_PROJECT',
-        message: expect.any(String),
-        remedy: expect.any(String),
+        message: 'No package.json was found from this directory.',
+        remedy: 'Run stim ports from the workspace that owns the server.',
       });
       expect(process.exitCode).toBe(1);
     } finally {

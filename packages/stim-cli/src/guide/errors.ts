@@ -686,7 +686,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   STIM_DAEMON or daemon.mode (\`guide settings\`, REMOVED SETTINGS).
   A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
-  \`reload\`, \`logs\`, \`doctor\`, \`ports\`, \`macos\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
+  \`reload\`, \`logs\`, \`doctor\`, \`macos\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
   is on stdout, except \`logs --json\`, whose stdout stays empty NDJSON; the
   refusal is on stderr. \`stop\` outside a project refuses rather than
   reporting that nothing was running.

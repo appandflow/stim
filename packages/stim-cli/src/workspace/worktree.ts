@@ -1120,7 +1120,7 @@ export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions 
   return [...entries];
 }
 
-function insideGitCheckout(root: string): boolean {
+export function insideGitCheckout(root: string): boolean {
   for (let dir = resolve(root); ; dir = dirname(dir)) {
     if (existsSync(join(dir, '.git'))) return true;
     if (dirname(dir) === dir) return false;

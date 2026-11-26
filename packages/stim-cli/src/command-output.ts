@@ -73,11 +73,14 @@ export function mobileAgentOpenCommand(
   return `stim agent-device open ${appId} --platform ${platform} ${selector} ${deviceId}${slot && slot !== 'default' ? ` --slot ${slot}` : ''}`;
 }
 
-export function refuseNoProject({ json }: { json: boolean }): void {
-  const { code, message, remedy } = NO_PROJECT_REFUSAL;
+export function refuseNoProject(
+  { json }: { json: boolean },
+  refusal: typeof NO_PROJECT_REFUSAL = NO_PROJECT_REFUSAL,
+): void {
+  const { code, message, remedy } = refusal;
   console.error(chalk.red(phaseLine('error', `${code}: ${message}`)));
   console.error(phaseLine('remedy', remedy));
-  if (json) console.log(JSON.stringify(NO_PROJECT_REFUSAL));
+  if (json) console.log(JSON.stringify(refusal));
   process.exitCode = 1;
 }
 
