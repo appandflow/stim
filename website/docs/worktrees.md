@@ -110,7 +110,7 @@ stim gc --dry-run`}
 
 In those folders Stim treats recognised projects and their linked worktrees
 like its own, and removes a finished worktree only when it is clean, idle, and
-holds no ignored file the main checkout lacks. `maintenance.autoDiscover`
+holds no ignored file the main checkout lacks or holds differently. `maintenance.autoDiscover`
 (off by default) reaches further. [Which checkouts it
 maintains](./maintenance.md#which-checkouts-it-maintains) has the rules.
 `stim doctor` reports how much build output such checkouts hold and the command
