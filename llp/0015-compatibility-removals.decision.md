@@ -12,7 +12,7 @@ Stim 2.0 is a breaking release. Four mechanisms that carried older builds across
 the one-engine migration are gone, and each unsupported case ends in a refusal
 that names its remedy:
 
-- C22, stimd's takeover of a stim-daemon from Stim 1.40 to 1.42. C32, the refusal below, replaces it.
+- C22, stimd's takeover of a stim-daemon from Stim 1.40. C32, the refusal below, replaces it.
 - C23, the net thread's probe of port 7787 for a pre-1.43 stim-server.
 - C25, stimd stopping dev server supervisors and device log collectors of
   another engine build at an engine switch.
@@ -37,7 +37,7 @@ release floors and to give the action a missing-`bin/stim.mjs` check.
 ## A stim-daemon from before 2.0 is refused
 
 stimd holds the daemon claim shared. When a live process holds it exclusively,
-only a stim-daemon from Stim 1.40 to 1.42 does. That daemon does not exit when
+only a stim-daemon from Stim 1.40 does. That daemon does not exit when
 its workspaces stop: it stays until every workspace in the home is dormant,
 `idle.dormantDays` after the last activity (3 days by default in 1.40), and
 any 1.40 command starts it.

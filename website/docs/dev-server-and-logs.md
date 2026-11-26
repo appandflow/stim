@@ -916,7 +916,7 @@ returns and a restarted stimd takes it over. In `auto` stimd tries ngrok and the
 `stim worktree remove` end the tunnel through stimd, and `stim status --json` keeps reporting its provider and URL.
 A tunnel an older Stim started is reused or stopped by its recorded process identity.
 
-After an upgrade, a daemon from Stim 1.40 to 1.42 can still hold this Stim home,
+After an upgrade, a daemon from Stim 1.40 can still hold this Stim home,
 because it runs until every workspace has been idle for `idle.dormantDays`. stimd
 does not stop it: `stim start` and the other commands that need stimd report its
 PID and the command that stops it. Your dev servers and devices keep running when

@@ -817,7 +817,7 @@ async function runCrashHold(
 
 /**
  * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
- * shared, which a stim-daemon from Stim 1.40 to 1.42 holding it exclusively refuses; serves the CLI socket,
+ * shared, which a stim-daemon from Stim 1.40 holding it exclusively refuses; serves the CLI socket,
  * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
  * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
  * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes

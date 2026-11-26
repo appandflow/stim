@@ -71,7 +71,7 @@ const READINESS_REPLY_GRACE_MS = 1000;
 export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
 /**
- * Whether a stimd, or a stim-daemon from Stim 1.40 to 1.42, holds this home's daemon claim. A claim Stim cannot resolve
+ * Whether a stimd, or a stim-daemon from Stim 1.40, holds this home's daemon claim. A claim Stim cannot resolve
  * counts as held, so nothing else takes an idle decision while it stands; `stim doctor` names the command that removes
  * it.
  */
@@ -276,7 +276,7 @@ export function legacyDaemonRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; messag
   return {
     code: 'STIM_DAEMON_UNAVAILABLE',
     message: `Process ${pid} from an older stim holds this home's daemon claim, so stimd cannot start.`,
-    remedy: `Stop it with \`${legacyDaemonStop(pid)}\`, then retry. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
+    remedy: `Stop it with \`${legacyDaemonStop(pid)}\`, then retry. If a project pins Stim 1.x, update it to Stim 2.0.0 or later. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
   };
 }
 // compat end
