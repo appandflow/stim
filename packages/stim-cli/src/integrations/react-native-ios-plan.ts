@@ -83,7 +83,8 @@ export async function planReactNativeIos(
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
   const iosRemote = opts.remote !== undefined ? parseIosRemote(opts.remote) : remoteIosSetting(settings);
   const remoteSource = opts.remote !== undefined ? '--remote' : 'ios.remote';
-  const remotePlanRemedy = `Run \`stim ios\` to build for the remote device, or ${opts.remote !== undefined ? 'drop --remote' : 'unset ios.remote'} to plan the owned simulator.`;
+  const remotePlanRemedy =
+    'Run `stim ios` to build for the remote device, or plan again with --remote local to plan the owned simulator.';
   const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,

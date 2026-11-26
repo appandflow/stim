@@ -8974,8 +8974,13 @@ describe('--plan', () => {
       expect(exitCode).toBe(1);
       expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
       expect(parseFirst(logs).message).toContain(origin === 'flag' ? '--remote is proxy' : 'ios.remote is proxy');
-      expect(parseFirst(logs).remedy).toContain(origin === 'flag' ? 'drop --remote' : 'unset ios.remote');
+      expect(parseFirst(logs).remedy).toContain('--remote local');
       expect(calls.order).not.toContain('fingerprint');
+      const local = await run(
+        { plan: true, json: true, configuration: 'Release', remote: 'local' },
+        { resolveSettings: () => ({ ios: { remote: 'proxy' } }) },
+      );
+      expect(local.calls.order).toContain('fingerprint');
     },
   );
 
