@@ -180,18 +180,19 @@ leased until <time>" for each one.`,
       body: () => `  worktree list --json is a separate payload:
     { scope: "repository" | "machine", daemonMode: "on" | "report" | "off",
       repositories: [{ repository, checkedAt, oldestCheckedAt,
-      worktrees: [{ path, branch, idleDays, realBytes, apparentBytes,
+      worktrees: [{ path, branch, idleDays, realBytes, apparentBytes, partial?,
         measuredAt, willRemove, reason, detail, checkedAt, old, large }],
       summary: Summary }], total: Summary }
-    Summary = { count, realBytes, unmeasured, unchecked, removeBytes,
-      keptBytes, kept: [{ reason, count, realBytes }] }
+    Summary = { count, realBytes, realPartial?, unmeasured, unchecked,
+      removeBytes, removePartial?, keptBytes, keptPartial?,
+      kept: [{ reason, count, realBytes, partial? }] }
     Paths are absolute. Unknown values are null; reason is the kept gc code or removal-off.
     Repository checkedAt/oldestCheckedAt are the newest/oldest observation times
     (--all), or now (current check); null when never checked. --all uses saved
     observations; unchecked worktrees have willRemove null.
     Real size sums node_modules, Pods and the rest's private bytes, or one whole walk's (APFS, ext4, btrfs or XFS),
-    unknown when unavailable; apparent size is allocated bytes. Neither includes
-    Stim workspace data outside the checkout.
+    unknown when unavailable; apparent size is allocated bytes. partial and the
+    *Partial fields mark lower bounds. Neither includes Stim workspace data outside the checkout.
     measuredAt is when its oldest measured part was walked.
 
   stim start --json

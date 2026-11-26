@@ -1175,6 +1175,13 @@ by files a regular worktree rarely has. The composition
 and that fallback were chosen by the implementer of #6385, not by the
 maintainer.
 
+A worktree whose walk left part of it out (an unreadable entry, or a volume
+that cannot report private sizes, mounted inside it or at a top-level entry)
+lists its sizes as lower bounds, "at least", and so does every total that
+includes it, in the listing, its JSON and the doctor note (#6415). Reason: the
+private bytes of the rest are still measured, and a lower bound tells more
+than an unknown size.
+
 ## A tree of hard links stays
 
 A `node_modules` or Pods tree whose private size is unknown when it is ranked

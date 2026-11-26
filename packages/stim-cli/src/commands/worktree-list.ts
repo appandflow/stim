@@ -8,7 +8,7 @@ import { runProcessOperation } from '../cli-operation.ts';
 import { freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { daemonMode } from '../daemon/mode.ts';
 import { formatLongDuration, plural } from '../command-output.ts';
-import { formatBytes } from '../fs-util.ts';
+import { formatSize } from '../fs-util.ts';
 import {
   insideGitCheckout,
   listWorktreesAsync,
@@ -32,6 +32,8 @@ interface ListingEntry {
   idleDays: number | null;
   realBytes: number | null;
   apparentBytes: number | null;
+  /** Set when a walk left part of the worktree out, so `realBytes` and `apparentBytes` are lower bounds. */
+  partial?: true;
   measuredAt: string | null;
   willRemove: boolean | null;
   reason: string | null;
@@ -44,11 +46,14 @@ interface ListingEntry {
 interface Summary {
   count: number;
   realBytes: number;
+  realPartial?: true;
   unmeasured: number;
   unchecked: number;
   removeBytes: number;
+  removePartial?: true;
   keptBytes: number;
-  kept: { reason: string; count: number; realBytes: number }[];
+  keptPartial?: true;
+  kept: { reason: string; count: number; realBytes: number; partial?: true }[];
 }
 
 function applyRemovalSettings(entry: ListingEntry, finished: boolean, settings: MaintenanceSettings): void {
@@ -68,6 +73,10 @@ function applyRemovalSettings(entry: ListingEntry, finished: boolean, settings: 
   entry.detail = `${entry.detail}; cleanup would remove it but ${setting}`;
 }
 
+function lowerBound(entry: ListingEntry): boolean {
+  return entry.partial === true && entry.realBytes !== null;
+}
+
 function summarize(entries: ListingEntry[]): Summary {
   const kept = new Map<string, Summary['kept'][number]>();
   for (const entry of entries) {
@@ -75,17 +84,23 @@ function summarize(entries: ListingEntry[]): Summary {
     const group = kept.get(entry.reason) ?? { reason: entry.reason, count: 0, realBytes: 0 };
     group.count++;
     group.realBytes += entry.realBytes ?? 0;
+    if (lowerBound(entry)) group.partial = true;
     kept.set(entry.reason, group);
   }
   const sum = (select: (entry: ListingEntry) => boolean) =>
     entries.filter(select).reduce((bytes, entry) => bytes + (entry.realBytes ?? 0), 0);
+  const bound = (select: (entry: ListingEntry) => boolean) =>
+    entries.some((entry) => select(entry) && lowerBound(entry));
   return {
     count: entries.length,
     realBytes: sum(() => true),
+    ...(bound(() => true) ? { realPartial: true as const } : {}),
     unmeasured: entries.filter((entry) => entry.realBytes === null).length,
     unchecked: entries.filter((entry) => entry.willRemove === null).length,
     removeBytes: sum((entry) => entry.willRemove === true),
+    ...(bound((entry) => entry.willRemove === true) ? { removePartial: true as const } : {}),
     keptBytes: sum((entry) => entry.willRemove === false),
+    ...(bound((entry) => entry.willRemove === false) ? { keptPartial: true as const } : {}),
     kept: [...kept.values()].toSorted((a, b) => b.realBytes - a.realBytes || a.reason.localeCompare(b.reason)),
   };
 }
@@ -128,7 +143,7 @@ function restTargets(root: string): string[] {
   return visit(root);
 }
 
-function sizes(root: string) {
+function sizes(root: string): Pick<ListingEntry, 'realBytes' | 'apparentBytes' | 'partial' | 'measuredAt'> {
   const whole = readDiskUsage(root);
   if (!wholeWalk(root)) {
     const paths = [...dependencies(root), restKey(root)];
@@ -138,19 +153,19 @@ function sizes(root: string) {
       const rest = parts.at(-1);
       if (measuredAt !== null && rest && (!whole || Date.parse(whole.measuredAt) <= Date.parse(rest.measuredAt)))
         return {
-          realBytes: parts.some(
-            (part, index) => part.privateBytes == null || readDiskUsagePartial(paths[index] ?? root),
-          )
+          realBytes: parts.some((part) => part.privateBytes == null)
             ? null
             : parts.reduce((sum, part) => sum + (part.privateBytes ?? 0), 0),
           apparentBytes: parts.reduce((sum, part) => sum + part.bytes, 0),
+          ...(paths.some((path) => readDiskUsagePartial(path)) ? { partial: true as const } : {}),
           measuredAt,
         };
     }
   }
   return {
-    realBytes: readDiskUsagePartial(root) ? null : (whole?.privateBytes ?? null),
+    realBytes: whole?.privateBytes ?? null,
     apparentBytes: whole?.bytes ?? null,
+    ...(whole && readDiskUsagePartial(root) ? { partial: true as const } : {}),
     measuredAt: whole?.measuredAt ?? null,
   };
 }
@@ -290,7 +305,7 @@ function sortEntries(entries: ListingEntry[]): void {
 }
 
 export function summaryLine(summary: Summary): string {
-  return `${plural(summary.count, 'worktree')}; ${formatBytes(summary.realBytes)} real; ${summary.unmeasured} without a known real size; cleanup removes ${formatBytes(summary.removeBytes)}; reclaimable kept ${formatBytes(summary.keptBytes)}${summary.kept.length ? ` (${summary.kept.map((group) => `${group.reason}: ${group.count}, ${formatBytes(group.realBytes)}`).join('; ')})` : ''}${summary.unchecked ? `; ${summary.unchecked} not checked` : ''}`;
+  return `${plural(summary.count, 'worktree')}; ${formatSize({ bytes: summary.realBytes, partial: summary.realPartial })} real; ${summary.unmeasured} without a known real size; cleanup removes ${formatSize({ bytes: summary.removeBytes, partial: summary.removePartial })}; reclaimable kept ${formatSize({ bytes: summary.keptBytes, partial: summary.keptPartial })}${summary.kept.length ? ` (${summary.kept.map((group) => `${group.reason}: ${group.count}, ${formatSize({ bytes: group.realBytes, partial: group.partial })}`).join('; ')})` : ''}${summary.unchecked ? `; ${summary.unchecked} not checked` : ''}`;
 }
 
 export const listOp: Op = defineOp({
@@ -395,7 +410,7 @@ export const listOp: Op = defineOp({
             const size =
               entry.apparentBytes === null
                 ? 'not measured'
-                : `${entry.realBytes === null ? 'real unknown' : `${formatBytes(entry.realBytes)} real`}, ${formatBytes(entry.apparentBytes)} apparent`;
+                : `${entry.realBytes === null ? 'real unknown' : `${formatSize({ bytes: entry.realBytes, partial: entry.partial })} real`}, ${formatSize({ bytes: entry.apparentBytes, partial: entry.partial })} apparent`;
             const state =
               entry.willRemove === null
                 ? 'not checked'

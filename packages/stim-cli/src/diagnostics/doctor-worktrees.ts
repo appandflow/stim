@@ -5,7 +5,7 @@ import { relative, sep } from 'node:path';
 import { plural, formatLongDuration } from '../command-output.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { summaryLine, worktreeCheckAgeLine, worktreeListPayload } from '../commands/worktree-list.ts';
-import { formatBytes } from '../fs-util.ts';
+import { formatSize } from '../fs-util.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
 import type { Finding } from './doctor.ts';
@@ -37,7 +37,7 @@ export async function linkedWorktreeFindings(
       const names = kept.slice(0, 3).map((entry) => {
         const rel = relative(repo?.repository ?? source.path, entry.path);
         const path = rel && rel !== '..' && !rel.startsWith(`..${sep}`) ? rel : entry.path;
-        return `${path} (${entry.reason}, ${entry.realBytes === null ? 'size not measured' : formatBytes(entry.realBytes)}, idle ${entry.idleDays === null ? 'unknown' : `${entry.idleDays}d`})`;
+        return `${path} (${entry.reason}, ${entry.realBytes === null ? 'size not measured' : formatSize({ bytes: entry.realBytes, partial: entry.partial })}, idle ${entry.idleDays === null ? 'unknown' : `${entry.idleDays}d`})`;
       });
       detail.push(
         `Old or large kept worktrees: ${names.join('; ')}${kept.length > 3 ? `; and ${kept.length - 3} more` : ''}.`,
@@ -65,15 +65,15 @@ export async function linkedWorktreeFindings(
         detail.push(`Sizes measured up to ${formatLongDuration(Math.max(0, now - Math.min(...times)))} ago.`);
     }
     detail.push(
-      `Here and in the repositories maintenance has checked on this machine: ${plural(total.count, 'linked worktree')} in ${plural(payload.repositories.filter((entry) => entry.summary.count > 0).length, 'repository', 'repositories')}, ${formatBytes(total.realBytes)} real, ${formatBytes(total.keptBytes)} held by kept ones${total.unmeasured ? `, ${total.unmeasured} not measured` : ''}${total.unchecked ? `, ${total.unchecked} not checked` : ''}.`,
+      `Here and in the repositories maintenance has checked on this machine: ${plural(total.count, 'linked worktree')} in ${plural(payload.repositories.filter((entry) => entry.summary.count > 0).length, 'repository', 'repositories')}, ${formatSize({ bytes: total.realBytes, partial: total.realPartial })} real, ${formatSize({ bytes: total.keptBytes, partial: total.keptPartial })} held by kept ones${total.unmeasured ? `, ${total.unmeasured} not measured` : ''}${total.unchecked ? `, ${total.unchecked} not checked` : ''}.`,
     );
     return [
       {
         code: 'linked-worktrees',
         level: 'note',
         title: repo?.summary.count
-          ? `${plural(repo.summary.count, 'linked worktree')} here ${repo.summary.count === 1 ? 'uses' : 'use'} ${formatBytes(repo.summary.realBytes)} real; kept ones hold ${formatBytes(repo.summary.keptBytes)}`
-          : `No linked worktrees here; ${plural(total.count, 'linked worktree')} on this machine ${total.count === 1 ? 'uses' : 'use'} ${formatBytes(total.realBytes)} real`,
+          ? `${plural(repo.summary.count, 'linked worktree')} here ${repo.summary.count === 1 ? 'uses' : 'use'} ${formatSize({ bytes: repo.summary.realBytes, partial: repo.summary.realPartial })} real; kept ones hold ${formatSize({ bytes: repo.summary.keptBytes, partial: repo.summary.keptPartial })}`
+          : `No linked worktrees here; ${plural(total.count, 'linked worktree')} on this machine ${total.count === 1 ? 'uses' : 'use'} ${formatSize({ bytes: total.realBytes, partial: total.realPartial })} real`,
         detail: detail.join(' '),
         fix: 'Run `stim worktree list` here for current verdicts and sizes, or `stim worktree list --all` for every repository. Doctor reads only saved verdicts and saved sizes; it measures nothing.',
       },
