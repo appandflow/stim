@@ -158,6 +158,7 @@ export function facadeClient(
     collectGarbage: (options?: StimGcMutationOptions) =>
       translated(() => collectGarbageOptions(options), op('collectGarbage')),
     deleteGarbageItem: op('deleteGarbageItem'),
+    addWorktree: op('addWorktree'),
     warmWorktree: op('warmWorktree'),
     removeWorktree: op('removeWorktree'),
     build: op('build'),

@@ -240,6 +240,22 @@ export interface StimWorktreeWarmResult {
   exitCode: 0 | 1;
 }
 
+export interface StimWorktreeAddOptions extends StimReadOptions {
+  /** Where to create the worktree. Relative paths resolve against the client's projectRoot. */
+  path: string;
+  /** Creates this branch at commitish for the new worktree, as `git worktree add -b` does. */
+  branch?: string;
+  /** The commit to check out, as `git worktree add` reads it. Defaults to HEAD. */
+  commitish?: string;
+}
+
+export interface StimWorktreeAddResult {
+  /** 1 when the worktree exists but its warm did not complete. */
+  exitCode: 0 | 1;
+  /** The canonical path of the new worktree. */
+  path: string;
+}
+
 export interface StimWorktreeRemoveOptions extends StimReadOptions {
   /** Called for each canonical workspace in the resolved cleanup scope before effects; throwing refuses cleanup. */
   beforeRemove?: (workspace: string) => void;
@@ -295,6 +311,8 @@ export interface StimClient {
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
   /** @internal For Stim Desktop and stim-server; not part of the `stim` API and may change in any release. Deletes one shared cache, the idle workspaces' build outputs, one archive or part of it, or a helper daemon's memory, under maintenance admission. */
   deleteGarbageItem(options: StimGcItemOptions): Promise<StimGcItemResult>;
+  /** Creates a linked worktree with `git worktree add` semantics and warms it from the source checkout. */
+  addWorktree(options: StimWorktreeAddOptions): Promise<StimWorktreeAddResult>;
   /** Copies missing ignored state from the source checkout into this linked worktree. */
   warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;
   /** Removes a linked worktree or reclaims a source checkout's environment using the CLI safety checks. */

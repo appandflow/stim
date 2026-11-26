@@ -81,6 +81,8 @@
 [*] export type StimStats
 [*] export type StimStopOptions
 [*] export type StimStopResult
+[*] export type StimWorktreeAddOptions
+[*] export type StimWorktreeAddResult
 [*] export type StimWorktreeRemoveOptions
 [*] export type StimWorktreeRemoveResult
 [*] export type StimWorktreeWarmOptions
@@ -1260,6 +1262,7 @@
 [*] interface StimClient { @@1 @internal deviceTool(options: StimDeviceToolOptions): Promise<ToolResult>;
 [*] interface StimClient { @@1 @internal identity(options?: StimReadOptions): Promise<string>;
 [*] interface StimClient { @@1 @internal requestMachineAccess(options?: StimMachineAccessOptions): Promise<StimDoctorReport>;
+[*] interface StimClient { @@1 addWorktree(options: StimWorktreeAddOptions): Promise<StimWorktreeAddResult>;
 [*] interface StimClient { @@1 build(options: StimBuildOptions): Promise<StimBuildResult>;
 [*] interface StimClient { @@1 build<P extends StimBuildOptions["platform"]>(options: StimBuildOptions & {
 [*] interface StimClient { @@1 collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
@@ -1384,6 +1387,13 @@
 [*] interface StimVersionReport { @@1 runningPath: string | null;
 [*] interface StimVersionReport { @@1 runningVersion: string;
 [*] interface StimVersionReport { @@1 versions: string[];
+[*] interface StimWorktreeAddOptions extends StimReadOptions {
+[*] interface StimWorktreeAddOptions extends StimReadOptions { @@1 branch?: string;
+[*] interface StimWorktreeAddOptions extends StimReadOptions { @@1 commitish?: string;
+[*] interface StimWorktreeAddOptions extends StimReadOptions { @@1 path: string;
+[*] interface StimWorktreeAddResult {
+[*] interface StimWorktreeAddResult { @@1 exitCode: 0 | 1;
+[*] interface StimWorktreeAddResult { @@1 path: string;
 [*] interface StimWorktreeRemoveOptions extends StimReadOptions {
 [*] interface StimWorktreeRemoveOptions extends StimReadOptions { @@1 beforeRemove?: (workspace: string) => void;
 [*] interface StimWorktreeRemoveOptions extends StimReadOptions { @@1 force?: boolean;

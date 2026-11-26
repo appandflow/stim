@@ -316,6 +316,28 @@ booted for `pool.bootedGraceMinutes` when memory allows. A `stop` during a
 build interrupts that build. On a phone, stopping the log collector closes the
 app; Stim never uninstalls it.
 
+### `worktree add`
+
+```bash
+stim worktree add -b <branch> <path> [<commit-ish>]
+stim worktree add <path> [<commit-ish>]
+```
+
+Creates a linked worktree and warms it. The arguments are those of
+`git worktree add`: the path, an optional `-b <branch>` to create, and the
+commit to start at. Stim runs `git worktree add` with them from the current
+directory, so the result is an ordinary Git worktree.
+
+On macOS, when the new path is on the same APFS volume as the source checkout,
+Stim clones the source checkout instead of checking files out, tracked and
+ignored files together, and Git then rewrites only the tracked files that
+differ from the commit. The worktree shares its disk blocks with the source
+checkout until a file changes. Uncommitted edits, staged changes and untracked
+files in the source checkout do not come along. Anywhere else, or when the
+clone fails, Git creates the worktree and Stim warms it as `worktree warm`
+does. The files are the same either way, and the command prints which way it
+took and why. See [worktrees](./worktrees.md).
+
 ### `worktree warm`
 
 ```bash
@@ -324,7 +346,8 @@ stim worktree warm --refresh
 ```
 
 Copies missing ignored files, such as `node_modules`, native build output and
-`.env` files, from the source checkout into a new linked worktree. Existing
+`.env` files, from the source checkout into a linked worktree that `stim worktree add` did
+not create, such as one an agent harness made. Existing
 entries stay untouched, and an entry the new branch does not ignore is left
 out. `--refresh` first fast-forwards the source checkout and reinstalls
 dependencies when its lockfiles moved. Let warm finish before

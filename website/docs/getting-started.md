@@ -44,9 +44,8 @@ another tool.
 Behind that prompt, the agent runs something like:
 
 <StimTabs
-code={`git worktree add -b <branch> <path> HEAD
+code={`stim worktree add -b <branch> <path> HEAD  # a worktree with dependencies and build output from the main checkout
 cd <path>
-stim worktree warm    # copy dependencies and build output from the main checkout
 stim ios              # build or restore, install, launch, verify
 stim logs --errors    # check the captured logs
 stim stop             # stop the dev server and device

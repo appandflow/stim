@@ -62,14 +62,16 @@ branch so every worktree warmed from it starts current. Here the source checkout
 is infrastructure, not a workspace, and every rule below about its fitness as
 a seed belongs to this workflow.
 
-  # 1. Create a linked worktree with Git, unless a harness already did, and
-  #    warm it either way. Choose the branch, path, and base ref with Git.
-  git worktree add -b app/412 ../app-412 HEAD
+  # 1. Create a linked worktree, already warmed. The arguments are git
+  #    worktree add's: a branch to create, the path, and the commit to start at.
+  stim worktree add -b app/412 ../app-412 HEAD
   cd ../app-412
+
+  # In a worktree made any other way, such as one a harness made, warm it:
   stim worktree warm
 
-  # Warm copies missing ignored state from the source checkout; it does not
-  # install dependencies.
+  # Both copy missing ignored state from the source checkout; neither
+  # installs dependencies.
   # In a monorepo, enter the app directory before starting the dev server.
 
   # Optional: bring the SOURCE CHECKOUT up to date first, then copy that.
@@ -2875,6 +2877,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --dry-run --pressure <normal|high|critical> --json
+  worktree add     -b <branch> <path> [<commit-ish>]
   worktree warm    --refresh; remove [path] --force
 
   DEVICE SLOTS
@@ -2929,6 +2932,24 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   when a flag is genuinely the best answer -- but project-specific knowledge
   (release builds, variants, device targets) belongs in a script the repo owns,
   not in a flag here.
+
+  \`stim worktree add [-b <branch>] <path> [<commit-ish>]\` runs
+  \`git worktree add\` with those arguments from the current directory, then
+  the warm, and prints which way it created the worktree. Where it can, it
+  clones the source checkout instead of checking files out: on macOS, with
+  the new path on the source checkout's APFS volume, the Xcode Command Line
+  Tools installed, and no file there marked assume-unchanged or
+  skip-worktree. Git registers the worktree without a checkout, one clone
+  pass brings the tracked and the ignored files, and git rewrites only the
+  tracked files that differ from the commit, so the worktree shares its disk
+  blocks with the source checkout until a file changes. The source checkout's
+  uncommitted edits, staged changes and untracked files do not come along,
+  submodule folders are empty as git leaves them, and \`post-checkout\` runs.
+  Anywhere else, or when cloning fails, git creates the worktree and the warm
+  copies into it; a failed clone first removes the worktree and the branch it
+  made. Either way the files are the same. The worktree's ignored files are
+  the ones a warm carries, so the warm rules below apply. An interrupt during
+  the clone removes the half-made worktree.
 
   \`stim worktree warm\` takes one flag, \`--refresh\`. Run it anywhere inside
   the current linked worktree to copy missing ignored entries from its source

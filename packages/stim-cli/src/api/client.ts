@@ -38,7 +38,7 @@ import { recordDoctorCheck } from '../guide-status.ts';
 import { executeGc, readGcReport } from '../commands/gc.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
 import { validGcItem } from '../commands/gc/item.ts';
-import { removeWorktreeTarget, warmWorktreeTarget } from '../commands/worktree.ts';
+import { addWorktreeTarget, removeWorktreeTarget, warmWorktreeTarget } from '../commands/worktree.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from '../engine/logs.ts';
 import { readProjectStats } from '../engine/stats-report.ts';
@@ -98,6 +98,7 @@ import type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeAddOptions,
   StimWorktreeWarmOptions,
   StimWorktreeRemoveOptions,
 } from './types.ts';
@@ -429,6 +430,46 @@ export function createLocalStim(options: EngineOptions): EngineClient {
       );
     },
 
+    addWorktree: ({ signal, path, branch, commitish }: StimWorktreeAddOptions) => {
+      const invalid = [
+        ['path', path, true],
+        ['branch', branch, false],
+        ['commitish', commitish, false],
+      ].find(([, value, required]) => (value === undefined ? required : typeof value !== 'string' || !value));
+      if (invalid)
+        return Promise.reject(
+          new StimError({
+            code: 'STIM_BAD_ARG',
+            message: `${String(invalid[0])} must be a nonempty string.`,
+            remedy: 'Pass path as a nonempty path, and branch and commitish as nonempty strings or leave them out.',
+          }),
+        );
+      return lifecycle(beginReport('addWorktree', signal), (context) =>
+        runReport(
+          context,
+          (bounded) =>
+            withAmbientContext(bounded, () => {
+              const task = addWorktreeTarget({ cwd: bounded.cwd, path, branch, commitish, operation: bounded });
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
+            }),
+          90 * 60_000,
+        ),
+      );
+    },
     warmWorktree: ({ signal, beforeWarm }: StimWorktreeWarmOptions = {}) =>
       lifecycle(beginReport('warmWorktree', signal), (context) =>
         runReport(

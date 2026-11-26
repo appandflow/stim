@@ -155,7 +155,7 @@
     "exitCode": 0
   },
   "[\"worktree\",\"--help\"]": {
-    "out": "Usage: stim worktree [options] [command]\n\nWarm, remove and list Git worktrees\n\nOptions:\n  -h, --help                 display help for command\n\nCommands:\n  warm [options]             Copy missing ignored paths from the source checkout\n                             into the current linked worktree.\n  remove [options] [target]  Remove a worktree, its unused Stim-created branch,\n                             build artifacts, owned devices, and Metro port.\n                             Defaults to the current workspace. On the source\n                             checkout it reclaims the environment only and\n                             leaves the tree in place. From a subfolder, in the\n                             source checkout or in a linked worktree, it\n                             reclaims only the project at or above that folder,\n                             with the projects nested under it, and leaves the\n                             tree; pass the root of a linked worktree to remove\n                             it.\n  list [options]             List this repository's linked worktrees with their\n                             real and apparent size, idle time and what cleanup\n                             does with each; reads only\n  help [command]             display help for command\n",
+    "out": "Usage: stim worktree [options] [command]\n\nAdd, warm, remove and list Git worktrees\n\nOptions:\n  -h, --help                         display help for command\n\nCommands:\n  add [options] <path> [commit-ish]  Create a linked worktree as git worktree\n                                     add does, already warmed: on APFS it is\n                                     cloned from the source checkout, tracked\n                                     and ignored files together, and anywhere\n                                     else git creates it and the warm copies\n                                     into it.\n  warm [options]                     Copy missing ignored paths from the source\n                                     checkout into the current linked worktree.\n  remove [options] [target]          Remove a worktree, its unused Stim-created\n                                     branch, build artifacts, owned devices, and\n                                     Metro port. Defaults to the current\n                                     workspace. On the source checkout it\n                                     reclaims the environment only and leaves\n                                     the tree in place. From a subfolder, in the\n                                     source checkout or in a linked worktree, it\n                                     reclaims only the project at or above that\n                                     folder, with the projects nested under it,\n                                     and leaves the tree; pass the root of a\n                                     linked worktree to remove it.\n  list [options]                     List this repository's linked worktrees\n                                     with their real and apparent size, idle\n                                     time and what cleanup does with each; reads\n                                     only\n  help [command]                     display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -1582,7 +1582,7 @@
   },
   "[\"worktree\"]": {
     "out": "",
-    "err": "Usage: stim worktree [options] [command]\n\nWarm, remove and list Git worktrees\n\nOptions:\n  -h, --help                 display help for command\n\nCommands:\n  warm [options]             Copy missing ignored paths from the source checkout\n                             into the current linked worktree.\n  remove [options] [target]  Remove a worktree, its unused Stim-created branch,\n                             build artifacts, owned devices, and Metro port.\n                             Defaults to the current workspace. On the source\n                             checkout it reclaims the environment only and\n                             leaves the tree in place. From a subfolder, in the\n                             source checkout or in a linked worktree, it\n                             reclaims only the project at or above that folder,\n                             with the projects nested under it, and leaves the\n                             tree; pass the root of a linked worktree to remove\n                             it.\n  list [options]             List this repository's linked worktrees with their\n                             real and apparent size, idle time and what cleanup\n                             does with each; reads only\n  help [command]             display help for command\n",
+    "err": "Usage: stim worktree [options] [command]\n\nAdd, warm, remove and list Git worktrees\n\nOptions:\n  -h, --help                         display help for command\n\nCommands:\n  add [options] <path> [commit-ish]  Create a linked worktree as git worktree\n                                     add does, already warmed: on APFS it is\n                                     cloned from the source checkout, tracked\n                                     and ignored files together, and anywhere\n                                     else git creates it and the warm copies\n                                     into it.\n  warm [options]                     Copy missing ignored paths from the source\n                                     checkout into the current linked worktree.\n  remove [options] [target]          Remove a worktree, its unused Stim-created\n                                     branch, build artifacts, owned devices, and\n                                     Metro port. Defaults to the current\n                                     workspace. On the source checkout it\n                                     reclaims the environment only and leaves\n                                     the tree in place. From a subfolder, in the\n                                     source checkout or in a linked worktree, it\n                                     reclaims only the project at or above that\n                                     folder, with the projects nested under it,\n                                     and leaves the tree; pass the root of a\n                                     linked worktree to remove it.\n  list [options]                     List this repository's linked worktrees\n                                     with their real and apparent size, idle\n                                     time and what cleanup does with each; reads\n                                     only\n  help [command]                     display help for command\n",
     "exitCode": 1
   },
   "[\"worktree\",\"warm\"]": {
@@ -2808,5 +2808,54 @@
     "out": "Usage: stim worktree list [options]\n\nList this repository's linked worktrees with their real and apparent size, idle\ntime and what cleanup does with each; reads only\n\nOptions:\n  --all       list the linked worktrees of every repository the maintenance\n              worktree check has observed on this machine, from its saved\n              verdicts\n  --json      print the listing as one JSON payload\n  -h, --help  display help for command\n",
     "err": "",
     "exitCode": 0
+  },
+  "[\"worktree\",\"add\",\"--help\"]": {
+    "out": "Usage: stim worktree add [options] <path> [commit-ish]\n\nCreate a linked worktree as git worktree add does, already warmed: on APFS it is\ncloned from the source checkout, tracked and ignored files together, and\nanywhere else git creates it and the warm copies into it.\n\nOptions:\n  -b, --branch <branch>  create this branch at the commit-ish and check it out\n                         in the new worktree\n  -h, --help             display help for command\n",
+    "err": "",
+    "exitCode": 0
+  },
+  "[\"worktree\",\"add\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: missing required argument 'path'"
+  },
+  "[\"worktree\",\"add\",\"-b\",\"feature\",\"../wt\",\"origin/main\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["worktree", "add"],
+      "args": ["../wt", "origin/main"],
+      "options": {
+        "branch": "feature"
+      },
+      "parent": {}
+    }
+  },
+  "[\"worktree\",\"add\",\"../wt\",\"--branch=feature\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["worktree", "add"],
+      "args": ["../wt"],
+      "options": {
+        "branch": "feature"
+      },
+      "parent": {}
+    }
+  },
+  "[\"worktree\",\"add\",\"../wt\",\"-b\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: option '-b, --branch <branch>' argument missing"
+  },
+  "[\"worktree\",\"add\",\"a\",\"b\",\"c\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: too many arguments for 'add'. Expected 2 arguments but got 3: a, b, c."
   }
 }

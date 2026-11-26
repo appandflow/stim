@@ -60,11 +60,14 @@ Always call `stop()` in cleanup, even when `run()` failed partway, and check
 ## What it covers
 
 The client has `build`, `run`, `start`, `reload`, `stop`, `plan`,
-`warmWorktree`, `removeWorktree`, `diagnostics`, `doctor`, `previewGarbage`,
+`addWorktree`, `warmWorktree`, `removeWorktree`, `diagnostics`, `doctor`, `previewGarbage`,
 `collectGarbage`, settings, stats and logs. Every method accepts an
 `AbortSignal`.
 
 - `build()` only compiles, or restores from the cache. It never boots a device.
+- `addWorktree({ path, branch, commitish })` creates a linked worktree with
+  the arguments of `git worktree add` and warms it, like `stim worktree add`.
+  It returns the new worktree's `path`.
 - `removeWorktree({ force: true })` discards uncommitted work, like
   `stim worktree remove --force`.
 - `collectGarbage()` deletes what `stim gc` deletes. Call `previewGarbage()`

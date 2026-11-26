@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 
 export interface OpOption {
   /**
-   * Commander-style flags: `--json`, `--scope <scope>`, `--source <s...>`, `--name [value]` (an optional value), or
+   * Commander-style flags: `--json`, `--scope <scope>`, `-b, --branch <branch>`, `--source <s...>`, `--name [value]` (an optional value), or
    * `--no-name`, which sets the `--name` option's key to false. Without a `--name` option beside it, `--no-name`'s own
    * key defaults to true, as commander's lone negation does.
    */
@@ -32,7 +32,13 @@ type OptionValue<O extends OpOption> = O extends { parse: (value: string) => inf
           ? string | true
           : true;
 
-type LongName<F extends string> = F extends `--${infer N} ${string}` ? N : F extends `--${infer N}` ? N : never;
+type LongName<F extends string> = F extends `-${string}, ${infer L}`
+  ? LongName<L>
+  : F extends `--${infer N} ${string}`
+    ? N
+    : F extends `--${infer N}`
+      ? N
+      : never;
 type Negated<O extends Record<string, OpOption>> = {
   [K in keyof O]: LongName<O[K]['flags']> extends `no-${infer P}` ? P : never;
 }[keyof O];
@@ -136,6 +142,7 @@ interface Spec {
   readonly key: string;
   readonly option: OpOption;
   readonly long: string;
+  readonly short?: string;
   readonly takesValue: boolean;
   readonly optionalValue: boolean;
   readonly variadic: boolean;
@@ -149,7 +156,9 @@ interface Spec {
 function specs(op: Op): Spec[] {
   const entries = Object.entries(op.options);
   return entries.map(([key, option]) => {
-    const [long = '', value = ''] = option.flags.split(' ');
+    const words = option.flags.split(' ');
+    const short = /^-\w,$/.test(words[0] ?? '') ? words.shift()?.[1] : undefined;
+    const [long = '', value = ''] = words;
     let negates: string | undefined;
     let lone = false;
     if (long.startsWith('--no-')) {
@@ -161,6 +170,7 @@ function specs(op: Op): Spec[] {
       key,
       option,
       long,
+      short,
       takesValue: value.startsWith('<'),
       optionalValue: value.startsWith('['),
       variadic: value.endsWith('...>'),
@@ -197,7 +207,10 @@ function scan(op: Op, args: string[]): Scan {
     args,
     options: Object.fromEntries([
       ['help', { type: 'boolean', short: 'h' }],
-      ...known.map((spec) => [spec.long.slice(2), { type: spec.takesValue ? 'string' : 'boolean' }]),
+      ...known.map((spec) => [
+        spec.long.slice(2),
+        { type: spec.takesValue ? 'string' : 'boolean', ...(spec.short ? { short: spec.short } : {}) },
+      ]),
     ]),
     strict: false,
     allowPositionals: true,

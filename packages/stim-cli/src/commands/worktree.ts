@@ -95,6 +95,8 @@ import {
   sourceCheckoutOf,
   podsOutOfSync,
   readWorktreeExclude,
+  repoRootAsync,
+  resolveSourceCheckoutAsync,
   removeWorktreeAsync,
   resolveFullRefAsync,
   restoreFileAsync,
@@ -107,7 +109,15 @@ import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
-import { powershellQuoted, shellQuoted } from '../workspace/git.ts';
+import { gitAsync, powershellQuoted, shellQuoted } from '../workspace/git.ts';
+import { childEnvironment } from '../workspace/git-read.ts';
+import {
+  cloneCheckout,
+  cloneSource,
+  discardWorktree,
+  endsOperation,
+  pruneUncarried,
+} from '../workspace/worktree-add.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
 
@@ -381,6 +391,9 @@ export async function warmWorktreeTarget(opts: {
   refresh?: boolean;
   operation: StimContext;
   beforeWarm?: (workspace: string) => void;
+  /** `stim worktree add` cloned the worktree whole from the source checkout; see `cloneIgnoredEntries`. */
+  precloned?: boolean;
+  carried?: (copied: string[]) => void;
 }): Promise<{ exitCode: 0 | 1 }> {
   let exitCode: 0 | 1 = 0;
   const operation = opts.operation;
@@ -481,12 +494,14 @@ export async function warmWorktreeTarget(opts: {
                   target,
                   patterns,
                   operation,
+                  precloned: opts.precloned,
                   withhold: (rel) => {
                     const exact = exactTargetWithheld(root, rel);
                     return exact ? Promise.resolve(exact) : nativeDir(rel);
                   },
                 }),
               );
+              opts.carried?.(result.copied);
               for (const entry of result.skipped) {
                 out(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
               }
@@ -647,6 +662,132 @@ export async function warmWorktreeTarget(opts: {
     if (links) out(chalk.dim(workspaceLinkLine(links)));
   }
   return { exitCode };
+}
+
+const CLEANUP_TIMEOUT_MS = 30_000;
+
+/**
+ * `git worktree add` from `cwd` with the same arguments, then the warm. Where the source checkout can be cloned, git
+ * registers the worktree without a checkout and one clone pass supplies its tracked and ignored files together; any
+ * failure there removes what this call created and takes the plain path.
+ * @ref LLP 0029#it-falls-back-instead-of-refusing -- never a refusal the plain path would not give
+ */
+export async function addWorktreeTarget(opts: {
+  cwd: string;
+  path: string;
+  branch?: string;
+  commitish?: string;
+  operation: StimContext;
+}): Promise<{ exitCode: 0 | 1; path: string }> {
+  const operation = opts.operation;
+  const out = (line: string) => operation.output('stderr', `${line}\n`);
+  const reads = { env: operation.env, signal: operation.signal, declareFor: operation, timeoutThrows: true };
+  const current = await repoRootAsync(opts.cwd, reads);
+  if (!current) throw new Error('Not a git repository.');
+  const checkout = await resolveSourceCheckoutAsync(current, reads);
+  if ('refusal' in checkout) throw new Error(checkout.refusal);
+  const root = realpathSync(checkout.path);
+  const path = resolve(opts.cwd, opts.path);
+  const git: NonNullable<Parameters<typeof gitAsync>[2]> = {
+    ...childEnvironment(operation.env),
+    declareFor: operation,
+    timeoutMs: 'unbounded',
+    write: true,
+  };
+  const add = (...flags: string[]) =>
+    gitAsync(
+      opts.cwd,
+      [
+        'worktree',
+        'add',
+        ...flags,
+        ...(opts.branch ? ['-b', opts.branch] : []),
+        '--',
+        path,
+        ...(opts.commitish ? [opts.commitish] : []),
+      ],
+      { ...git, signal: operation.signal },
+    );
+  const bounded = () => ({ ...git, signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS) });
+  const state = operationState(operation);
+  const wasDraining = state.draining;
+  state.draining = true;
+  try {
+    const source = await cloneSource(root, path, operation);
+    let slow = 'reason' in source ? source.reason : null;
+    let refresh: Promise<unknown> | null = null;
+    if (!('reason' in source)) {
+      const branches = new Set(
+        (
+          await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
+            ...git,
+            signal: operation.signal,
+          })
+        ).split('\n'),
+      );
+      await add('--no-checkout');
+      let gitDir = '';
+      let head = '';
+      let ref = '';
+      try {
+        [gitDir = '', head = '', ref = ''] = (
+          await gitAsync(path, ['rev-parse', '--absolute-git-dir', 'HEAD', '--symbolic-full-name', 'HEAD'], bounded())
+        ).split('\n');
+        await withWarmClaim(
+          { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
+          () => cloneCheckout({ root, target: realpathSync(path), helper: source.helper, head, operation }),
+        );
+        // @ref LLP 0029#the-index-is-refreshed-before-the-command-returns -- a refresh left running holds index.lock
+        refresh = gitAsync(path, ['update-index', '-q', '--refresh'], git).catch(() => null);
+      } catch (error) {
+        await discardWorktree({
+          cwd: opts.cwd,
+          target: path,
+          gitDir,
+          created: ref.startsWith('refs/heads/') && !branches.has(ref) ? { ref, sha: head } : null,
+          git: bounded,
+        });
+        if (endsOperation(error, operation)) throw error;
+        slow = `cloning failed (${(error instanceof Error ? error.message : String(error)).split('\n')[0]})`;
+      }
+    }
+    if (slow !== null) await add();
+    const target = realpathSync(path);
+    out(
+      chalk.dim(
+        phaseLine(
+          'worktree',
+          slow === null
+            ? `created ${target} as a clone of ${root}`
+            : `created ${target} with git worktree add, because ${slow}`,
+        ),
+      ),
+    );
+    const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
+    let carried: string[] = [];
+    try {
+      const { exitCode } = await warmWorktreeTarget({
+        cwd: existsSync(inside) ? inside : target,
+        operation,
+        precloned: slow === null,
+        carried: (copied) => {
+          carried = copied;
+        },
+      });
+      return { exitCode, path: target };
+    } finally {
+      await refresh;
+      if (slow === null)
+        await pruneUncarried(
+          target,
+          carried,
+          operation,
+          operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
+        );
+    }
+  } finally {
+    state.draining = wasDraining;
+  }
 }
 
 function carriedFileList(files: string[]): string {
@@ -2205,10 +2346,42 @@ export const removeOp: Op = defineOp({
   },
 });
 
+export const addOp: Op = defineOp({
+  name: 'add',
+  arguments: '<path> [commit-ish]',
+  description:
+    'Create a linked worktree as git worktree add does, already warmed: on APFS it is cloned from the source checkout, tracked and ignored files together, and anywhere else git creates it and the warm copies into it.',
+  options: {
+    branch: {
+      flags: '-b, --branch <branch>',
+      description: 'create this branch at the commit-ish and check it out in the new worktree',
+    },
+  },
+  run: async ({ args: [path, commitish], options: opts }) => {
+    const { value, interrupted } = await runProcessOperation(process.cwd(), async (operation) => {
+      try {
+        return await addWorktreeTarget({ cwd: operation.cwd, path, branch: opts.branch, commitish, operation });
+      } catch (error) {
+        if (!operation.signal.aborted || error instanceof WorkspaceProcessCleanupError) {
+          const failure = error instanceof Error ? error : new Error(String(error));
+          const code = 'code' in failure ? failure.code : undefined;
+          console.error(chalk.red(`Could not add the worktree: ${failure.message}`));
+          const claim = claimFailure(error, 'stim worktree add');
+          if (claim) console.error(chalk.dim(claim.remedy));
+          if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
+        }
+        return { exitCode: 1 };
+      }
+    });
+    if (interrupted !== null) process.exitCode = interrupted;
+    else if (value.exitCode) process.exitCode = 1;
+  },
+});
+
 const worktree: Op = defineOp({
   name: 'worktree',
-  description: 'Warm, remove and list Git worktrees',
-  commands: [warmOp, removeOp, listOp],
+  description: 'Add, warm, remove and list Git worktrees',
+  commands: [addOp, warmOp, removeOp, listOp],
 });
 
 export default worktree;

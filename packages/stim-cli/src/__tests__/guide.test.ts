@@ -318,9 +318,10 @@ test('the index lists every topic and the running version', () => {
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
-test('current guides require completed warming and leave worktree creation to Git', () => {
+test('current guides require completed warming and create worktrees with worktree add', () => {
   const body = allBodies().join('\n');
-  expect(body).toContain('git worktree add');
+  expect(renderTopic('agent')).toContain('stim worktree add -b <branch> <path> [<commit-ish>]');
+  expect(renderSection('lifecycle', 'options')).toContain('stim worktree add [-b <branch>] <path> [<commit-ish>]');
   expect(body).toContain('stim worktree warm');
   expect(body).toContain('stim worktree warm --refresh');
   expect(body).toContain('stim worktree remove');
