@@ -34,8 +34,8 @@ MAINTENANCE
 Automatic maintenance follows daemon.mode (guide settings): on (the default)
 runs the disk actions below through gc's own removal code and logs each one;
 report measures, plans and logs, and never deletes anything; off disables it,
-the dormant stage and the pressure ladder, and leaves only the idle stop of a
-dev server stimd runs. It is off in CI
+the dormant stage and the pressure ladder; stimd still idle-stops a dev server
+it runs and the idle devices of its workspace. It is off in CI
 unless STIM_DAEMON is set, so a CI run never deletes on its own. A scoped
 STIM_HOME home runs it without the machine-wide steps.
 The stim-daemon runs a pass in its own process on each tick when a check is
@@ -268,8 +268,8 @@ DISK PRESSURE
   ladder (stim guide lifecycle budget), not maintenance levels. The ladder
   reuses maintenance's removal code for parked devices, the Swift compilation
   cache and Gradle daemons and versions. It deletes no node_modules, Pods or
-  worktree: rungs 5 and 7 only report them, and only the dormant step and the
-  finished-worktree check above delete them. The last rung, 9, cleans other tools' caches (npm,
+  worktree: rungs 5 and 7 only report them, and only the dormant stage and
+  worktree removal (step 5 above) delete them. The last rung, 9, cleans other tools' caches (npm,
   Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM) through each
   tool's own command, only at critical and only while the earlier rungs left
   the disk short (\`stim guide cleanup gc\`). Xcode DerivedData outside Stim
@@ -625,10 +625,10 @@ After updating Stim Host, unregister and register the helper again.`,
     copy-on-write clone), in use, a running process inside, pinned.
   Parked devices
     rung 2, H until the level clears, C all.
-  Shared caches trimmed to half their caps; at C every registered cache emptied,
-  the fingerprint index and memo
+  Shared caches trimmed to half their caps; at C every registered or detected
+  cache (Xcode's compilation cache) emptied, the fingerprint index and memo
     rung 3, H and C. Kept: entries a running build protects, report-only
-    caches.
+    caches, detected ones in a scoped STIM_HOME.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), last in rung 3
     rung 3 after the caches, largest target first by its last recorded size,
     while its own volume is short, H and C. Kept: as the cap trim above.

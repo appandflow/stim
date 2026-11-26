@@ -2622,7 +2622,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Stim registered or detected emptied whole (ccache, the macOS artifact
        cache, the React Native and Android caches and, outside a scoped
        STIM_HOME, Xcode's CompilationCache.noindex), except
-       report-only caches, caches inside a workspace, caches Stim does not own,
+       report-only caches, caches inside a workspace, a folder that is or holds
+       HOME, TMPDIR or STIM_HOME,
        caches outside a scoped STIM_HOME and one a build holds. At high each
        capped cache is sized with a bounded walk, and one whose walk fails is
        kept; at critical nothing is walked. Then the Cargo trims (\`guide cleanup
