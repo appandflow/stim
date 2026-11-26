@@ -120,8 +120,8 @@ stim settings set android.installImages never --scope machine
 - `concurrency.maxIosDevices`, `concurrency.maxAndroidDevices`,
   `concurrency.maxMacosApps`: tighter caps per platform.
 - `idle.minutes` (default `15`): after this long without activity a workspace
-  goes idle. Its dev server stops and its devices shut down; `stim revive`
-  resumes it. `0` keeps everything running.
+  goes idle. Its dev server stops, its devices shut down and its build outputs
+  are deleted; `stim revive` resumes it. `0` keeps everything running.
 - A booted iOS simulator takes roughly 1 to 2 GB of RAM, an Android emulator
   2 to 3 GB.
 
@@ -131,29 +131,17 @@ stim settings set concurrency.maxDevices 4 --scope machine
 
 ### Cleanup and retention
 
-- `daemon.mode` (default `on`, `off` in CI): the per-home `stimd` runs the
-  idle and dormant stages, the disk pressure ladder and automatic maintenance.
-  `report` logs what it would do and deletes nothing. `off` runs no pass, but
-  `stimd` still stops a dev server it runs and the workspace's devices after
-  `idle.minutes`.
-- `idle.dormantDays` (default `1`): after this many days without activity a
-  workspace shrinks to its minimal size. Its build outputs and owned devices
-  are deleted, and a linked worktree's `node_modules` and Pods are deleted
-  for the next Stim command to restore. All of it is regenerable.
-- `idle.sourceDormantDays` (default `7`, `0` never): the main checkout's
-  `node_modules` and Pods are deleted after this many idle days too, at any
-  disk level. Reinstall them with your package manager.
+- `daemon.mode` (default `on`, `off` in CI): `report` logs what automatic
+  cleanup would do and deletes nothing; `off` runs no pass, but `stimd` still
+  stops a dev server it runs and the workspace's devices after `idle.minutes`.
 - `maintenance.keep` (project): pin a workspace so nothing automatic touches
   it.
 - `maintenance.removeFinishedWorktrees` (default `true`): remove linked
-  worktrees whose branch or pull request finished, after
-  `gc.worktreeGraceMinutes` (default `120`). A dirty one has its uncommitted
-  files archived first. See
-  [removing finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk).
-- `maintenance.removeIdleWorktrees` (default `false`): also remove clean,
-  pushed, unmerged worktrees nobody used for `maintenance.olderThanDays`.
-- `archive.enabled` (default `true`) and `archive.maxAgeDays` (default `30`):
-  keep a removed workspace's history and a removed dirty worktree's changes.
+  worktrees whose branch or pull request finished.
+
+[How cleanup works](./maintenance.md) lists the phases, the idle and dormant
+days, the disk thresholds, the caps and every other setting that changes what
+Stim deletes.
 
 ```bash
 stim settings set daemon.mode report --scope machine   # see what it would delete first
