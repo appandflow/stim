@@ -155,7 +155,6 @@ import {
 } from './android/support.ts';
 import { startDeviceLogStream } from '../daemon/client.ts';
 import { workspaceStateRemedy, emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
-import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import {
   acquireAndroidArtifactOrRecorded,
@@ -1399,7 +1398,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           ? ensureRemoteOwned({
               root,
               platform: PLATFORM,
-              sessionName: ownedSessionName(remoteDevice.ctx.label),
+              sessionName: remoteDevice.ctx.sessionName,
               ledgerRoot: remoteDevice.ctx.easLedgerRoot,
               operation: context,
               startedAt: new Date(now()).toISOString(),

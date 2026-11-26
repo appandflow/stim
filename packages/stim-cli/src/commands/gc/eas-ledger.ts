@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { isOnMountedVolume } from '../../fs-util.ts';
 import {
   easMachineStateRoot,
+  isPendingEasSessionClaim,
   readEasSessionLedger,
   removeEasSessionClaimAsync,
 } from '../../engine/eas-session-ledger.ts';
@@ -29,6 +30,7 @@ function isStaleEasLedgerEntry(
   mountedVolumes: string[],
   exists: (path: string) => boolean = existsSync,
 ): boolean {
+  if (isPendingEasSessionClaim(claim)) return false;
   if (UUID.test(claim.sessionId)) return false;
   const root = claim.workspaceRoot;
   if (!isAbsolute(root) || exists(root)) return false;

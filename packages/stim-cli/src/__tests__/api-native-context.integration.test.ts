@@ -436,6 +436,7 @@ if (process.argv[2] === 'install') {
     const deps = remoteIosDeps({
       root,
       label: 'context-test',
+      sessionName: 'stim-context-abcdef',
       backend: 'proxy',
       easBin: '',
       agentDeviceBin: tool,
@@ -497,6 +498,7 @@ if (command === 'sim') {
       const deps = remoteIosDeps({
         root,
         label: 'context-test',
+        sessionName: 'stim-context-abcdef',
         backend: 'eas',
         easBin: tool,
         agentDeviceBin: tool,
@@ -510,7 +512,7 @@ if (command === 'sim') {
           }),
         );
         expect(result.failed).toBe(true);
-        expect(result.reason).toContain('The session was stopped');
+        expect(result.reason).toContain('The session drs_context was stopped');
         expect(JSON.parse(readFileSync(stopped, 'utf8'))).toEqual({ id: 'drs_context', marker: 'client' });
         expectChildGone(JSON.parse(readFileSync(marker, 'utf8')).pid);
         expect(operationState(operation).running.size).toBe(0);
@@ -589,6 +591,7 @@ if (process.argv[2] === 'simulator:get') {
   const deps = remoteIosDeps({
     root,
     label: 'context-test',
+    sessionName: 'stim-context-abcdef',
     backend: 'eas',
     easBin: tool,
     agentDeviceBin: tool,

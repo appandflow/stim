@@ -72,12 +72,12 @@ function isOwnedSessionName(name: string | null | undefined): name is string {
 }
 
 export function createSessionArgs({
-  label,
+  name,
   platform,
   maxDurationMinutes = null,
   device = null,
 }: {
-  label: string;
+  name: string;
   platform: 'ios' | 'android';
   maxDurationMinutes?: number | null;
   device?: string | null;
@@ -92,7 +92,7 @@ export function createSessionArgs({
     '--out-config-type',
     'env',
     '--name',
-    ownedSessionName(label),
+    name,
   ];
   if (maxDurationMinutes) args.push('--max-duration-minutes', String(maxDurationMinutes));
   if (device) args.push('--device', device);

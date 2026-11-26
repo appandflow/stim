@@ -82,6 +82,11 @@ describe('the machine EAS ledger sweep', () => {
     expect(ledgerIds()).toEqual(['drs_unmanaged', VALID_ID].toSorted());
   });
 
+  test('keeps a pending claim after its worktree disappears', () => {
+    writeLedger([{ ...claim('stim-pending-abcdef', join(dir, 'gone')), name: 'stim-pending-abcdef' }]);
+    expect(findStaleEasLedgerEntries(mounted, { easLedgerRoot: ledgerRoot })).toEqual([]);
+  });
+
   test('keeps an entry whose root reappeared after the report', async () => {
     const root = join(dir, 'comes-back');
     writeLedger([claim('drs_2', root)]);

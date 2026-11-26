@@ -9,6 +9,7 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
+import { recordEasSessionClaim, readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 import {
@@ -1013,5 +1014,42 @@ test('worktree reclaim releases named ports without inspecting or signalling the
   } finally {
     kill.mockRestore();
     identify.mockRestore();
+  }
+});
+
+test('reclaim ends pending EAS claims before removing workspace records', async () => {
+  const root = workspaceWithSession('drs_42');
+  const name = 'stim-pending-abcdef';
+  await recordEasSessionClaim({
+    sessionId: name,
+    name,
+    platform: 'ios',
+    workspaceRoot: root,
+    workspaceHome: tmpHome,
+    stateFile: workspaceStateFile(root),
+  });
+  const calls: string[] = [];
+  setExecutor(
+    makeExecutor({
+      findExecutable: () => '/bin/eas',
+      runFileAsync: async (_file, args) => {
+        calls.push(args?.[0] ?? '');
+        if (args?.[0] === 'simulator:list')
+          return JSON.stringify({
+            sessions: [{ id: 'drs_pending', name, status: 'NEW' }],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          });
+        if (args?.[0] === 'simulator:stop') return JSON.stringify({ id: 'drs_pending', status: 'STOPPED' });
+        return '';
+      },
+    }),
+  );
+  try {
+    const result = await reclaimProject(root, { stopSession: () => ({ status: 'torn-down' }) });
+    expect(result.failedDevices).toEqual([]);
+    expect(calls).toContain('simulator:stop');
+    expect(readEasSessionLedger().claims.has(name)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

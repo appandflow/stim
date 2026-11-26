@@ -1,6 +1,4 @@
 import { processContext } from '../cli-operation.ts';
-import { operationState } from '../engine/operation-state.ts';
-import { cancelledFailure } from '../engine/native-run.ts';
 import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import {
@@ -19,9 +17,9 @@ import { join } from 'node:path';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
-  pendingEasSessionRemedy,
   endRecordedSession,
   ensureRemoteBootOwned,
+  resolvePendingEasSession,
   ensureMetroReachable,
   remoteAndroidDeps,
   remoteIosDeps,
@@ -42,7 +40,7 @@ const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
 
 const CREATED = JSON.stringify({
   id: 'drs_42',
-  name: 'stim-wt',
+  name: 'stim-wt-abcdef',
   type: 'agent-device',
   deviceRunSessionUrl: 'https://expo.dev/x',
   remoteConfig: {
@@ -122,6 +120,7 @@ function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
   return {
     root,
     label: 'wt',
+    sessionName: 'stim-wt-abcdef',
     backend,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
@@ -387,7 +386,7 @@ describe('session creation', () => {
     const result = await ensureRemoteBootOwned({
       root,
       platform: 'ios',
-      sessionName: 'stim-wt',
+      sessionName: 'stim-wt-abcdef',
       startedAt: '2026-08-28T00:00:00.000Z',
       deviceType: 'iPhone 17 Pro',
       register: async () => {
@@ -432,7 +431,7 @@ describe('session creation', () => {
     const result = await ensureRemoteBootOwned({
       root,
       platform: 'ios',
-      sessionName: 'stim-wt',
+      sessionName: 'stim-wt-abcdef',
       startedAt: '2026-08-28T00:00:00.000Z',
       boot: async () => ({ ok: true, udid: 'drs_unclaimed' }),
       createdSessionId: () => 'drs_unclaimed',
@@ -467,7 +466,7 @@ describe('session creation', () => {
     const result = await ensureRemoteBootOwned({
       root,
       platform: 'ios',
-      sessionName: 'stim-wt',
+      sessionName: 'stim-wt-abcdef',
       startedAt: '2026-08-28T00:00:00.000Z',
       boot: async () => ({ ok: true, udid: 'drs_claimed' }),
       createdSessionId: () => 'drs_claimed',
@@ -503,6 +502,7 @@ describe('session creation', () => {
       const exec = mockExec({ outputs: { sim: CREATED } });
       await remoteIosDeps({ ...resolved.ctx, easLedgerRoot: tmpHome, sleep: async () => {} }).ensureBooted({});
       const args = exec.calls[0]?.args ?? [];
+      expect(args[args.indexOf('--name') + 1]).toMatch(/^stim-.+-[0-9a-f]{6}$/);
       return args[args.indexOf('--max-duration-minutes') + 1];
     };
 
@@ -526,7 +526,7 @@ describe('session creation', () => {
 
   test('an Expo app without an EAS project gets the EAS link remedy, not the owned-simulator one', async () => {
     const stderr = [
-      '\u2605 eas-cli@25.3.0 is now available.',
+      '★ eas-cli@25.3.0 is now available.',
       'EAS project not configured. This command cannot configure it in non-interactive mode. Run one of the following, then re-run this command:',
       '  eas init --id <project-id> --non-interactive',
     ].join('\n');
@@ -576,7 +576,7 @@ describe('session creation', () => {
       outputs: {
         'simulator:list': JSON.stringify({
           sessions: [
-            { id: 'drs_42', name: 'stim-wt', status: 'NEW' },
+            { id: 'drs_42', name: 'stim-wt-abcdef', status: 'NEW' },
             { id: 'other', name: 'stim-wt-other', status: 'NEW' },
           ],
           pageInfo: { hasNextPage: false, endCursor: null },
@@ -587,7 +587,7 @@ describe('session creation', () => {
     expect(result.failed).toBe(true);
     expect(result.reason).toContain('network disconnected');
     expect(exec.calls.filter((c) => c.args[0] === 'simulator:stop').map((c) => c.args[2])).toEqual(['drs_42']);
-    expect(readEasSessionLedger(tmpHome).claims.has('stim-wt')).toBe(false);
+    expect(readEasSessionLedger(tmpHome).claims.has('stim-wt-abcdef')).toBe(false);
   });
 
   test('a failed pending claim write prevents create', async () => {
@@ -609,9 +609,9 @@ describe('session creation', () => {
     });
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
     expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('no session named stim-wt was found yet');
-    expect(readEasSessionLedger(tmpHome).claims.has('stim-wt')).toBe(true);
-    expect(booted.remedy).toContain('eas simulator:list --name stim-wt');
+    expect(booted.reason).toContain('no session named stim-wt-abcdef was found yet');
+    expect(readEasSessionLedger(tmpHome).claims.has('stim-wt-abcdef')).toBe(true);
+    expect(booted.remedy).toContain('eas simulator:list --name stim-wt-abcdef');
   });
 });
 
@@ -635,7 +635,7 @@ describe('fixed ownership claim teardown', () => {
       await recordEasSessionClaim(
         {
           sessionId: 'drs_waited',
-          name: 'stim-wt',
+          name: 'stim-wt-abcdef',
           platform: 'ios',
           workspaceRoot: root,
           workspaceHome: tmpHome,
@@ -657,7 +657,7 @@ describe('fixed ownership claim teardown', () => {
     await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-wt',
+        name: 'stim-wt-abcdef',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -667,7 +667,7 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status: 'IN_PROGRESS' }),
       },
     });
 
@@ -690,7 +690,7 @@ describe('fixed ownership claim teardown', () => {
     await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-wt',
+        name: 'stim-wt-abcdef',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -709,7 +709,7 @@ describe('fixed ownership claim teardown', () => {
     await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-wt',
+        name: 'stim-wt-abcdef',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -719,7 +719,7 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status: 'IN_PROGRESS' }),
       },
     });
 
@@ -742,7 +742,7 @@ describe('fixed ownership claim teardown', () => {
     await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-wt',
+        name: 'stim-wt-abcdef',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -752,7 +752,7 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status: 'IN_PROGRESS' }),
       },
     });
 
@@ -818,7 +818,7 @@ describe('teardown', () => {
   test('a failed stop is reported, so the caller says leaked rather than torn down', async () => {
     mockExec({
       fail: 'simulator:stop',
-      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }) },
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status: 'IN_PROGRESS' }) },
     });
     const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
@@ -828,7 +828,7 @@ describe('teardown', () => {
   test('fails closed when stop output does not verify completion', async () => {
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status: 'IN_PROGRESS' }),
         'simulator:stop': 'not json',
       },
     });
@@ -840,7 +840,7 @@ describe('teardown', () => {
   test('isolates proxy credentials from both lookup and stop', async () => {
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status: 'IN_PROGRESS' }),
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
@@ -874,6 +874,7 @@ async function reach(over: Record<string, unknown> = {}, platform: 'ios' | 'andr
   const context = {
     root,
     label: 'wt',
+    sessionName: 'stim-wt-abcdef',
     platform,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
@@ -961,7 +962,7 @@ describe('a re-run does not orphan the session it already has', () => {
 
   const LIVE = JSON.stringify({
     id: 'drs_old',
-    name: 'stim-wt',
+    name: 'stim-wt-abcdef',
     status: 'IN_PROGRESS',
     remoteConfig: {
       agentDeviceRemoteSessionUrl: 'https://old.eas.dev/daemon',
@@ -999,7 +1000,7 @@ describe('a re-run does not orphan the session it already has', () => {
     recordSession('drs_dead');
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt', status: 'ERRORED' }),
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt-abcdef', status: 'ERRORED' }),
         sim: CREATED,
       },
     });
@@ -1014,7 +1015,7 @@ describe('a re-run does not orphan the session it already has', () => {
     await recordEasSessionClaim(
       {
         sessionId: 'drs_dead',
-        name: 'stim-wt',
+        name: 'stim-wt-abcdef',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -1024,7 +1025,7 @@ describe('a re-run does not orphan the session it already has', () => {
     );
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt', status: 'STOPPED' }),
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt-abcdef', status: 'STOPPED' }),
         sim: CREATED,
       },
     });
@@ -1103,7 +1104,7 @@ test('concurrent recorded-session cleanup verifies the first stop before another
     if (args[0] === 'simulator:get') {
       const status = stopped ? 'STOPPED' : 'IN_PROGRESS';
       await new Promise((resolve) => setTimeout(resolve, 10));
-      return JSON.stringify({ id: 'drs_42', name: 'stim-wt', status });
+      return JSON.stringify({ id: 'drs_42', name: 'stim-wt-abcdef', status });
     }
     if (args[0] === 'simulator:stop') {
       stops += 1;
@@ -1139,7 +1140,7 @@ test('a recorded session past its expiry is ended regardless of eas-cli; one ins
     await recordEasSessionClaim(
       {
         sessionId: 'drs_cap',
-        name: 'stim-wt',
+        name: 'stim-wt-abcdef',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -1173,7 +1174,7 @@ test('the expiry is taken after the lock wait and the boot, from the cap and the
   await ensureRemoteBootOwned({
     root,
     platform: 'ios',
-    sessionName: 'stim-wt',
+    sessionName: 'stim-wt-abcdef',
     startedAt: new Date(at).toISOString(),
     maxDurationMinutes: 30,
     boot: async () => {
@@ -1222,7 +1223,7 @@ if (command === 'sim') {
   fs.writeFileSync(${JSON.stringify(join(root, 'created'))}, 'ready');
   setInterval(() => {}, 1000);
 } else if (command === 'simulator:list') {
-  process.stdout.write(JSON.stringify({ sessions: ${mode === 'absent' ? '[]' : "[{id:'drs_42',name:'stim-wt',status:'NEW'}]"}, pageInfo: {hasNextPage:false,endCursor:null} }));
+  process.stdout.write(JSON.stringify({ sessions: ${mode === 'absent' ? '[]' : "[{id:'drs_42',name:'stim-wt-abcdef',status:'NEW'}]"}, pageInfo: {hasNextPage:false,endCursor:null} }));
 } else if (command === 'simulator:stop') {
   fs.writeFileSync(${JSON.stringify(join(root, 'stopped'))}, 'drs_42');
   process.stdout.write(JSON.stringify({id:'drs_42',status:'STOPPED'}));
@@ -1239,11 +1240,8 @@ if (command === 'sim') {
     try {
       const result = await remoteIosDeps(ctx({ easBin, operation })).ensureBooted({});
       expect(result.failed).toBe(true);
-      expect(readEasSessionLedger(tmpHome).claims.has('stim-wt')).toBe(mode === 'absent');
+      expect(readEasSessionLedger(tmpHome).claims.has('stim-wt-abcdef')).toBe(mode === 'absent');
       expect(existsSync(join(root, 'stopped'))).toBe(mode !== 'absent');
-      operationState(operation).cancelled = 'cancelled';
-      const remedy = pendingEasSessionRemedy('stim-wt');
-      expect(cancelledFailure(operation, 'ios', { code: 'STIM_REMOTE_SESSION_CLEANUP', remedy })?.remedy).toBe(remedy);
     } finally {
       unwatchFile(marker);
     }
@@ -1258,4 +1256,75 @@ test('an already cancelled operation never spawns create', async () => {
     remoteIosDeps(ctx({ operation: processContext(root, controller.signal) })).ensureBooted({}),
   ).rejects.toThrow(/cancel/i);
   expect(exec.calls).toEqual([]);
+});
+
+test('owned boot replaces its pending claim with the session claim', async () => {
+  mockExec({ outputs: { sim: CREATED } });
+  const deps = remoteIosDeps(ctx());
+  const result = await ensureRemoteBootOwned({
+    root,
+    platform: 'ios',
+    sessionName: deps.ctx.sessionName,
+    startedAt: new Date().toISOString(),
+    boot: () => deps.ensureBooted(),
+    createdSessionId: deps.createdSessionId,
+    abandonCreatedSession: deps.abandonCreatedSession,
+    writeState: () => {},
+    ledgerRoot: tmpHome,
+  });
+  expect(result.ok).toBe(true);
+  expect([...readEasSessionLedger(tmpHome).claims.keys()]).toEqual(['drs_42']);
+});
+
+test.each([false, true])('earlier pending cleanup precedes create and failure does not block it: %s', async (fails) => {
+  await recordEasSessionClaim(
+    {
+      sessionId: 'stim-earlier',
+      name: 'stim-earlier',
+      platform: 'ios',
+      workspaceRoot: root,
+      workspaceHome: tmpHome,
+      stateFile: workspaceStateFile(root),
+    },
+    tmpHome,
+  );
+  const exec = mockExec({
+    outputs: {
+      sim: CREATED,
+      'simulator:list': JSON.stringify({ sessions: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+    },
+    errors: fails ? { 'simulator:list': new Error('offline') } : {},
+  });
+  const notes: string[] = [];
+  expect((await remoteIosDeps(ctx()).ensureBooted({ out: (line) => notes.push(line) })).ok).toBe(true);
+  expect(exec.calls.findIndex((c) => c.args[0] === 'simulator:list')).toBeLessThan(
+    exec.calls.findIndex((c) => c.args[0] === 'sim'),
+  );
+  expect(readEasSessionLedger(tmpHome).claims.has('stim-earlier')).toBe(fails);
+  expect(notes.join(' ').includes('offline')).toBe(fails);
+});
+
+test('pending resolution leaves a session with an established claim running', async () => {
+  await recordEasSessionClaim(
+    {
+      sessionId: 'drs_other',
+      name: 'stim-wt-abcdef',
+      platform: 'ios',
+      workspaceRoot: root,
+      workspaceHome: tmpHome,
+      stateFile: workspaceStateFile(root),
+    },
+    tmpHome,
+  );
+  const exec = mockExec({
+    outputs: {
+      'simulator:list': JSON.stringify({
+        sessions: [{ id: 'drs_other', name: 'stim-wt-abcdef', status: 'NEW' }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      }),
+    },
+  });
+  expect((await resolvePendingEasSession(root, '/bin/eas', 'stim-wt-abcdef', tmpHome)).ok).toBe(true);
+  expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+  expect(readEasSessionLedger(tmpHome).claims.has('drs_other')).toBe(true);
 });

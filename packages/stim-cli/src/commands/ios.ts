@@ -74,7 +74,6 @@ import {
   resolveIosPhysicalDevice,
 } from '../engine/ios-device.ts';
 import { chooseLanAddress, lanOriginUrlFor } from '../engine/ios-lan.ts';
-import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
@@ -1251,7 +1250,7 @@ async function runIos(
             ? d.ensureRemoteBootOwned({
                 root,
                 platform: PLATFORM,
-                sessionName: ownedSessionName(remoteDevice.ctx.label),
+                sessionName: remoteDevice.ctx.sessionName,
                 ledgerRoot: remoteDevice.ctx.easLedgerRoot,
                 operation: context,
                 startedAt: new Date(d.now()).toISOString(),
