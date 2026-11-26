@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
@@ -41,6 +42,7 @@ import {
   MIN_EAS_CLI_SIMULATOR_VERSION,
   ownedSessionName,
   parseCreatedSession,
+  parseSessionListPage,
   remoteDaemonFrom,
   stopSessionArgs,
   verifyStoppedSession,
@@ -144,6 +146,7 @@ function describe(err: unknown): string {
 export interface RemoteContext {
   root: string;
   label: string;
+  sessionName: string;
   backend: RemoteDeviceBackend;
   easBin: string;
   agentDeviceBin: string;
@@ -264,14 +267,14 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       }
 
       if (!daemon) {
-        note('Creating an EAS Simulator session (this takes a moment).');
+        note(`Creating EAS Simulator session ${ctx.sessionName} (this takes a moment).`);
         let stdout: string;
         try {
           stdout = await remoteCommand(
             ctx,
             ctx.easBin,
             createSessionArgs({
-              label: ctx.label,
+              name: ctx.sessionName,
               platform: ctx.platform ?? 'ios',
               maxDurationMinutes: ctx.maxDurationMinutes ?? null,
               device: ctx.deviceType ?? null,
@@ -288,12 +291,75 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             if (partial) {
               return abandonSession(ctx, partial.id, `${failure} after creating session ${partial.id}.`);
             }
-            const name = ownedSessionName(ctx.label);
-            return {
-              failed: true,
-              reason: `${failure} and the eas process was killed. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
-              remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
-            };
+            const name = ctx.sessionName;
+            const remedy = `Run \`eas simulator:list --name ${name}\` and stop any live session with \`eas simulator:stop --id <id>\`.`;
+            try {
+              const output = await remoteCommand(
+                ctx,
+                ctx.easBin,
+                [
+                  'simulator:list',
+                  '--name',
+                  name,
+                  '--status',
+                  'new',
+                  '--status',
+                  'queued',
+                  '--status',
+                  'starting',
+                  '--status',
+                  'in-progress',
+                  '--limit',
+                  '100',
+                  '--json',
+                  '--non-interactive',
+                ],
+                easBoundedExecOptions(ctx.root),
+                true,
+              );
+              const parsed = parseSessionListPage(output);
+              if (!parsed.ok) throw new Error(parsed.reason, { cause: err });
+              if (parsed.page.hasNextPage)
+                throw new Error(`EAS returned more than 100 sessions for ${name}`, { cause: err });
+              const stopped: string[] = [];
+              for (const listedSession of parsed.page.sessions) {
+                if (
+                  !listedSession ||
+                  typeof listedSession !== 'object' ||
+                  !('name' in listedSession) ||
+                  !('id' in listedSession) ||
+                  typeof listedSession.name !== 'string' ||
+                  typeof listedSession.id !== 'string' ||
+                  !listedSession.id
+                ) {
+                  throw new Error('EAS returned a malformed session', { cause: err });
+                }
+                if (listedSession.name !== name) continue;
+                const result = await stopCreatedSession(ctx, listedSession.id);
+                if (!result.ok) {
+                  return {
+                    failed: true,
+                    code: 'STIM_REMOTE_SESSION_CLEANUP',
+                    reason: `${failure}; ${result.reason}`,
+                    remedy: result.remedy,
+                  };
+                }
+                stopped.push(listedSession.id);
+              }
+              return {
+                failed: true,
+                reason: stopped.length
+                  ? `${failure}; EAS session ${stopped.join(', ')} was stopped.`
+                  : `${failure}; EAS lists no live session named ${name}.`,
+              };
+            } catch (error) {
+              return {
+                failed: true,
+                code: 'STIM_REMOTE_SESSION_CLEANUP',
+                reason: `${failure}; ${describe(error)}. The session may bill until its cap.`,
+                remedy,
+              };
+            }
           }
           const failure = describe(err);
           if (EAS_PROJECT_NOT_CONFIGURED.test(failure)) {
@@ -591,11 +657,13 @@ export async function resolveRemoteContext({
     sessionMaxMinutes = typeof configured === 'number' ? configured : Number(setting?.default);
   }
 
+  const label = `${ownedDeviceLabel(root)}-${workspaceId(root)}`;
   return {
     ctx: {
       root,
       // agent-device stores remote connection state per session name under ~/.agent-device/remote-connections/.
-      label: `${ownedDeviceLabel(root)}-${workspaceId(root)}`,
+      label,
+      sessionName: `${ownedSessionName(label)}-${randomBytes(3).toString('hex')}`,
       backend,
       platform,
       easBin: easBin ?? '',
@@ -719,7 +787,7 @@ export function withRemoteSessionLock<T>(
 }
 
 const EAS_START_HOLD_MS =
-  4 * EAS_OPERATION_TIMEOUT_MS +
+  5 * EAS_OPERATION_TIMEOUT_MS +
   3 * AGENT_DEVICE_TIMEOUT_MS +
   EAS_SESSION_CREATE_TIMEOUT_MS +
   Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS) * (EAS_OPERATION_TIMEOUT_MS + DAEMON_POLL_MS);
@@ -1070,6 +1138,7 @@ export async function endRecordedSession({
         {
           root,
           label: '',
+          sessionName: '',
           backend: 'eas',
           easBin,
           agentDeviceBin: agentDeviceBin ?? '',

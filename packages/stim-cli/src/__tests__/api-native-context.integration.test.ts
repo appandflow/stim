@@ -436,6 +436,7 @@ if (process.argv[2] === 'install') {
     const deps = remoteIosDeps({
       root,
       label: 'context-test',
+      sessionName: 'stim-context-abcdef',
       backend: 'proxy',
       easBin: '',
       agentDeviceBin: tool,
@@ -497,6 +498,7 @@ if (command === 'sim') {
       const deps = remoteIosDeps({
         root,
         label: 'context-test',
+        sessionName: 'stim-context-abcdef',
         backend: 'eas',
         easBin: tool,
         agentDeviceBin: tool,
@@ -589,6 +591,7 @@ if (process.argv[2] === 'simulator:get') {
   const deps = remoteIosDeps({
     root,
     label: 'context-test',
+    sessionName: 'stim-context-abcdef',
     backend: 'eas',
     easBin: tool,
     agentDeviceBin: tool,

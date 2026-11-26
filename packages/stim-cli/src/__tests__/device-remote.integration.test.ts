@@ -1,6 +1,17 @@
+import { processContext } from '../cli-operation.ts';
 import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import {
+  watchFile,
+  unwatchFile,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
@@ -108,6 +119,7 @@ function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
   return {
     root,
     label: 'wt',
+    sessionName: 'stim-wt-abcdef',
     backend,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
@@ -489,6 +501,7 @@ describe('session creation', () => {
       const exec = mockExec({ outputs: { sim: CREATED } });
       await remoteIosDeps({ ...resolved.ctx, easLedgerRoot: tmpHome, sleep: async () => {} }).ensureBooted({});
       const args = exec.calls[0]?.args ?? [];
+      expect(args[args.indexOf('--name') + 1]).toMatch(/^stim-.+-[0-9a-f]{6}$/);
       return args[args.indexOf('--max-duration-minutes') + 1];
     };
 
@@ -553,15 +566,6 @@ describe('session creation', () => {
       'disconnect',
     ]);
     for (const call of exec.calls) expect(call.timeoutMs).toBeGreaterThan(0);
-  });
-
-  test('an eas sim that outlives its deadline names the session it may have left running', async () => {
-    const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/eas sim'), { code: 'ETIMEDOUT' });
-    mockExec({ errors: { sim: timedOut } });
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('stim-wt');
-    expect(booted.remedy).toContain('eas simulator:list --name stim-wt');
   });
 });
 
@@ -824,6 +828,7 @@ async function reach(over: Record<string, unknown> = {}, platform: 'ios' | 'andr
   const context = {
     root,
     label: 'wt',
+    sessionName: 'stim-wt-abcdef',
     platform,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
@@ -1166,3 +1171,88 @@ test('remoteSessionExpired is true only strictly past a recorded expiry', () => 
   expect(remoteSessionExpired({ ...record, expiresAt }, at + 1)).toBe(true);
   expect(remoteSessionExpired(record, at + 1e12)).toBe(false);
 });
+
+test.each(['live', 'prefix', 'absent', 'list-fails', 'printed', 'ordinary'])(
+  'create cleanup contract: %s',
+  async (mode) => {
+    resetExecutor();
+    const easBin = join(root, 'delayed-eas.cjs');
+    const marker = join(root, 'created');
+    const calls = join(root, 'calls');
+    writeFileSync(
+      easBin,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'sim') {
+  ${mode === 'ordinary' ? "process.stderr.write('ordinary failure'); process.exit(1);" : ''}
+  ${mode === 'printed' ? `process.stdout.write(${JSON.stringify(CREATED)});` : ''}
+  fs.writeFileSync(${JSON.stringify(marker)}, 'ready');
+  setInterval(() => {}, 1000);
+} else if (args[0] === 'simulator:list') {
+  ${mode === 'list-fails' ? "process.stderr.write('offline'); process.exit(1);" : ''}
+  process.stdout.write(JSON.stringify({sessions: ${mode === 'absent' ? '[]' : `[{id:'drs_42',name:'stim-wt-abcdef${mode === 'prefix' ? '-other' : ''}',status:'NEW'}]`}, pageInfo:{hasNextPage:false,endCursor:null}}));
+} else if (args[0] === 'simulator:stop') {
+  process.stdout.write(JSON.stringify({id:'drs_42',status:'STOPPED'}));
+}
+`,
+    );
+    chmodSync(easBin, 0o755);
+    const controller = new AbortController();
+    watchFile(marker, { interval: 10 }, (stat) => {
+      if (stat.size) controller.abort();
+    });
+    try {
+      const result = await remoteIosDeps(
+        ctx({ easBin, operation: processContext(root, controller.signal) }),
+      ).ensureBooted({});
+      const invoked: string[][] = readFileSync(calls, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const listed = invoked.filter((args) => args[0] === 'simulator:list');
+      const stopped = invoked.filter((args) => args[0] === 'simulator:stop');
+      expect(result.failed).toBe(true);
+      if (mode === 'ordinary' || mode === 'printed') assert.deepStrictEqual(listed, []);
+      else
+        assert.deepStrictEqual(listed, [
+          [
+            'simulator:list',
+            '--name',
+            'stim-wt-abcdef',
+            '--status',
+            'new',
+            '--status',
+            'queued',
+            '--status',
+            'starting',
+            '--status',
+            'in-progress',
+            '--limit',
+            '100',
+            '--json',
+            '--non-interactive',
+          ],
+        ]);
+      if (mode === 'live' || mode === 'printed') {
+        assert.strictEqual(stopped.length, 1);
+        assert(stopped[0]?.includes('drs_42'));
+        assert(result.reason?.includes('drs_42'));
+        assert.strictEqual(result.code, undefined);
+      } else assert.deepStrictEqual(stopped, []);
+      if (mode === 'prefix' || mode === 'absent')
+        assert(result.reason?.includes('EAS lists no live session named stim-wt-abcdef.'));
+      if (mode === 'list-fails') {
+        assert.strictEqual(result.code, 'STIM_REMOTE_SESSION_CLEANUP');
+        assert.strictEqual(
+          result.remedy,
+          'Run `eas simulator:list --name stim-wt-abcdef` and stop any live session with `eas simulator:stop --id <id>`.',
+        );
+      }
+      if (mode === 'ordinary') assert(result.reason?.includes('eas sim failed:'));
+    } finally {
+      unwatchFile(marker);
+    }
+  },
+);
