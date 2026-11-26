@@ -483,9 +483,8 @@ for the name it was created with, so a worktree of it needs the same folder
 name as the checkout it was created in (otherwise "Cargo has no <name>-apple
 target"). An app whose exact.mjs was written before then finds exact2 by a path
 relative to the app, so a worktree at another folder depth than its checkout
-needs EXACT2 set to the Exact checkout (otherwise "no exact2 at ..."), until
-./exact.mjs update rewrites it. Stim reports these Exact failures as they
-come.
+needs EXACT2 set to the Exact checkout (otherwise "no exact2 at ..."). Stim
+reports these Exact failures as they come.
 
 stim doctor --platform ios checks what ./exact.mjs ios needs on this Mac,
 where the launcher looks: Bun at the version exact.mjs pins or newer ($BUN,
