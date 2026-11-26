@@ -1924,12 +1924,11 @@ RULES
   \`status --watch\` runs one disk walk at a time machine-wide, at low
   priority, off its refresh path. A folder is due 5 minutes after its last
   walk ended (an hour when its environment is idle), or 20 walk durations if
-  longer; all watchers' walks are 4 durations apart. A node_modules is
-  walked again on reinstall, after 6h if another checkout's copy changed,
-  and daily. A failed or timed-out walk is retried after the same
-  5 minutes or hour.
-  Sizes are cached under $STIM_HOME/disk-usage, which one-shot status only
-  reads, so the fields appear once a watcher has measured.
+  longer; all watchers' walks are 4 durations apart. Checkout walks skip
+  node_modules and ios/Pods at the root and each environment; worktreeBytes
+  adds their trusted sizes. Trees are walked on reinstall, after 6h if a
+  clone changed, and daily. A failed walk retries at that interval.
+  One-shot status reads $STIM_HOME/disk-usage; fields appear after a walk.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:
