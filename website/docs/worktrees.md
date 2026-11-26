@@ -31,9 +31,10 @@ stim worktree warm`}
 />
 
 `stim worktree warm` copies the Git-ignored files the worktree is missing from
-the source checkout, such as `node_modules`, Pods and `.env`. It never
-overwrites tracked files or entries that already exist, and it does not install
-packages. If it reports a lockfile mismatch, run your install command.
+the source checkout, such as `node_modules`, Pods and `.env`. It skips an entry
+the worktree's branch does not ignore. It never overwrites tracked files or
+entries that already exist, and it does not install packages. If it reports a
+lockfile mismatch, run your install command.
 
 - To leave files out, list patterns in the source checkout's
   `.worktreeexclude` or set `worktree.exclude`.

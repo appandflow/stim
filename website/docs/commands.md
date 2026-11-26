@@ -19,10 +19,6 @@ This page is a map of the commands, so you can recognise what your agent runs.
 Your agent does not read it. It gets the flags and payloads for your installed
 version from `stim <command> --help` and `stim guide <topic>`.
 
-EAS iOS and Android run JSON includes `agent: { driver, remoteConfig, command }`.
-Use `stim agent-device <command>` to drive the recorded EAS Simulator session.
-Stim fetches its token from eas-cli for each call and passes it only in the child environment.
-
 ## Normal workflow
 
 <StimTabs
@@ -207,7 +203,9 @@ stim agent-device snapshot
 Runs [agent-device](https://github.com/callstack/agent-device) on this
 workspace's device, so your agent never passes device ids. Stim revives an idle
 workspace first and shows each action to Stim Desktop and phone viewers. The
-arguments are agent-device's own.
+arguments are agent-device's own. After `--remote eas`, it drives the recorded
+EAS Simulator session; Stim fetches the EAS token from eas-cli for each call
+and passes it only in the child environment.
 
 ## Logs and status
 
@@ -232,8 +230,9 @@ stim status --watch
 
 Shows every Stim environment on this machine: worktrees, ports, devices, dev
 servers, builds, leases, capacity and free disk. Each linked worktree shows its
-git state, such as `git: 2 changed, 1 untracked, ahead 3`. See
-`stim guide facts status`.
+git state, such as `git: 2 changed, 1 untracked, ahead 3`. `--json` may come
+from stimd's snapshot, whose age is the `ageMs` field; `--fresh` makes stimd
+read the state first. See `stim guide facts status`.
 
 ### `stats`
 
@@ -321,8 +320,9 @@ stim worktree warm --refresh
 
 Copies missing ignored files, such as `node_modules`, native build output and
 `.env` files, from the source checkout into a new linked worktree. Existing
-entries stay untouched. `--refresh` first fast-forwards the source checkout and
-reinstalls dependencies when its lockfiles moved. Let warm finish before
+entries stay untouched, and an entry the new branch does not ignore is left
+out. `--refresh` first fast-forwards the source checkout and reinstalls
+dependencies when its lockfiles moved. Let warm finish before
 anything else writes to the worktree. See [worktrees](./worktrees.md).
 
 ### `worktree remove`
@@ -337,7 +337,9 @@ linked worktree when that is safe. It refuses when the worktree has
 uncommitted, untracked or unpushed work; `--force` discards that work. A
 worktree locked with `git worktree lock` is kept even with `--force`. In the source checkout it
 reclaims the environment and keeps the files. Git branches with commits of
-their own stay.
+their own stay. On Windows it refuses when run from inside the worktree,
+because Windows cannot delete a working directory; run it from the parent
+folder with the worktree path.
 
 ### `worktree list`
 

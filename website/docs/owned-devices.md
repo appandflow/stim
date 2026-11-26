@@ -159,9 +159,10 @@ runtime, the newest one when none is used, and any runtime a project pins with
   downloaded EAS build on an EAS cloud simulator. Sessions are billed by EAS.
   Stim ends each session it creates after `remote.easMaxDurationMinutes` (30 by
   default), and `stim stop` ends it sooner. A failed install leaves the session
-  running and billed until you rerun or stop. This also works from Windows or
-  Linux with `eas-cli` 21.6.0 or later, `agent-device`, and `ngrok` or
-  `cloudflared` for the Metro tunnel. See [EAS development builds](./eas-builds.md).
+  running and billed until you rerun or stop. It needs `eas-cli` 21.6.0 or
+  later, logged in with `eas login` or `EXPO_TOKEN`. This also works from
+  Windows or Linux with `agent-device` and `ngrok` or `cloudflared` for the
+  Metro tunnel. See [EAS development builds](./eas-builds.md).
 - **An Agent Device daemon.** `stim ios --remote proxy` (or `android`) runs on
   a device an existing Agent Device daemon serves, with its URL and token.
 - EAS and proxy devices cannot prove a Release or native launch, so it stays

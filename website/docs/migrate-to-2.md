@@ -112,7 +112,7 @@ stim gc --dry-run --json`}
 - A per-home `stimd` now runs Metro, tunnels and device logs. `daemon.mode`
   controls automatic maintenance; a command that needs `stimd` can start it
   even when that is `off`.
-- A 1.40 to 1.42 daemon can keep running after its workspaces stop. While it
+- A 1.40 daemon can keep running after its workspaces stop. While it
   does, `stim start` and `stim serve` refuse and print its PID and the command
   that stops it. Check the PID before you run that command.
 - A managed engine is optional: `stim engine install` sets one up,
@@ -153,7 +153,8 @@ The pressure ladder now uses fixed rules. Remove `budget.maxCommittedMemoryGb`,
 `start`, `ios`, `android`, `web`, `macos`, `revive` and `gc` refuse when a
 removed environment variable below is set to a nonempty value, when old config
 sets `maintenance.mode` to `off` or `report`, or when it sets either old local
-idle timeout to `0`. The refusal prints the `stim settings` commands to run.
+idle timeout to `0`. The refusal prints the `stim settings` commands to run,
+with one scoped `unset` per layer that holds the key.
 
 | Old key or environment variable                                             | Replacement                                                     |
 | --------------------------------------------------------------------------- | --------------------------------------------------------------- |
