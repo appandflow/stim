@@ -76,6 +76,7 @@ import {
   PEER,
   peerTooOld,
   type OffloadJobKind,
+  type BuildRefusalReason,
   type BuildArtifactIdentity,
   type BuildOfferParams,
   type BuildFingerprintParams,
@@ -357,7 +358,7 @@ export function pickOffer({
   here: MachineCapacity;
   selected?: string;
   localEnabled?: boolean;
-  offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
+  offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string; refusalReason?: BuildRefusalReason }>;
   target: BuildTarget;
   artifact?: ArtifactLookup;
   cacheOnly?: boolean;
@@ -365,14 +366,14 @@ export function pickOffer({
   const slotsFull = here.maxBuilds > 0 && here.builds >= here.maxBuilds;
   const reasons: string[] = [];
   const candidates: PlacementCandidate[] = [];
-  const skip = (machine: string, code: string, msg: string, detail?: string[]) => {
+  const skip = (machine: string, code: string, msg: string, detail?: string[], refusalReason?: BuildRefusalReason) => {
     reasons.push(`${machine}: ${msg}`);
-    candidates.push({ machine, code, msg, ...(detail ? { detail } : {}) });
+    candidates.push({ machine, code, msg, ...(detail ? { detail } : {}), ...(refusalReason ? { refusalReason } : {}) });
   };
   const ranked: Array<{ index: number; rank: number }> = [];
-  offers.forEach(({ machine, offer, failure }, index) => {
+  offers.forEach(({ machine, offer, failure, refusalReason }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
-    if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
+    if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer', undefined, refusalReason);
     if (
       matchingArtifact(offer, artifact) &&
       (artifact !== 'swiftpm' || toolchainMismatches(target, offer.toolchain).length === 0)
@@ -428,14 +429,16 @@ function problemCode({ code }: OffloadProblem): string {
         : 'version-mismatch';
 }
 
-export type Reply = { result: unknown } | { error: { code: string; message: string } };
+export type Reply = { result: unknown } | { error: { code: string; message: string; reason?: BuildRefusalReason } };
+
+type WorkerOutcome = Record<string, unknown> & { refusalReason?: BuildRefusalReason };
 
 type ProgressEvent = {
   job: string;
   phase?: string;
   msg?: string;
   record?: Record<string, unknown>;
-  outcome?: Record<string, unknown>;
+  outcome?: WorkerOutcome;
 };
 
 function closeOnExit(socket: NoiseSocket, context: StimContext | undefined): (() => void) | undefined {
@@ -635,7 +638,7 @@ export class BuildConnection {
     kind: OffloadJobKind,
     repo: string,
     install: boolean,
-  ): Promise<{ failure: string; code: string } | null> {
+  ): Promise<{ failure: string; code: string; refusalReason?: BuildRefusalReason } | null> {
     const own = ownBuild();
     if (!own.build) return { failure: `${own.root} holds no built Stim for the machine to run`, code: 'job-refused' };
     const base = { kind, stim: STIM_VERSION, build: own.build, repo, wait: install };
@@ -652,14 +655,23 @@ export class BuildConnection {
       const upload = 'result' in asked && isJsonObject(asked.result) ? asked.result.upload : undefined;
       if (typeof upload !== 'string')
         return 'error' in asked
-          ? { failure: `${asked.error.code}: ${asked.error.message}`, code: asked.error.code }
+          ? {
+              failure: `${asked.error.code}: ${asked.error.message}`,
+              code: asked.error.code,
+              refusalReason: asked.error.reason,
+            }
           : { failure: 'the machine asked for no upload', code: 'job-refused' };
       for (let offset = 0; offset < pack.bytes.length; offset += CHUNK_BYTES)
         await this.sendBinary(pack.bytes.subarray(offset, offset + CHUNK_BYTES));
       await this.flushed();
       reply = await this.request('job.start', { ...base, upload }, JOB_INSTALL_TIMEOUT_MS);
     }
-    if ('error' in reply) return { failure: `${reply.error.code}: ${reply.error.message}`, code: reply.error.code };
+    if ('error' in reply)
+      return {
+        failure: `${reply.error.code}: ${reply.error.message}`,
+        code: reply.error.code,
+        refusalReason: reply.error.reason,
+      };
     const job = isJsonObject(reply.result) ? reply.result.job : undefined;
     if (typeof job !== 'string') return { failure: 'the machine started no job', code: 'job-refused' };
     this.job = job;
@@ -949,6 +961,7 @@ export type OffloadOutcome =
       ok: false;
       machine: string | null;
       reason: string;
+      refusalReason?: BuildRefusalReason;
       /** The worker's message when its build failed on a corrupt compilation cache. */
       compilationCacheCorrupt?: string;
     };
@@ -1000,7 +1013,7 @@ function nativeTransferInput(
 }
 
 type MachineProbe =
-  | { credential: BuildMachineCredential; failure: string; refused?: boolean }
+  | { credential: BuildMachineCredential; failure: string; refused?: boolean; refusalReason?: BuildRefusalReason }
   | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
 
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
@@ -1042,7 +1055,12 @@ async function probeMachine(
   const started = await connection.startJob(kind, identity.repo, install);
   if (started) {
     connection.close();
-    return { credential, failure: started.failure, refused: TURNED_AWAY.has(started.code) };
+    return {
+      credential,
+      failure: started.failure,
+      refused: TURNED_AWAY.has(started.code),
+      refusalReason: started.refusalReason,
+    };
   }
   const native = identity.native;
   const reply = await connection.request(
@@ -1064,7 +1082,11 @@ async function probeMachine(
   const failure = replyError(reply);
   if (failure || !('result' in reply)) {
     connection.close();
-    return { credential, failure: failure ?? 'no offer' };
+    return {
+      credential,
+      failure: failure ?? 'no offer',
+      refusalReason: 'error' in reply ? reply.error.reason : undefined,
+    };
   }
   const reported = reply.result as BuildOffer;
   const offer = {
@@ -1193,7 +1215,7 @@ export async function chooseBuildMachine({
     offers: asked.map((each) => ({
       machine: each.credential.machine,
       offer: 'offer' in each ? each.offer : null,
-      ...('failure' in each ? { failure: each.failure } : {}),
+      ...('failure' in each ? { failure: each.failure, refusalReason: each.refusalReason } : {}),
     })),
   });
   asked.forEach((each, at) => {
@@ -1430,7 +1452,7 @@ async function resumeJob(
   native?: 'xcode' | 'gradle',
 ): Promise<
   | { connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] }
-  | string
+  | { failure: string; refusalReason?: BuildRefusalReason }
   | { lost: string }
 > {
   const deadline = Date.now() + RESUME_WINDOW_MS;
@@ -1443,7 +1465,7 @@ async function resumeJob(
         ? { failure: target, refused: false }
         : await BuildConnection.open(target, credential.serverKey!, CONNECT_TIMEOUT_MS);
     if (!(connection instanceof BuildConnection)) {
-      if (connection.refused) return `it turned this machine away (${connection.failure})`;
+      if (connection.refused) return { failure: `it turned this machine away (${connection.failure})` };
       last = connection.failure;
     } else {
       if (abandoned()) {
@@ -1452,7 +1474,7 @@ async function resumeJob(
       }
       if (native === 'xcode' && !connection.can('native-xcode-build')) {
         connection.close();
-        return XCODE_UNSUPPORTED;
+        return { failure: XCODE_UNSUPPORTED };
       }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
@@ -1476,7 +1498,7 @@ async function resumeJob(
       if (reply.error.code !== 'closed' && reply.error.code !== 'timeout') {
         connection.close();
         if (reply.error.code === 'bad-request' && BUILD_JOB_UNKNOWN.test(last)) return { lost: last };
-        return `the machine did not hand the build back (${last})`;
+        return { failure: `the machine did not hand the build back (${last})`, refusalReason: reply.error.reason };
       }
       connection.drop();
     }
@@ -1484,7 +1506,7 @@ async function resumeJob(
     await wait(delay, undefined, { signal }).catch(() => {});
     delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
   }
-  return `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})`;
+  return { failure: `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})` };
 }
 
 function unsupportedBuild(connection: BuildConnection, request: BuildRequest): string | null {
@@ -1505,7 +1527,8 @@ async function syncSource(
   ignored: readonly string[] = [],
   syncPlan?: SyncPlanner,
 ): Promise<
-  { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
+  | { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string }
+  | { failure: string; refusalReason?: BuildRefusalReason }
 > {
   onEnter('sync');
   const syncStarted = Date.now();
@@ -1547,7 +1570,11 @@ async function syncSource(
     const done = index >= manifest.length;
     const reply = await connection.request('build.sync', { repo: identity.repo, files: page, done });
     const failure = replyError(reply);
-    if (failure || !('result' in reply)) return { failure: `sync: ${failure ?? 'no reply'}` };
+    if (failure || !('result' in reply))
+      return {
+        failure: `sync: ${failure ?? 'no reply'}`,
+        refusalReason: 'error' in reply ? reply.error.reason : undefined,
+      };
     missing.push(...((reply.result as { missing?: string[] }).missing ?? []));
     if (done) break;
   }
@@ -1872,15 +1899,20 @@ export async function offloadBuild(
   const native = request.platform !== 'macos' ? request.native : undefined;
   let sourceDigest: string | null = null;
   const started = Date.now();
-  const fail = (reason: string): Extract<OffloadOutcome, { ok: false }> => {
+  const fail = (reason: string, refusalReason?: BuildRefusalReason): Extract<OffloadOutcome, { ok: false }> => {
     closeOffload(choice);
-    return { ok: false, machine: choice.machine, reason: reason.replace(/\s*\n\s*/g, ' ').slice(0, MAX_REASON_CHARS) };
+    return {
+      ok: false,
+      machine: choice.machine,
+      reason: reason.replace(/\s*\n\s*/g, ' ').slice(0, MAX_REASON_CHARS),
+      ...(refusalReason ? { refusalReason } : {}),
+    };
   };
   const signal = runCancellationSignal(ambientContext());
   const checkCancelled = () => throwIfCancelled(signal, 'offloaded build');
-  let settle!: (outcome: Record<string, unknown>) => void;
+  let settle!: (outcome: WorkerOutcome) => void;
   let settled = false;
-  const outcome = new Promise<Record<string, unknown>>((resolve) => {
+  const outcome = new Promise<WorkerOutcome>((resolve) => {
     settle = (value) => {
       settled = true;
       resolve(value);
@@ -1913,7 +1945,7 @@ export async function offloadBuild(
       probe = await probeAgain();
     }
     checkCancelled();
-    if ('failure' in probe) return fail(probe.failure);
+    if ('failure' in probe) return fail(probe.failure, probe.refusalReason);
     const placement = pickOffer({
       here: choice.here,
       target: choice.target,
@@ -1938,14 +1970,14 @@ export async function offloadBuild(
     keepStaging = retried.ok;
     return retried;
   };
-  const syncFailed = async (failure: string): Promise<OffloadOutcome> =>
+  const syncFailed = async (failure: string, refusalReason?: BuildRefusalReason): Promise<OffloadOutcome> =>
     typeof choice.connection.failure === 'string'
       ? await retryAfterLoss(failure, 'dropped the connection')
-      : fail(failure);
-  const workerFailed = async (result: Record<string, unknown>): Promise<OffloadOutcome> =>
+      : fail(failure, refusalReason);
+  const workerFailed = async (result: WorkerOutcome): Promise<OffloadOutcome> =>
     jobLost
       ? await retryAfterLoss(String(result.message), 'restarted and lost the build')
-      : keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
+      : keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message), result.refusalReason), result);
   const retryCachedMiss = async (reason: string): Promise<OffloadOutcome> => {
     checkCancelled();
     note(`cache: ${choice.machine}: ${reason}`);
@@ -1986,10 +2018,16 @@ export async function offloadBuild(
       );
       resuming = false;
       if (settled) {
-        if (typeof resumed !== 'string' && 'connection' in resumed) resumed.connection.close();
+        if ('connection' in resumed) resumed.connection.close();
         return;
       }
-      if (typeof resumed === 'string') return settle({ ok: false, code: 'closed', message: `${why}; ${resumed}` });
+      if ('failure' in resumed)
+        return settle({
+          ok: false,
+          code: 'closed',
+          message: `${why}; ${resumed.failure}`,
+          refusalReason: resumed.refusalReason,
+        });
       if ('lost' in resumed) {
         jobLost = true;
         return settle({ ok: false, code: 'closed', message: `${why}; ${resumed.lost}` });
@@ -2087,7 +2125,7 @@ export async function offloadBuild(
       checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
-        return await syncFailed(synced.failure);
+        return await syncFailed(synced.failure, synced.refusalReason);
       }
       ({ syncMs, uploadedBytes } = synced);
       sourceDigest = synced.digest;
@@ -2108,7 +2146,7 @@ export async function offloadBuild(
         break;
       }
       const refused = `start: ${replyError(reply)}`;
-      if (reply.error.code === 'bad-request' || !moveOn(refused)) return fail(refused);
+      if (reply.error.code === 'bad-request' || !moveOn(refused)) return fail(refused, reply.error.reason);
     }
     if (!cacheHit) for (const each of choice.runnersUp.splice(0)) each.connection.close();
     choice.connection.watch();

@@ -1,3 +1,4 @@
+import { busyBuildMachineRemedy } from '../build-placement.ts';
 import {
   decideDevicePlacement,
   type PlacementHere,
@@ -84,4 +85,13 @@ describe('remote and remote-only placement', () => {
     });
     expect(place('remote', { ...here, devices: { count: null, max: 3, queued: 0 } }).kind).toBe('host');
   });
+});
+
+test('treats future build refusal reasons like an absent reason', () => {
+  const candidate = { machine: 'mini', code: 'busy', msg: 'Unavailable' };
+  const future = JSON.parse('{"refusalReason":"quota"}');
+  expect(busyBuildMachineRemedy('mini', [{ ...candidate, ...future }])).toBe(
+    busyBuildMachineRemedy('mini', [candidate]),
+  );
+  expect(busyBuildMachineRemedy('mini', [], future.refusalReason)).toBeUndefined();
 });

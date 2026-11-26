@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeSecret, newSecret } from '@stim-cli/core/noise-session';
 import { stimBuildId, type Endpoint, type MachineCredential } from '@stim-cli/core/state';
+import Ajv2020 from 'ajv/dist/2020.js';
+import { protocolJsonSchema } from '../src/protocol.ts';
 import { startServer, type RunningServer } from '../src/server.ts';
+import * as registry from '../src/registry.ts';
+import { BuildWorkerRoot } from '../src/build.ts';
 import { readBuildClients, revokeDevice, storeSetupSecret } from '../src/registry.ts';
 
 // The engine store installs the packed build's dependencies from the registry; a cache that survives runs keeps that
@@ -19,6 +23,10 @@ import { removeTree } from '../../stim-cli/src/engine-store/tree.ts';
 const stimPackage = fileURLToPath(new URL('../../stim-cli/', import.meta.url));
 const stimCli = join(stimPackage, 'dist', 'cli.mjs');
 const { version } = JSON.parse(readFileSync(join(stimPackage, 'package.json'), 'utf8'));
+
+const validator = new Ajv2020({ strict: false });
+validator.addSchema(protocolJsonSchema(), 'protocol');
+const validateRefusal = validator.compile({ $ref: 'protocol#/$defs/ProtocolError' });
 
 let home: string;
 let server: RunningServer | null = null;
@@ -119,14 +127,55 @@ test('counts an offload from the accepted package upload until its connection en
   expect(counts.at(-1)).toBe(0);
 });
 
+test.each([
+  ['revoked', 'access', 'no longer grants'],
+  ['removing', 'access', 'removing this build client'],
+  ['draining', 'draining', 'updating'],
+] as const)('job.start classifies %s admission without changing its error code', async (state, reason, message) => {
+  const { endpoint, credential } = await paired();
+  const connection = await open(endpoint, credential);
+  const approved = registry.readRegistries();
+  const read = state === 'revoked' ? vi.spyOn(registry, 'readRegistries') : undefined;
+  try {
+    if (read) {
+      vi.spyOn(BuildWorkerRoot.prototype, 'serve').mockImplementation(() => {
+        read.mockReturnValue({ ...approved, build: [] });
+      });
+    } else if (state === 'removing') {
+      vi.spyOn(BuildWorkerRoot.prototype, 'removing').mockReturnValue(true);
+    } else {
+      vi.spyOn(BuildWorkerRoot.prototype, 'drained', 'get').mockReturnValue('This machine is updating.');
+    }
+    for (const kind of ['offload-build', 'offload-probe'] as const) {
+      read?.mockReturnValue(approved);
+      const answer = await connection.request('job.start', { kind, stim: version, build: 'a'.repeat(12), repo: 'app' });
+      expect('error' in answer && validateRefusal(answer.error)).toBe(true);
+      expect(answer).toMatchObject({
+        error: { code: 'build-busy', reason, message: expect.stringContaining(message) },
+      });
+      read?.mockReturnValue(approved);
+      expect(await connection.startJob(kind, 'app', false)).toMatchObject({
+        code: 'build-busy',
+        refusalReason: reason,
+      });
+    }
+    expect(await runningJobs()).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+    connection.close();
+  }
+});
+
 test('an attached server refuses each offload job before starting it or accepting a package', async () => {
   const { endpoint, credential } = await paired(true);
   const connection = await open(endpoint, credential);
   const base = { stim: version, build: 'a'.repeat(12), repo: 'app' };
   for (const kind of ['offload-build', 'offload-probe']) {
     for (const payload of [{ pack: true }, { package: { name: 'stim.tgz', size: 1, sha256: 'a'.repeat(64) } }]) {
-      expect(await connection.request('job.start', { ...base, kind, ...payload })).toMatchObject({
-        error: { code: 'build-busy', message: expect.stringContaining('stim serve') },
+      const answer = await connection.request('job.start', { ...base, kind, ...payload });
+      expect('error' in answer && validateRefusal(answer.error)).toBe(true);
+      expect(answer).toMatchObject({
+        error: { code: 'build-busy', reason: 'attached', message: expect.stringContaining('stim serve') },
       });
     }
   }

@@ -1,3 +1,4 @@
+import type { BuildRefusalReason } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
@@ -84,6 +85,7 @@ export async function buildMacosBundle({
     let offloadFallback: string | null = null;
     let asked: PlacementCandidate[] = [];
     let failedMachine: string | undefined;
+    let refusalReason: BuildRefusalReason | undefined;
     const fallBack = (reason: string) => {
       writer.write(
         buildPlacementRecord({
@@ -99,7 +101,11 @@ export async function buildMacosBundle({
         }),
       );
       if (namedBuildMachine(buildMachine))
-        throw new OffloadRefusal(buildMachine, reason, busyBuildMachineRemedy(buildMachine, asked, reason));
+        throw new OffloadRefusal(
+          buildMachine,
+          reason,
+          busyBuildMachineRemedy(buildMachine, failedMachine ? [] : asked, refusalReason),
+        );
       requireLocalBuild(buildMachine, reason);
       offloadFallback = reason;
       if (record) record.offloadFallback = reason;
@@ -232,7 +238,10 @@ export async function buildMacosBundle({
             note: write,
           });
           progress.place(null);
-          if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
+          if (!outcome.ok) {
+            refusalReason = outcome.refusalReason;
+            throw new Error(`${outcome.machine}: ${outcome.reason}`);
+          }
           progress.step('install');
           if (outcome.cacheHit) {
             await reidentifyBundle(context, outcome.artifactPath, bundleId, displayName);

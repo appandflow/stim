@@ -128,7 +128,9 @@ interface BuildSocket {
   send(data: Buffer, options: { binary: boolean }): void;
 }
 
-const refusal = (code: ErrorCode, message: string): Refusal => ({ error: { code, message } });
+const refusal = (code: ErrorCode, message: string, reason?: ProtocolError['reason']): Refusal => ({
+  error: { code, message, ...(reason ? { reason } : {}) },
+});
 
 /** A manifest path the mirror can hold: relative, normalized, and never inside `.git`. */
 function validBuildPath(path: unknown): path is string {
@@ -944,7 +946,7 @@ export class BuildHost {
           return refusal('build-refused', 'This offload job is ending.');
         if (engine) {
           const lock = await takeLock(engine.root, '.lock.sock');
-          if (!lock) return refusal('build-busy', 'The engine store is busy; retry the build.');
+          if (!lock) return refusal('build-busy', 'The engine store is busy; retry the build.', 'capacity');
           try {
             if (this.closed || options.session.signal.aborted)
               return refusal('build-refused', 'This offload job is ending.');
@@ -959,7 +961,8 @@ export class BuildHost {
               details: { drained: false },
             });
             if (attempt.pending) releaseClaim(attempt.pending);
-            if (!attempt.acquired) return refusal('build-busy', 'The selected engine is busy; retry the build.');
+            if (!attempt.acquired)
+              return refusal('build-busy', 'The selected engine is busy; retry the build.', 'capacity');
             ownership.claim = attempt.acquired;
           } finally {
             await lock.release();
@@ -1005,6 +1008,7 @@ export class BuildHost {
       return refusal(
         'build-busy',
         `This machine declines the build: ${capacity.declined}${numbers ? ` (${numbers})` : ''}.`,
+        'capacity',
       );
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
@@ -1013,7 +1017,11 @@ export class BuildHost {
         const unknown = unknownGradleProcess(gradleUserHome(clientDir), new Set());
         if (unknown) throw unknown;
       } catch (error) {
-        return refusal('build-busy', `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`);
+        return refusal(
+          'build-busy',
+          `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`,
+          'capacity',
+        );
       }
     }
     let claim: ClaimHandle;
@@ -1026,7 +1034,7 @@ export class BuildHost {
       });
       if (!attempt.acquired) {
         if (attempt.pending) releaseClaim(attempt.pending);
-        return refusal('build-busy', 'Another build of this repository is running on this machine.');
+        return refusal('build-busy', 'Another build of this repository is running on this machine.', 'capacity');
       }
       claim = attempt.acquired;
     } catch (error) {
@@ -1051,6 +1059,7 @@ export class BuildHost {
         return refusal(
           'build-busy',
           `This machine declines the build: all ${maxBuilds} build slots busy (${capacityLine(capacity.loadPerCore, capacity.running, capacity.diskFreeBytes)}).`,
+          'capacity',
         );
       }
       slot = taken?.claim ?? null;
@@ -1625,7 +1634,7 @@ export class BuildSession {
     }
     if (typeof params.done !== 'boolean') return refusal('bad-request', 'build.sync needs params.done.');
     const low = this.host.lowDisk();
-    if (low) return refusal('build-busy', `This machine declines the upload: ${low}.`);
+    if (low) return refusal('build-busy', `This machine declines the upload: ${low}.`, 'capacity');
     if (this.done || this.repo !== params.repo) {
       this.fingerprintPending = true;
       this.fingerprintBytes = 0;

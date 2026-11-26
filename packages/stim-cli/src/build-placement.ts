@@ -1,3 +1,4 @@
+import type { BuildRefusalReason } from '@stim-cli/core/protocol';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { operationState } from './engine/operation-state.ts';
 import { parseMachine, automaticMachineEnabled, placementWord, readBuildMachines } from '@stim-cli/core/state';
@@ -67,10 +68,19 @@ export function prebuildFailedRemedy(machine: string, reason: string): string | 
 export function busyBuildMachineRemedy(
   machine: string,
   candidates: PlacementCandidate[],
-  reason?: string,
+  refusalReason?: BuildRefusalReason,
 ): string | undefined {
-  return reason?.includes('build-busy: ') ||
-    candidates.some((candidate) => candidate.machine === machine && candidate.code === 'busy')
+  const candidate = candidates.find((each) => each.machine === machine);
+  const received = refusalReason ?? candidate?.refusalReason;
+  const reason =
+    received === 'capacity' || received === 'draining' || received === 'access' || received === 'attached'
+      ? received
+      : undefined;
+  if (reason === 'access')
+    return `Run stim remote add ${machine} to request a new build approval. A person on the worker must approve it, or rerun with --remote-build auto or local.`;
+  if (reason === 'attached')
+    return `Follow ${machine}'s message above: after the attached command ends, run stim serve outside the agent command, then retry.`;
+  return reason === 'capacity' || reason === 'draining' || (!reason && candidate?.code === 'busy')
     ? `${machine} is not taking builds now; the reason above says why. Run the same command again once it accepts builds, or rerun with --remote-build auto or local to build elsewhere.`
     : undefined;
 }

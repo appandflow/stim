@@ -184,6 +184,12 @@ test('validates archive log completion and its subscription identifier', () => {
   expect(isRpcEvent({ event: 'logs-ended', subscription: 1 })).toBe(false);
 });
 
+test('accepts known and future refusal reasons but rejects non-string reasons', () => {
+  expect(isRpcError({ code: 'build-busy', message: 'Unavailable', reason: 'capacity' })).toBe(true);
+  expect(isRpcError({ code: 'build-busy', message: 'Unavailable', reason: 'quota' })).toBe(true);
+  expect(isRpcError({ code: 'build-busy', message: 'Unavailable', reason: 1 })).toBe(false);
+});
+
 test('validates notification targets, frame artwork and future error codes', () => {
   expect(isRpcError({ code: 'future-error', message: 'Unavailable' })).toBe(true);
   expect(isRpcError({ code: 1, message: 'Unavailable' })).toBe(false);

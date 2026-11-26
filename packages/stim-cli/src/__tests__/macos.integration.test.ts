@@ -1540,6 +1540,36 @@ describe('macOS build placement and promotion', () => {
     },
   );
 
+  test.each([
+    ['access', 'This machine no longer grants this device build access.', 'stim remote add mini'],
+    ['capacity', 'This machine declines the build: no free build slots.', 'mini is not taking builds now'],
+    ['draining', 'This machine is stopping.', 'mini is not taking builds now'],
+    ['attached', 'Run stim serve outside the agent command.', "Follow mini's message above"],
+    [undefined, 'This machine no longer grants this device build access.', 'doctor --fix'],
+  ] as const)(
+    'uses the %s worker remedy on choice and build.start refusals',
+    async (refusalReason, message, remedy) => {
+      writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+      const reason = `start: build-busy: ${message}`;
+      vi.mocked(offload.chooseBuildMachine).mockImplementation(async ({ onCandidates }) => {
+        onCandidates?.([{ machine: 'mini', code: 'unreachable', msg: reason, refusalReason }]);
+        return `mini: ${reason}`;
+      });
+      await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        remedy: expect.stringContaining(remedy),
+      });
+      vi.mocked(offload.chooseBuildMachine).mockResolvedValue(choice);
+      vi.spyOn(offload, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason, refusalReason });
+      await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        remedy: expect.stringContaining(remedy),
+      });
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    },
+  );
+
   it('a strict unpaired worker refuses before asking for an offer or running Swift', async () => {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     vi.mocked(machines.pairedMachines).mockReturnValue([]);
