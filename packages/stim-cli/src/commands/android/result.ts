@@ -1,3 +1,4 @@
+import { remoteProfilePath } from '../../engine/agent-device.ts';
 import chalk from 'chalk';
 import type { AndroidRuntimeKind } from './launch.ts';
 import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
@@ -343,6 +344,12 @@ export function reportAndroidResult({
   writer.close();
 
   if (record.devicePlacement) facts.devicePlacement = record.devicePlacement;
+  if (record.devicePlacement?.decision === 'eas')
+    facts.agent = {
+      driver: 'agent-device',
+      remoteConfig: remoteProfilePath(root),
+      command: 'stim agent-device <command>',
+    };
   const { physical, adapter, device: localDevice } = agentDevicePlacement ?? {};
   const openCommand =
     launchState === true && !host && !physical && !adapter && localDevice?.owned && serial
@@ -390,7 +397,12 @@ export function reportAndroidResult({
           ? 'command' in host.agent
             ? [phaseLine('agent-device', host.agent.command)]
             : []
-          : [phaseLine('agent-device', openCommand ?? `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
+          : [
+              phaseLine(
+                'agent-device',
+                facts.agent?.command ?? openCommand ?? `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`,
+              ),
+            ]),
       ].join('\n'),
     );
     if (links) out(chalk.dim(workspaceLinkLine(links)));

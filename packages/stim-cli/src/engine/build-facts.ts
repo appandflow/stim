@@ -68,6 +68,7 @@ export interface IosFacts {
   metroPort?: number | null;
   logs: LogsInfo;
   agentDevice?: { stateDir: string };
+  agent?: { driver: 'agent-device'; remoteConfig: string; command: string };
   durationMs?: number;
   webPreviewUrl?: string | null;
   lease?: RunLeaseFacts | null;
@@ -109,6 +110,7 @@ export interface AndroidFacts {
   devClientUrl: string | null;
   logs: string | null;
   agentDevice?: { stateDir: string };
+  agent?: { driver: 'agent-device'; remoteConfig: string; command: string };
   durationMs: number | null;
   lease?: RunLeaseFacts | null;
   devServer?: DevServerStart;

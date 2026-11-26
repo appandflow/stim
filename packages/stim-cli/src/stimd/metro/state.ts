@@ -1,3 +1,4 @@
+import type { WorkspaceState } from '@stim-cli/core/state';
 import {
   readWorkspaceState,
   withWorkspaceStateLock,
@@ -201,7 +202,11 @@ export function clearWorkspaceLaunches(root: string, slot: string): void {
 }
 
 export function readRemoteSession(root: string): RemoteSessionRecord | null {
-  const record = readWorkspaceState(root)?.remoteDevice;
+  return parseRemoteSession(readWorkspaceState(root));
+}
+
+export function parseRemoteSession(state: WorkspaceState | null): RemoteSessionRecord | null {
+  const record = state?.remoteDevice;
   if (!record || typeof record !== 'object') return null;
   const id = (record as { sessionId?: unknown }).sessionId;
   if (typeof id !== 'string' || id.length === 0) return null;

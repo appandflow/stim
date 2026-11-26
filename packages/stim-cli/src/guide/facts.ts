@@ -293,6 +293,9 @@ leased until <time>" for each one.`,
                   on a local device. Hand it to the human -- it is the only way
                   to see a device that is not on this machine. Never open it ON
                   the device; it is a page, not a deep link.
+  agent           only on an EAS Simulator run: { driver, remoteConfig,
+                  command }. command is stim agent-device <command>; the
+                  remoteConfig file holds no token, so use the command
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
   buildMachine    selected auto, local or machine name, including cache hits
@@ -466,6 +469,7 @@ leased until <time>" for each one.`,
                   error, and this field is separate from cacheHit. On an
                   offloaded APK it is the remote machine's ccache
   logs            the workspace log directory
+  agent           only on an EAS Simulator run, as for ios
   agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
   devServer       present only when this run started the workspace's dev

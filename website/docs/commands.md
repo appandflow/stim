@@ -32,6 +32,10 @@ for the workspace's device. A local macOS launch prints the app-scoped
 `agent-device open` command once LaunchServices lists the app. With `--json`,
 these local handoff commands go to stderr so stdout remains parseable.
 
+EAS iOS and Android run JSON includes `agent: { driver, remoteConfig, command }`.
+Use `stim agent-device <command>` to drive the recorded EAS Simulator session.
+Stim fetches its token from eas-cli for each call and passes it only in the child environment.
+
 ## Normal workflow
 
 <StimTabs

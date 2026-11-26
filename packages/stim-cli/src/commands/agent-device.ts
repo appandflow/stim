@@ -41,7 +41,10 @@ import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } fro
 import { publishPresence } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
+import { daemonEnv, remoteProfilePath } from '../engine/agent-device.ts';
+import { getSessionArgs, inspectSessionForTeardown, remoteDaemonFrom } from '../engine/eas-simulator.ts';
+import { resolveEasCliBin } from '../engine/remote-cache.ts';
+import { parseRemoteSession, readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -53,7 +56,7 @@ type Platform = 'ios' | 'android';
 export interface WorkspaceDevice {
   platform: Platform;
   slot: string;
-  kind: 'owned' | 'physical' | 'hosted';
+  kind: 'owned' | 'physical' | 'hosted' | 'eas';
   /** The UDID or serial; null for a hosted session, and for an owned emulator that is not running. */
   id: string | null;
   name: string | null;
@@ -61,6 +64,7 @@ export interface WorkspaceDevice {
   avdName?: string;
   /** A hosted session's agent-device remote config; null when its host offers no agent control. */
   remoteConfig?: string | null;
+  sessionId?: string;
 }
 
 export interface AgentDeviceRefusal {
@@ -200,15 +204,17 @@ function refusal(code: string, message: string, remedy: string): { refusal: Agen
 
 function describe(device: WorkspaceDevice): string {
   const what =
-    device.kind === 'hosted'
-      ? `hosted ${device.platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`
-      : device.kind === 'physical'
-        ? `${device.platform === 'ios' ? 'iPhone' : 'Android phone'} ${device.id}`
-        : `${device.platform === 'ios' ? 'simulator' : 'emulator'} ${device.id ?? device.avdName}`;
+    device.kind === 'eas'
+      ? `EAS Simulator session ${device.sessionId}`
+      : device.kind === 'hosted'
+        ? `hosted ${device.platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`
+        : device.kind === 'physical'
+          ? `${device.platform === 'ios' ? 'iPhone' : 'Android phone'} ${device.id}`
+          : `${device.platform === 'ios' ? 'simulator' : 'emulator'} ${device.id ?? device.avdName}`;
   return device.slot === 'default' ? what : `${what} (slot ${device.slot})`;
 }
 
-const KIND_ORDER: WorkspaceDevice['kind'][] = ['physical', 'hosted', 'owned'];
+const KIND_ORDER: WorkspaceDevice['kind'][] = ['physical', 'hosted', 'eas', 'owned'];
 
 /**
  * Picks this workspace's device for an agent-device command. `--slot` picks the slot, `--platform` the platform
@@ -290,11 +296,11 @@ export function planAgentDevice(
   if (!device)
     return refusal('STIM_NO_DEVICE', 'This workspace has no device to drive.', 'Run `stim ios|android` first.');
   const config = flags['--remote-config'];
-  if (config !== undefined && (device.kind !== 'hosted' || config !== device.remoteConfig)) {
+  if (config !== undefined && (!['hosted', 'eas'].includes(device.kind) || config !== device.remoteConfig)) {
     return refusal(
       'STIM_BAD_ARG',
       `${config} is not the agent-device remote config of this workspace's device.`,
-      "Leave out --remote-config: stim agent-device passes the hosted session's config itself.",
+      "Leave out --remote-config: stim agent-device passes the remote session's config itself.",
     );
   }
   const second = rest[next];
@@ -329,6 +335,17 @@ export function agentDeviceArgs(
   root: string,
 ): { args: string[]; session: string | null } | { refusal: AgentDeviceRefusal } {
   const { device } = plan;
+  if (device.kind === 'eas') {
+    return {
+      args: [
+        ...plan.args,
+        ...(plan.session ? ['--session', plan.session] : []),
+        '--remote-config',
+        remoteProfilePath(root),
+      ],
+      session: null,
+    };
+  }
   const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
   const name = plan.session ?? defaultSessionName(root, device);
   if (device.kind === 'hosted') {
@@ -407,6 +424,19 @@ export function workspaceDevices(
       devices.push({ platform, slot, kind: 'hosted', id: null, name: null, remoteConfig });
     }
   }
+  const remote = parseRemoteSession(state);
+  if (remote?.platform) {
+    const index = devices.findIndex((device) => device.platform === remote.platform && device.slot === 'default');
+    if (index !== -1) devices.splice(index, 1);
+    devices.push({
+      platform: remote.platform,
+      slot: 'default',
+      kind: 'eas',
+      id: null,
+      name: null,
+      sessionId: remote.sessionId,
+    });
+  }
   for (const [key, record] of Object.entries(parseWorkspaceLeases(state?.deviceLeases))) {
     const parsed = parseDeviceSlotKey(key);
     if (!parsed) continue;
@@ -429,6 +459,7 @@ export function needsRevive(
 
 async function resolveDevices(root: string, project: ProjectRecord | null, state: WorkspaceState | null) {
   const devices = workspaceDevices(project, state);
+  for (const device of devices) if (device.kind === 'eas') device.remoteConfig = remoteProfilePath(root);
   const launches = readWorkspaceLaunches(root);
   for (const device of devices) {
     if (device.platform !== 'android' || device.kind !== 'owned' || !device.avdName) continue;
@@ -728,20 +759,54 @@ async function execute(
   run: Run | null,
   root: string | null,
 ): Promise<void> {
-  const local = root !== null && run?.plan.device.kind !== 'hosted';
+  const remote = run && ['hosted', 'eas'].includes(run.plan.device.kind);
+  const local = root !== null && !remote;
   if (local) migrateWorkspaceAgentDeviceDir(root);
   const env = { ...process.env, ...(local ? { AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(root) } : {}) };
+  if (root && run?.plan.device.kind === 'eas') {
+    const device = run.plan.device;
+    const sessionId = device.sessionId ?? '';
+    const cli = resolveEasCliBin(root);
+    if (!cli)
+      return refuse(
+        {
+          code: 'STIM_NO_DEVICE',
+          message: 'EAS Simulator requires eas-cli.',
+          remedy: 'Install eas-cli: npm install --global eas-cli',
+        },
+        argv.includes('--json'),
+      );
+    try {
+      const stdout = await getExecutor().runFileAsync(cli.file, getSessionArgs(sessionId), {
+        cwd: root,
+        timeoutMs: 30_000,
+        omitEnv: ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'],
+      });
+      const inspection = inspectSessionForTeardown(stdout, sessionId);
+      if (inspection.action !== 'stop' || !['NEW', 'IN_PROGRESS'].includes(inspection.status)) throw new Error();
+      const daemon = remoteDaemonFrom(JSON.parse(stdout).remoteConfig);
+      if (!daemon) throw new Error();
+      Object.assign(env, daemonEnv(daemon));
+    } catch {
+      return refuse(
+        {
+          code: 'STIM_NO_DEVICE',
+          message: 'The recorded EAS Simulator session is unavailable or ended.',
+          remedy: `Run \`stim ${device.platform} --remote eas\` to launch a session.`,
+        },
+        argv.includes('--json'),
+      );
+    }
+  }
   const sessionsDir = root ? join(workspaceAgentDeviceDir(root), 'sessions') : null;
   const command = run?.plan.command ?? null;
   const tracked =
-    root && run?.session && sessionsDir && command && COMMAND_NAME.test(command)
+    local && root && run?.session && sessionsDir && command && COMMAND_NAME.test(command)
       ? { root, session: run.session, sessionsDir, command, device: run.plan.device }
       : null;
   const cursor = tracked ? eventsCursor(tracked.sessionsDir) : {};
   const hosted =
-    root && run?.plan.device.kind === 'hosted' && command && COMMAND_NAME.test(command)
-      ? { root, device: run.plan.device, command }
-      : null;
+    root && remote && command && COMMAND_NAME.test(command) ? { root, device: run.plan.device, command } : null;
   const shown = tracked ?? hosted;
   const target: Omit<PresencePublishParams, 'command' | 'phase'> | null = shown
     ? {
@@ -786,7 +851,7 @@ async function execute(
         src: 'agent',
         level: failed ? 'error' : 'info',
         event: failed ? 'agent_failed' : 'agent_action',
-        msg: `Hosted agent-device ${hosted.command} ${failed ? 'failed' : 'finished'}`,
+        msg: `${hosted.device.kind === 'eas' ? 'EAS' : 'Hosted'} agent-device ${hosted.command} ${failed ? 'failed' : 'finished'}`,
         command: hosted.command,
         platform: hosted.device.platform,
         ...(target.slot === undefined ? {} : { slot: target.slot }),

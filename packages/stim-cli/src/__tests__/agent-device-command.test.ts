@@ -1,3 +1,4 @@
+import { remoteProfilePath } from '../engine/agent-device.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -216,4 +217,27 @@ describe('needsRevive', () => {
     expect(needsRevive(project, {}, sim)).toBe(false);
     expect(needsRevive(project, idle, { ...sim, kind: 'physical' })).toBe(false);
   });
+});
+
+test('EAS replaces the owned default device until stop clears it, even past its expiry, and uses the remote profile', () => {
+  const project: ProjectRecord = { platforms: { ios: { deviceUdid: 'SIM-1', owned: true } } };
+  const state: WorkspaceState = {
+    remoteDevice: { sessionId: 'eas-1', platform: 'ios', expiresAt: '2026-11-27T00:00:00Z' },
+  };
+  const devices = workspaceDevices(project, state, Date.parse('2026-11-26T00:00:00Z'));
+  expect(devices).toHaveLength(1);
+  expect(devices[0]).toMatchObject({ kind: 'eas', sessionId: 'eas-1', slot: 'default' });
+  const device = devices[0];
+  if (!device) throw new Error('Expected EAS device');
+  expect(needsRevive(project, state, device)).toBe(false);
+  expect(args(devices, ['snapshot', '-i'])).toEqual({
+    args: ['snapshot', '-i', '--remote-config', remoteProfilePath('/work/app')],
+    session: null,
+  });
+  expect(args(devices, ['snapshot', '--session', 'mine'])).toEqual({
+    args: ['snapshot', '--session', 'mine', '--remote-config', remoteProfilePath('/work/app')],
+    session: null,
+  });
+  expect(workspaceDevices(project, null)).toMatchObject([{ kind: 'owned', id: 'SIM-1' }]);
+  expect(workspaceDevices(project, state, Date.parse('2026-11-28T00:00:00Z'))).toMatchObject([{ kind: 'eas' }]);
 });
