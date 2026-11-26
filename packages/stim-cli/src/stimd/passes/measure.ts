@@ -4,6 +4,8 @@ import { configDir, metroCacheRoot, buildCacheRoot, type StimContext } from '@st
 import {
   buildWorkerRoot,
   loadConfig,
+  readDiskUsage,
+  readDiskUsagePartial,
   readDaemonSnapshot,
   sharedCcache,
   sharedCompilationCache,
@@ -12,7 +14,8 @@ import {
 } from '@stim-cli/core/state';
 import { readVolumeSpace, readVolumeSpaceAsync } from './budget.ts';
 import { memoryPressure } from '../../daemon/pressure.ts';
-import { measuredDirectorySizeAsync } from '../../fs-util.ts';
+import { refreshMeasure } from '../../disk-usage.ts';
+import { resolveMaintenanceSettings } from './settings.ts';
 import { readHostMemoryPressure, type HostMemoryPressure } from '../../host-memory.ts';
 import { discoverCachesAsync, type CacheDescriptor } from '../../cache/caches.ts';
 import { planCacheEmptying } from '../../commands/gc/caches.ts';
@@ -179,22 +182,40 @@ export async function measureSizes(
         : 'other';
     known.push({ name: cache.name, dir: cache.dir, category });
   }
+  const settings = resolveMaintenanceSettings();
+  const reuse = new Map<MaintenanceSize['category'], boolean>();
+  for (const [category, capGb] of [
+    ['build-cache', settings.buildCacheMaxGb],
+    ['metro-cache', settings.metroCacheMaxGb],
+    ['compilation-cache', settings.swiftCompilationCacheMaxGb],
+  ] as const) {
+    const measures = known.filter((entry) => entry.category === category).map((entry) => readDiskUsage(entry.dir));
+    reuse.set(
+      category,
+      capGb === 0 ||
+        (known.filter((entry) => entry.category === category).every((entry) => !readDiskUsagePartial(entry.dir)) &&
+          measures.every((measure) => measure !== null) &&
+          measures.reduce((total, measure) => total + (measure?.bytes ?? 0), 0) <= capGb * 1024 ** 3),
+    );
+  }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
     await between?.();
-    const bytes = await measuredDirectorySizeAsync(entry.dir, {
+    const { measure, partial } = await refreshMeasure(entry.dir, {
       timeoutMs: 120_000,
-      ...(operation ? { signal: operation.signal, operation } : {}),
+      operation,
+      maxAgeMs: 6 * 60 * 60_000,
+      valid: () => (reuse.get(entry.category) ?? true) && !readDiskUsagePartial(entry.dir),
     });
-    if (bytes === null) {
+    if (!measure || partial) {
       failure(entry.dir);
       continue;
     }
     const blocked = cacheBlocked(entry, caches);
     sizes.push({
       ...entry,
-      bytes,
-      measuredAt: now,
+      bytes: measure.bytes,
+      measuredAt: Date.parse(measure.measuredAt),
       ...(blocked ? { blocked } : {}),
     });
   }

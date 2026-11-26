@@ -1,3 +1,5 @@
+import { diskUsageCacheFile } from '@stim-cli/core/state';
+import * as privateSize from '../private-size.ts';
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
@@ -151,6 +153,7 @@ describe('the Cargo target cap over a root target/', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     delete afterProblem.run;
     protectedRoots.home = '/nonexistent-home';
     protectedRoots.temps = [];
@@ -167,6 +170,40 @@ describe('the Cargo target cap over a root target/', () => {
         file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
     });
   }
+
+  it.each([
+    { label: 'at cap', bytes: 1024 ** 3, hours: 1, fresh: false },
+    { label: 'over cap', bytes: 1024 ** 3 + 1, hours: 1, fresh: true },
+    { label: 'expired', bytes: 100, hours: 6, fresh: true },
+    { label: 'partial under cap', bytes: 100, hours: 1, fresh: true, partial: true },
+  ])('Cargo reuse: $label', async ({ bytes, hours, fresh, partial }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    const dir = monorepoTarget(main);
+    upsertProject(main, {});
+    noProcesses();
+    const file = diskUsageCacheFile(dir);
+    mkdirSync(join(file, '..'), { recursive: true });
+    const at = Date.now() - hours * 3_600_000;
+    writeFileSync(
+      file,
+      JSON.stringify({
+        path: dir,
+        bytes,
+        privateBytes: null,
+        measuredAt: new Date(at).toISOString(),
+        ...(partial ? { partial: true } : {}),
+      }),
+    );
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '1');
+    const walk = vi.spyOn(privateSize, 'measureTree').mockResolvedValue({ bytes: 50, privateBytes: null });
+    const sizes = await measureCargoTargets(Date.now());
+    expect(sizes.find((size) => size.dir === dir)).toMatchObject({
+      bytes: fresh ? 50 : bytes,
+      measuredAt: fresh ? Date.now() : at,
+    });
+    expect(walk.mock.calls.filter(([path]) => path === dir)).toHaveLength(fresh ? 1 : 0);
+  });
 
   it('a maintenance Cargo trim keeps the partial flag when its size walk times out', async () => {
     const wt = linked('partial', join(base, 'roots'));

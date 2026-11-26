@@ -11,7 +11,7 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
-import { measureTree } from '../private-size.ts';
+import { refreshMeasure } from '../disk-usage.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { androidLayoutSetting, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
@@ -335,8 +335,13 @@ async function measure(
   const darwin = process.platform === 'darwin';
   const size = async (dir: string) => {
     if (privateDirs.has(dir)) {
-      const tree = await measureTree(dir, { timeoutMs: SIZE_TIMEOUT_MS, operation });
-      return { dir, bytes: tree?.bytes ?? null, privateBytes: tree?.privateBytes ?? null };
+      const { measure: tree, partial } = await refreshMeasure(dir, {
+        timeoutMs: SIZE_TIMEOUT_MS,
+        operation,
+        private: true,
+        maxAgeMs: 60 * 60_000,
+      });
+      return { dir, bytes: tree?.bytes ?? null, privateBytes: partial ? null : (tree?.privateBytes ?? null) };
     }
     const result = await measureDu(['-sk', dir], operation);
     return { dir, bytes: result.complete ? (result.sizes.get(dir) ?? null) : null };

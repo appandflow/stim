@@ -1,7 +1,8 @@
+import * as privateSize from '../private-size.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
-import { sharedCompilationCache } from '@stim-cli/core/state';
+import { sharedCompilationCache, diskUsageCacheFile } from '@stim-cli/core/state';
 import { cacheBlocked, measureSizes, sizeScanDeferred } from '../stimd/passes/measure.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
@@ -32,6 +33,7 @@ afterEach(() => {
   resetExecutor();
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
+  vi.unstubAllEnvs();
   delete process.env.STIM_HOME;
 });
 
@@ -54,7 +56,7 @@ test('high load defers scans and every measured output/cache uses a bounded du c
   setExecutor({
     runFile: (file, args, opts) => {
       calls.push({ file, args, timeout: opts?.timeoutMs });
-      if (file === 'du') return `123\t${args[1]}\n`;
+      if (file === 'du' || file === 'nice') return `123\t${args.at(-1)}\n`;
       return '';
     },
     runFileQuiet: () => null,
@@ -76,10 +78,10 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     ]),
   );
   expect(failures).toEqual([]);
-  const duCalls = calls.filter((call) => call.file === 'du');
+  const duCalls = calls.filter((call) => call.file === 'du' || call.file === 'nice');
   expect(duCalls.length).toBeGreaterThanOrEqual(3);
   for (const call of duCalls) {
-    expect(call.args[0]).toBe('-sk');
+    expect(call.args).toContain('-sk');
     expect(call.timeout).toBe(120_000);
   }
   expect(existsSync(sentinel)).toBe(true);
@@ -91,7 +93,7 @@ test('the link left at the old compilation-cache name is measured once, as the r
   symlinkSync('compilation-cache.noindex', join(home, 'compilation-cache'), 'junction');
   register({ dir: join(home, 'compilation-cache'), name: 'Xcode compilation cache', prune: 'atomic' });
   setExecutor({
-    runFile: (file, args) => (file === 'du' ? `123\t${args[1]}\n` : ''),
+    runFile: (file, args) => (file === 'du' || file === 'nice' ? `123\t${args.at(-1)}\n` : ''),
     runFileQuiet: () => null,
     runQuiet: () => null,
     findExecutable: () => null,
@@ -129,4 +131,42 @@ test('only a claim on the Swift compilation cache blocks emptying it, not build 
   expect(cacheBlocked(cas(), [])).toBe(`the ios build (pid ${process.ppid} in /w/ios) may be using it`);
   writeFileSync(claim, '{');
   expect(cacheBlocked(cas(), [])).toBe(`the cache claim ${claim} is unresolved, so a build may be using it`);
+});
+
+test.each([
+  { label: 'uncapped', cap: 0, age: 1, bytes: 200, walked: false },
+  { label: 'under cap', cap: 1, age: 1, bytes: 100, walked: false },
+  { label: 'expired', cap: 1, age: 6, bytes: 100, walked: true },
+  { label: 'category total over cap', cap: 1, age: 1, bytes: 600_000_000, walked: true },
+  { label: 'missing sibling', cap: 1, age: 1, bytes: 100, walked: true, missing: true },
+  { label: 'partial sibling', cap: 1, age: 1, bytes: 100, walked: true, partial: true },
+])('cache reuse: $label', async ({ cap, age, bytes, walked, missing, partial }) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+  vi.stubEnv('STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB', String(cap));
+  saveConfig({ projects: {}, repos: {} });
+  const dirs = [sharedCompilationCache(), join(home, 'compilation-cache')];
+  const measuredAt = Date.now() - age * 3_600_000;
+  for (const [i, dir] of dirs.entries()) {
+    mkdirSync(dir, { recursive: true });
+    const file = diskUsageCacheFile(dir);
+    mkdirSync(join(file, '..'), { recursive: true });
+    if (!(missing && i === 1))
+      writeFileSync(
+        file,
+        JSON.stringify({
+          path: dir,
+          bytes,
+          privateBytes: null,
+          measuredAt: new Date(measuredAt).toISOString(),
+          ...(partial && i === 1 ? { partial: true } : {}),
+        }),
+      );
+  }
+  const walk = vi.spyOn(privateSize, 'measureTree').mockResolvedValue({ bytes: 50, privateBytes: null });
+  const sizes = await measureSizes(Date.now(), () => {}, undefined, []);
+  expect(
+    sizes.filter((size) => dirs.includes(size.dir)).map(({ bytes: count, measuredAt: at }) => [count, at]),
+  ).toEqual(dirs.map(() => [walked ? 50 : bytes, walked ? Date.now() : measuredAt]));
+  expect(walk.mock.calls.filter(([dir]) => dirs.includes(dir))).toHaveLength(walked ? 2 : 0);
 });

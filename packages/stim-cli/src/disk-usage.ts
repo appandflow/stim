@@ -236,6 +236,8 @@ export interface RefreshOptions {
    * outcome is `busy`.
    */
   claim?: boolean;
+  /** Runs the walk at low priority without taking the walk claim. */
+  lowPriority?: true;
   /** Declares the walk as a child of this operation, which the walk's abort also stops. */
   operation?: StimContext;
   /** The entries to sum instead of `path` itself, such as a checkout without the worktrees nested in it. */
@@ -368,7 +370,7 @@ export async function refreshMeasure(
       size = await measureTree(path, {
         timeoutMs: options.timeoutMs,
         operation,
-        ...(claim ? { lowPriority: true } : {}),
+        ...(claim || options.lowPriority ? { lowPriority: true } : {}),
         ...(claim && !operation ? { onSpawn: holdOn(claim) } : {}),
         ...(targets ? { targets } : {}),
         ...((options.private ?? dependency) ? {} : { private: false }),

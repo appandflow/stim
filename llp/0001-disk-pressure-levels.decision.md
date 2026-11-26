@@ -921,7 +921,7 @@ under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
 build admission reads them, only the order of the pressure ladder's Cargo
 trims: the
-caps read the maintenance size scan, the
+caps read the maintenance size scan (which can reuse these measurements under the cap rule below), the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
 
@@ -1086,6 +1086,20 @@ window at critical and the editor-reading rule.
 The setting name, the definition of
 activity, the 7-day floor on the runtime keep and the mount-point rule were
 chosen by the coordinator and the reviews of #5540, not by the maintainer.
+
+The hourly size scan reuses shared, leftover and registered cache sizes for
+6 hours. For each capped category (build, Metro and Swift compilation), reuse
+requires a complete cached measurement for every entry and a total at or under
+the nonzero cap; otherwise the whole category is measured fresh. Uncapped
+categories and a cap of zero use the age limit alone. Cargo targets reuse sizes
+at or under their cap for 6 hours; over-cap targets are measured fresh. Growth
+makes these sizes stale low, delaying a trim safely; fresh over-cap totals avoid
+stale high sizes trimming more after removals. The folders a Cargo trim will
+remove still get fresh walks, since stale low there could delete more. Other
+Stim homes and private machine-cache report folders reuse sizes for 1 hour;
+either stale direction affects display only. The 6 hour and 1 hour maximum
+ages and the under-cap reuse rule were chosen by the implementer of #6389,
+not by the maintainer.
 
 ## A dependency tree's size holds until its clone group changes
 

@@ -39,7 +39,7 @@ unless STIM_DAEMON is set, so a CI run never deletes on its own. A scoped
 STIM_HOME home runs it like any other.
 The stim-daemon runs a pass in its own process on each tick when a check is
 due: a disk and memory reading for status (every minute), hosted idle stops
-(every 5 minutes), directory sizes (hourly), finished worktrees (every 15
+(every 5 minutes), sizes (hourly; under-cap reuse 6h), finished worktrees (every 15
 minutes) and the age sweep (daily); the daemon also rescans the home folder for
 checkouts after the pass, weekly and also at low disk (DISCOVERED CHECKOUTS). The reading plans nothing, the idle check
 plans only idle stops, and the cap trims follow the size, worktree and sweep
@@ -143,7 +143,7 @@ In on mode a pass runs, cheapest to rebuild first:
      trimmed only), in a registered workspace or
      a discovered checkout, over maintenance.cargoTargetMaxGb
      (default 25, 0 no cap; one du walk per target/, at most 6 discovered
-     ones per size scan, the least recently measured first, so every one is
+     ones per size scan, least recently measured first; each is
      reached within a few scans; one that times out
      records no size, only its stale profiles are trimmed, and it is reported
      as needing a person). Only directories with Cargo's profile shape
@@ -166,10 +166,10 @@ In on mode a pass runs, cheapest to rebuild first:
      start, ios and android run before they build runs it once and leaves the
      workspace being built alone), and an acting stim gc runs
      it before it measures anything. At normal the cap is planned at the hourly
-     size scan, or hourly on its own while host load defers the size scan (the
-     cap is never held back by load, and its du runs at low priority, one
-     target/ at a time, 120 seconds at most each, ended at once by a handover;
-     the planning du, the trim's du, lsof and ps run niced). Without Exact's
+     size scan, or hourly while load defers it. Target sizes at or under cap
+     are reused for 6h; above cap they are fresh. Walks run at low priority,
+     one target/ at a time, 120 seconds at most, ended by a handover;
+     trim sizes stay fresh. du, lsof and ps run niced. Without Exact's
      ledger, a build that changes nothing leaves no trace in a profile's
      directory times. Each is deleted in place while Stim holds the profile's
      Cargo locks (.cargo-lock, .cargo-build-lock, .cargo-artifact-lock; only
@@ -788,7 +788,7 @@ path, creation time, last-seen time (refreshed at most every ten minutes) and
 the simulator UDIDs and AVD names its created-devices ledger lists. Homes
 inside ~/.stim, such as the private homes of hosted sessions, are not listed.
 A list that cannot be read or written never fails the command that tried.
-gc --dry-run lists the other homes that still exist: their private size, workspace
+gc --dry-run lists the other homes that still exist: size (1h cache), workspace
 count, last-seen time, the devices their ledgers name (owned by that home,
 never this one) and the exact commands that tear each down, from the root of
 each linked worktree, or from the project folder in a source checkout:
@@ -901,10 +901,9 @@ other entry here is report only:
 - agent-device runner builds grouped by agent-device and Xcode build version,
   compared with the installed agent-device and Xcode. agent-device has no
   prune command; remove an entry not in use by hand.
-$STIM_HOME/machine-cache-usage.json caches the sizes, simulator runtimes and
-tool versions for 10 minutes and measures again when the measured
-directories change. Stim deletes none of these but the unused runtimes and the
-rung 9 caches. They are never in caches and never change actionable.
+$STIM_HOME/machine-cache-usage.json caches the report for 10 minutes or until
+its directories change. Private folder sizes are reused for 1h. Only unused
+runtimes and rung 9 caches are deleted; the rest never change actionable.
 
 LINKED WORKTREES
   \`stim worktree remove\` works with any linked worktree, warmed or not.
