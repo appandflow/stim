@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { runCli } from '../cli/define-op.ts';
 import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile, workspaceName } from '../workspace/paths.ts';
 import stopCommand, {
   clearCollectorState,
   clearSupervisorState,
@@ -2167,4 +2167,41 @@ test('full stop resolves a pending EAS claim without a workspace session id', as
   await runStop(opts);
   expect(calls).toEqual(['simulator:list', 'simulator:stop']);
   expect(readEasSessionLedger(ledgerRoot).claims.size).toBe(0);
+});
+
+test.each(['young', 'expired', 'other-home', 'other-workspace'])('stop handles a %s pending claim', async (kind) => {
+  const ledgerRoot = join(tmpHome, 'eas-ledger');
+  const expiry = Math.floor(Date.now() / 1000) + (kind === 'expired' ? -60 : 3600);
+  const name = `stim-pending-${expiry.toString(36)}-abcd`;
+  const workspaceRoot = kind === 'other-workspace' ? join(tmpRoot, 'other') : tmpRoot;
+  const workspaceHome = kind === 'other-home' ? join(tmpHome, 'other') : tmpHome;
+  await recordEasSessionClaim(
+    {
+      sessionId: name,
+      name,
+      platform: 'ios',
+      workspaceRoot,
+      workspaceHome,
+      stateFile: join(workspaceHome, 'workspaces', workspaceName(workspaceRoot), 'state.json'),
+    },
+    ledgerRoot,
+  );
+  const calls: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFileAsync: async (_file, args = []) => {
+        calls.push(args[0] ?? '');
+        return JSON.stringify({ sessions: [], pageInfo: { hasNextPage: false, endCursor: null } });
+      },
+    }),
+  );
+  const { opts } = seams({
+    root: tmpRoot,
+    easLedgerRoot: ledgerRoot,
+    resolveEasCliBin: () => ({ file: '/fixture-eas', source: 'path' }),
+  });
+  const result = await runStop(opts);
+  expect(result.ok).toBe(true);
+  expect(calls).toEqual(kind === 'young' ? ['simulator:list'] : []);
+  expect(readEasSessionLedger(ledgerRoot).claims.has(name)).toBe(kind !== 'expired');
 });

@@ -502,7 +502,7 @@ describe('session creation', () => {
       const exec = mockExec({ outputs: { sim: CREATED } });
       await remoteIosDeps({ ...resolved.ctx, easLedgerRoot: tmpHome, sleep: async () => {} }).ensureBooted({});
       const args = exec.calls[0]?.args ?? [];
-      expect(args[args.indexOf('--name') + 1]).toMatch(/^stim-.+-[0-9a-f]{6}$/);
+      expect(args[args.indexOf('--name') + 1]).toMatch(/^stim-.+-[0-9a-z]+-[0-9a-f]{4}$/);
       return args[args.indexOf('--max-duration-minutes') + 1];
     };
 
@@ -609,7 +609,8 @@ describe('session creation', () => {
     });
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
     expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('no session named stim-wt-abcdef was found yet');
+    expect(booted.reason).toContain('did not finish within 10 minutes');
+    expect(booted.reason).toContain('No session named stim-wt-abcdef is listed yet');
     expect(readEasSessionLedger(tmpHome).claims.has('stim-wt-abcdef')).toBe(true);
     expect(booted.remedy).toContain('eas simulator:list --name stim-wt-abcdef');
   });
@@ -1277,10 +1278,11 @@ test('owned boot replaces its pending claim with the session claim', async () =>
 });
 
 test.each([false, true])('earlier pending cleanup precedes create and failure does not block it: %s', async (fails) => {
+  const name = `stim-earlier-${(Math.floor(Date.now() / 1000) + 3600).toString(36)}-abcd`;
   await recordEasSessionClaim(
     {
-      sessionId: 'stim-earlier',
-      name: 'stim-earlier',
+      sessionId: name,
+      name,
       platform: 'ios',
       workspaceRoot: root,
       workspaceHome: tmpHome,
@@ -1300,7 +1302,7 @@ test.each([false, true])('earlier pending cleanup precedes create and failure do
   expect(exec.calls.findIndex((c) => c.args[0] === 'simulator:list')).toBeLessThan(
     exec.calls.findIndex((c) => c.args[0] === 'sim'),
   );
-  expect(readEasSessionLedger(tmpHome).claims.has('stim-earlier')).toBe(fails);
+  expect(readEasSessionLedger(tmpHome).claims.has(name)).toBe(true);
   expect(notes.join(' ').includes('offline')).toBe(fails);
 });
 

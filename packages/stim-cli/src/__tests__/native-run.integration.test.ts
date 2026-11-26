@@ -6,6 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { runStop, stopWorkspaceNow } from '../commands/stop.ts';
 import { workspaceNativeRunClaim } from '@stim-cli/core/state';
 import {
+  cancelledFailure,
   decideStopAction,
   NATIVE_RUN_LOCK,
   nativeRunWaitNotice,
@@ -241,6 +242,23 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
       expect(await secondRun).toBe(null);
     },
   );
+
+  test('a cancelled native run preserves the pending EAS cleanup remedy', async () => {
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const remedy = 'Run `stim stop` to end it, or use `eas simulator:list --name stim-pending`.';
+    const result = await withNativeBuildRun(
+      context,
+      root,
+      { command: 'ios', platform: 'ios' },
+      async () => {
+        controller.abort('SIGINT');
+        return cancelledFailure(context, 'ios', { code: 'STIM_REMOTE_SESSION_CLEANUP', remedy });
+      },
+      { write: () => {} },
+    );
+    expect(result).toMatchObject({ code: 'STIM_CANCELLED', remedy });
+  });
 
   test('stopping another slot leaves the build running and does not wait for its lock', async () => {
     const holder = await startHolder('ios', 'default', 'sleep');

@@ -92,7 +92,7 @@ import {
 } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
-import { endRecordedSession, resolvePendingEasSession, endPendingEasSessions } from '../engine/device-remote.ts';
+import { endRecordedSession, endPendingEasSessions } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { waitForTreeExit } from '../process-group-exit.ts';
@@ -368,7 +368,6 @@ async function stopPendingSessions(
   root: string,
   ledgerRoot: string,
   operation: StimContext | undefined,
-  resolvePending: typeof resolvePendingEasSession,
   resolveBin: typeof defaultResolveEasCliBin,
   report: (line: string) => void,
   remoteDevice: RemoteDeviceRecord | null | undefined,
@@ -377,12 +376,13 @@ async function stopPendingSessions(
   if (remoteDevice !== undefined) return;
   try {
     let outcome: DeviceOutcomeEntry | null = null;
-    for (const pending of await endPendingEasSessions(root, ledgerRoot, operation, resolvePending, resolveBin)) {
-      report(phaseLine('device', pending.reason ?? `Ended ${pending.label}.`));
+    for (const pending of await endPendingEasSessions(root, ledgerRoot, operation, resolveBin)) {
+      report(phaseLine('device', pending.reason ?? pending.label));
       if (outcome?.status !== 'failed') outcome = pending;
     }
     if (outcome) record(outcome);
   } catch (error) {
+    operation?.signal.throwIfAborted();
     record({ status: 'failed', label: 'pending EAS sessions', reason: String(error) });
   }
 }
@@ -600,7 +600,6 @@ async function stopWorkspace({
   hostedSlot,
   remoteDevice = undefined,
   teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
-  resolvePendingSession = resolvePendingEasSession,
   resolveEasCliBin = defaultResolveEasCliBin,
   easLedgerRoot = easMachineStateRoot(),
   metroTunnel = undefined,
@@ -637,7 +636,6 @@ async function stopWorkspace({
   hostedSlot?: string;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
-  resolvePendingSession?: typeof resolvePendingEasSession;
   resolveEasCliBin?: typeof defaultResolveEasCliBin;
   easLedgerRoot?: string;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
@@ -923,19 +921,10 @@ async function stopWorkspace({
     }
     return workspace;
   });
-  await stopPendingSessions(
-    root,
-    easLedgerRoot,
-    operation,
-    resolvePendingSession,
-    resolveEasCliBin,
-    report,
-    remoteDevice,
-    (pending) => {
-      outcomes.device.remote = pending;
-      ok = ok && remoteEnded(pending);
-    },
-  );
+  await stopPendingSessions(root, easLedgerRoot, operation, resolveEasCliBin, report, remoteDevice, (pending) => {
+    outcomes.device.remote = pending;
+    ok = ok && pending.status !== 'failed';
+  });
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {

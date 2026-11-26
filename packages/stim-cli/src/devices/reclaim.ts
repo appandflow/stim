@@ -159,7 +159,6 @@ async function reapCollectors(
   return { skippedDevices, failedDevices };
 }
 
-// eas simulator:stop needs a project cwd, so end the session before removing the worktree.
 async function reclaimPendingSessions(root: string, operation?: StimContext): Promise<SkippedDevice[]> {
   const failedDevices: SkippedDevice[] = [];
   try {
@@ -170,12 +169,14 @@ async function reclaimPendingSessions(root: string, operation?: StimContext): Pr
       }
     }
   } catch (error) {
+    throwIfCleanupInterrupted(error, operation);
     const failed = { name: 'pending EAS sessions', reason: String(error) };
     failedDevices.push(failed);
   }
   return failedDevices;
 }
 
+// eas simulator:stop needs a project cwd, so end the session before removing the worktree.
 async function reclaimRemoteSession(
   root: string,
   { stopSession = defaultStopSession, operation }: { stopSession?: StopSession; operation?: StimContext } = {},

@@ -82,6 +82,16 @@ describe('the machine EAS ledger sweep', () => {
     expect(ledgerIds()).toEqual(['drs_unmanaged', VALID_ID].toSorted());
   });
 
+  test('forgets expired pending claims even when the workspace exists', async () => {
+    const name = 'stim-pending-1-abcd';
+    writeLedger([{ ...claim(name, dir), name }]);
+    const deps = { easLedgerRoot: ledgerRoot };
+    const found = findStaleEasLedgerEntries(mounted, deps);
+    expect(found).toEqual([{ id: name, workspaceRoot: dir }]);
+    expect(await forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
+    expect(ledgerIds()).toEqual([]);
+  });
+
   test('keeps a pending claim after its worktree disappears', () => {
     writeLedger([{ ...claim('stim-pending-abcdef', join(dir, 'gone')), name: 'stim-pending-abcdef' }]);
     expect(findStaleEasLedgerEntries(mounted, { easLedgerRoot: ledgerRoot })).toEqual([]);

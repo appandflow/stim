@@ -84,3 +84,9 @@ export async function removeEasSessionClaimAsync(
 export function isPendingEasSessionClaim(claim: EasSessionClaim): boolean {
   return claim.sessionId === claim.name;
 }
+
+export function pendingClaimExpired(claim: EasSessionClaim, now: number): boolean {
+  const match = /^stim-.+-([0-9a-z]{1,8})-[0-9a-f]{4}$/.exec(claim.name);
+  const expiry = parseInt(match?.[1] ?? '0', 36);
+  return isPendingEasSessionClaim(claim) && expiry > 0 && expiry * 1000 < now;
+}

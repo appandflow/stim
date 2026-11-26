@@ -291,10 +291,7 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
   const orphaned: ScopedSessionSummary[] = [];
   if (ledger.safe && recorded.safe) {
     for (const session of compared.orphaned) {
-      const pending = ledger.claims.get(session.name);
-      const claim =
-        ledger.claims.get(session.id) ??
-        (pending && isPendingEasSessionClaim(pending) && pending.platform === session.platform ? pending : undefined);
+      const claim = sessionClaim(ledger.claims, session);
       if (!claim || claim.name !== session.name || claim.platform !== session.platform) {
         notices.push(
           `EAS session ${session.id} (${session.name}) is unclaimed or its fixed ownership record does not match; it was not selected for deletion.`,
@@ -491,12 +488,7 @@ export async function deleteEasSessions(
                   });
                   continue;
                 }
-                const pending = ledger.claims.get(session.name);
-                const claim =
-                  ledger.claims.get(session.id) ??
-                  (pending && isPendingEasSessionClaim(pending) && pending.platform === session.platform
-                    ? pending
-                    : undefined);
+                const claim = sessionClaim(ledger.claims, session);
                 const claimState = claim ? claimStateAbsence(claim) : null;
                 if (
                   !claim ||
@@ -627,4 +619,15 @@ export async function deleteEasSessions(
   }
 
   return deleteFailures;
+}
+
+function sessionClaim(
+  claims: Map<string, EasSessionClaim>,
+  session: ScopedSessionSummary,
+): EasSessionClaim | undefined {
+  const pending = claims.get(session.name);
+  return (
+    claims.get(session.id) ??
+    (pending && isPendingEasSessionClaim(pending) && pending.platform === session.platform ? pending : undefined)
+  );
 }
