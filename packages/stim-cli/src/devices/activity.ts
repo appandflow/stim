@@ -147,11 +147,17 @@ export function parseAgentDeviceRecord(
 
 export type Liveness = 'live' | 'dead' | 'unknown';
 
+function recordedStartTime(value: string): number {
+  if (!value.startsWith('posix:')) return /^[a-z]+:/i.test(value) ? NaN : Date.parse(value);
+  const at = /^posix:(0|[1-9]\d*000)$/.test(value) ? Number(value.slice(6)) : NaN;
+  return at <= 0xe677d21fd818 ? at : NaN;
+}
+
 export function processMatches(entry: PidStart, startOf: (pid: number) => ProcessStart): Liveness {
   const start = startOf(entry.pid);
   if (start.status === 'gone') return 'dead';
   if (start.status === 'unknown') return 'unknown';
-  const recorded = Date.parse(entry.startTime);
+  const recorded = recordedStartTime(entry.startTime);
   if (!Number.isFinite(recorded)) return 'unknown';
   if (Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000)) return 'live';
   // agent-device's zone-less ps lstart cannot distinguish repeated local seconds: https://github.com/appandflow/stim/issues/4729
@@ -412,7 +418,7 @@ export async function readAgentDeviceRecordsAsync(
 
 function isClaimProtocolRunner(record: AgentDeviceRecord, row: HostProcess): boolean {
   if (!record.claimProtocol || record.runner?.pid !== row.pid || row.startedAt === null) return false;
-  const recorded = Date.parse(record.runner.startTime);
+  const recorded = recordedStartTime(record.runner.startTime);
   return Math.floor(recorded / 1000) === Math.floor(Date.parse(row.startedAt) / 1000);
 }
 
@@ -599,18 +605,19 @@ export function createActivityReader({
       if (record.deviceId !== null && record.deviceId !== target.id) continue;
       if (record.claimProtocol) continue;
       const basis = record.kind === 'claim' ? 'agent-device-claim' : 'agent-device-lease';
-      if (liveness === 'live') {
+      if (liveness === 'dead') continue;
+      const actedAt = record.session
+        ? agentSessionActedAt(home, record.session, record.stateDir, env)
+        : record.sessionDir
+          ? sessionDirActedAt(record.sessionDir)
+          : null;
+      if (liveness === 'live' || (record.readable && actedAt !== null)) {
         evidence.drivers.push({
           basis,
           tool: 'agent-device',
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
-        const actedAt = record.session
-          ? agentSessionActedAt(home, record.session, record.stateDir, env)
-          : record.sessionDir
-            ? sessionDirActedAt(record.sessionDir)
-            : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
         else evidence.unknown.push(AGENT_DEVICE_UNDATED);
       } else if (liveness === 'unknown') {

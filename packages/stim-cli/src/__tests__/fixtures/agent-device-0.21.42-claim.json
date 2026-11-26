@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 3,
+  "deviceKey": "local:apple:ios:13E9DB66-0000-4000-8000-000000000001",
+  "session": "stim-default-ios",
+  "workspace": "/w",
+  "stateDir": "/w/state",
+  "device": {
+    "family": "apple",
+    "appleOs": "ios",
+    "kind": "simulator",
+    "id": "13E9DB66-0000-4000-8000-000000000001",
+    "name": "stim-th-c"
+  },
+  "ownerPid": 89446,
+  "ownerStartTime": "posix:1795673470000",
+  "createdAtMs": 1795673480000,
+  "claimOwnerKind": "open-session"
+}

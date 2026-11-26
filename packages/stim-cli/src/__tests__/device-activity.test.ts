@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProcessStart } from '../process-identity.ts';
@@ -14,6 +14,7 @@ import {
   createActivityReaderAsync,
   driversKeepDevice,
   parseAgentDeviceRecord,
+  processMatches,
   readWebActivity,
   type ActivityTarget,
   type DeviceProcessTables,
@@ -21,6 +22,7 @@ import {
 } from '../devices/activity.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { idleShutdownDueMs } from '../devices/idle-shutdown.ts';
 
 const UDID = '7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A';
 const OWNER_START = 'Thu Sep 24 21:59:30 2026';
@@ -126,6 +128,33 @@ function runnerLease(over: Record<string, unknown> = {}): string {
 }
 
 describe('agent-device lease liveness', () => {
+  test('agent-device 0.21.42 claim identities are epoch seconds in every timezone', () => {
+    vi.stubEnv('TZ', 'America/Toronto');
+    try {
+      const claim = parseAgentDeviceRecord(
+        'claim',
+        '/claims/captured.json',
+        readFileSync(new URL('./fixtures/agent-device-0.21.42-claim.json', import.meta.url), 'utf8'),
+      );
+      expect(claim.owner).not.toBeNull();
+      const owner = claim.owner;
+      if (!owner) throw new Error('Captured claim has no owner');
+      const at = Number(owner.startTime.slice('posix:'.length));
+      expect(agentDeviceLiveness(claim, () => ({ status: 'running', startedAtMs: at + 400 }))).toBe('live');
+      expect(agentDeviceLiveness(claim, () => ({ status: 'running', startedAtMs: at + 1000 }))).toBe('dead');
+      for (const startTime of [
+        'linux:abc:123',
+        'posix:01795673470000',
+        'posix:1795673470400',
+        'posix:999999999999000',
+      ]) {
+        expect(processMatches({ ...owner, startTime }, () => ({ status: 'running', startedAtMs: at }))).toBe('unknown');
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   test('a device claim needs only its owner and preserves ambiguous repeated-hour identities', () => {
     vi.stubEnv('TZ', 'America/Toronto');
     try {
@@ -220,6 +249,33 @@ describe('createActivityReader', () => {
     });
   });
 
+  test.each([true, false])('an unknown claim identity uses session recency when dated=%s', (dated) => {
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({
+        session: 'qa',
+        device: { id: UDID },
+        ownerPid: 100,
+        ownerStartTime: 'linux:abc:123',
+      }),
+    );
+    const actedAt = NOW - 3 * 3_600_000;
+    if (dated) {
+      const session = join(home, '.agent-device', 'sessions', 'qa');
+      mkdirSync(session, { recursive: true });
+      const events = join(session, 'events.ndjson');
+      writeFileSync(events, '{}\n');
+      utimesSync(events, actedAt / 1000, actedAt / 1000);
+    }
+    const activity = read({ 100: OWNER_START });
+    expect(idleShutdownDueMs(activity, { idleMs: 120_000, now: NOW, buildInProgress: false })).toBe(
+      dated ? NOW - actedAt : null,
+    );
+    expect(activity.basis).toContain('agent-device-claim');
+  });
+
   test.each(['ios', 'android'] as const)('a shared %s claim finds actions only in workspace state', (platform) => {
     const id = platform === 'ios' ? UDID : 'emulator-5554';
     const claims = join(home, '.agent-device', 'device-claims');
@@ -247,21 +303,24 @@ describe('createActivityReader', () => {
   const runnerRow = (start: string) =>
     `   200     1 204800   1.0 ${start}     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /Users/me/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd/Build/Products/AgentDeviceRunner.env.session-${UDID}-owner-100-8ffad543-52731.xctestrun -destination platform=iOS Simulator,id=${UDID}\n`;
 
-  test("an open session's claim still drives a device whose runner declares the claim protocol", () => {
-    writeLease(runnerLease({ deviceClaimProtocol: 1 }));
-    ps = runnerRow(RUNNER_START);
-    const claims = join(home, '.agent-device', 'device-claims');
-    mkdirSync(claims, { recursive: true });
-    writeFileSync(
-      join(claims, 'claim.json'),
-      JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
-    );
-    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
-      state: 'driven',
-      driver: { tool: 'agent-device', pid: 100 },
-      basis: ['agent-device-claim'],
-    });
-  });
+  test.each([RUNNER_START, `posix:${Date.parse(RUNNER_START)}`])(
+    "an open session's claim still drives a device whose runner declares the claim protocol (%s)",
+    (runnerStartTime) => {
+      writeLease(runnerLease({ deviceClaimProtocol: 1, runnerStartTime }));
+      ps = runnerRow(RUNNER_START);
+      const claims = join(home, '.agent-device', 'device-claims');
+      mkdirSync(claims, { recursive: true });
+      writeFileSync(
+        join(claims, 'claim.json'),
+        JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
+      );
+      expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
+        state: 'driven',
+        driver: { tool: 'agent-device', pid: 100 },
+        basis: ['agent-device-claim'],
+      });
+    },
+  );
 
   test('a runner from an agent-device build without device claims still drives the device', () => {
     writeLease(runnerLease());
