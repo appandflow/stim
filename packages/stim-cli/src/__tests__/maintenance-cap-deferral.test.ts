@@ -13,7 +13,6 @@ import {
   maintenanceStateFile,
   readDiskUsage,
   readGcMark,
-  readJsonObject,
   readMaintenanceState,
   type MaintenanceState,
   type DaemonPressure,
@@ -26,6 +25,7 @@ import { due } from '../stimd/passes/due.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as budget from '../stimd/passes/budget.ts';
 import * as fsUtil from '../fs-util.ts';
+import * as privateSize from '../private-size.ts';
 import * as daemonPasses from '../daemon/passes.ts';
 import * as stages from '../daemon/stages.ts';
 import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
@@ -105,8 +105,8 @@ test('while host load defers the size scan, the cap gives the disk owner a unit 
   git(other, 'commit', '-q', '-m', 'init');
   upsertProject(other, { metroPort: null });
   const order: string[] = [];
-  const walk = fsUtil.measuredDirectorySizeAsync;
-  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir, options) => {
+  const walk = privateSize.measureTree;
+  vi.spyOn(privateSize, 'measureTree').mockImplementation(async (dir, options) => {
     order.push(dir.endsWith('target') ? 'walk' : 'other');
     return walk(dir, options);
   });
@@ -115,28 +115,6 @@ test('while host load defers the size scan, the cap gives the disk owner a unit 
 
   const walks = order.flatMap((entry, at) => (entry === 'walk' ? [order[at - 1]] : []));
   expect(walks).toEqual(['boundary', 'boundary']);
-});
-
-test('the cap writes its Cargo size over an older disk-usage record, keeping its other fields but the private sizes, and leaves a newer one', async () => {
-  const record = (at: number) => ({
-    path: target,
-    measuredAt: new Date(at).toISOString(),
-    bytes: 1,
-    walkMs: 5,
-    privateBytes: 1,
-    partial: true,
-  });
-  writeCacheFile(diskUsageCacheFile(target), record(Date.now() + 60_000));
-  await runMaintenance('test');
-  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({ bytes: 1, walkMs: 5, privateBytes: 1 });
-
-  writeCacheFile(diskUsageCacheFile(target), record(Date.now() - 2 * 3_600_000));
-  writeFileSync(maintenanceStateFile(), '{}');
-  await runMaintenance('test');
-  const rewritten = readJsonObject(diskUsageCacheFile(target));
-  expect(rewritten).toMatchObject({ bytes: readMaintenanceState()?.sizes[0]?.bytes, walkMs: 5 });
-  expect(rewritten).not.toHaveProperty('privateBytes');
-  expect(rewritten).not.toHaveProperty('partial');
 });
 
 test('a size scan deferred for the ceiling runs anyway, and the status field clears', async () => {

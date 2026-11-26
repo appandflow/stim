@@ -40,6 +40,7 @@ import { ensureStimd } from '../daemon/client.ts';
 import { acquireDisk, HARD_FLOOR, LADDER, LANE } from '../daemon/disk-owner.ts';
 import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
 import * as fsUtil from '../fs-util.ts';
+import * as privateSize from '../private-size.ts';
 import { measureSizes } from '../stimd/passes/measure.ts';
 import { executeAction } from '../stimd/passes/act.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
@@ -427,14 +428,14 @@ describe('the disk owner', () => {
     let finish!: () => void;
     const walking = new Promise<void>((resolve) => (entered = resolve));
     const finished = new Promise<void>((resolve) => (finish = resolve));
-    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir) => {
+    vi.spyOn(privateSize, 'measureTree').mockImplementation(async (dir) => {
       const walk = dir === buildCacheRoot() ? 'walk build cache' : 'walk Metro cache';
       order.push(walk);
       if (walk === 'walk build cache') {
         entered();
         await finished;
       }
-      return 1;
+      return { bytes: 1, privateBytes: null };
     });
     vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
       order.push('pass hard floor');

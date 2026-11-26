@@ -7,7 +7,7 @@ import { quotedPath } from '../../command-output.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 import { forgetStimHomes, isTrackedStimHome, stimHomesRoot } from '../../engine/stim-home-registry.ts';
 import { isAbsentPath, isOnMountedVolume } from '../../fs-util.ts';
-import { measureTree } from '../../private-size.ts';
+import { refreshMeasure } from '../../disk-usage.ts';
 import { nativeCanonicalPath, repoRootAsync, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
 import { describeError } from './eas-sessions.ts';
@@ -145,12 +145,17 @@ async function describeHome(
   }
   const ledger = readCreatedDevices(entry.path);
   const roots = workspaceRoots(entry.path);
-  const size = await measureTree(entry.path, { timeoutMs: SIZE_TIMEOUT_MS, operation });
+  const { measure: size, partial } = await refreshMeasure(entry.path, {
+    timeoutMs: SIZE_TIMEOUT_MS,
+    operation,
+    private: true,
+    maxAgeMs: 60 * 60_000,
+  });
   return {
     ...base,
     state: 'present',
     bytes: size?.bytes ?? null,
-    privateBytes: size?.privateBytes ?? null,
+    privateBytes: partial ? null : (size?.privateBytes ?? null),
     workspaces: roots.length,
     devices: homeDevices(
       { ios: [...ledger.ios, ...entry.devices.ios], android: [...ledger.android, ...entry.devices.android] },

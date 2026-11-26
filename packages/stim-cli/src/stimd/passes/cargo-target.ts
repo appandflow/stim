@@ -7,12 +7,14 @@ import {
   loadConfig,
   readGcMark,
   readDiskUsage,
+  readDiskUsagePartial,
   type GcMark,
   type GcMarkCandidate,
   type MaintenanceAction,
   type MaintenanceSize,
   type PressureLevel,
 } from '@stim-cli/core/state';
+import { refreshMeasure } from '../../disk-usage.ts';
 import { RESERVE_RELEASED } from '../../disk-reserve.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
@@ -156,7 +158,8 @@ export async function measureCargoTargets(
   for (const size of recorded)
     if (size.name === CARGO_TARGET_SIZE && !lastMeasured.has(size.dir)) lastMeasured.set(size.dir, size.measuredAt);
   scan = { unmeasured: new Map(), refused: new Map(), unlisted: [] };
-  if (resolveMaintenanceSettings().cargoTargetMaxGb === 0) return sizes;
+  const cap = resolveMaintenanceSettings().cargoTargetMaxGb * GIB;
+  if (cap === 0) return sizes;
   const registered = Object.keys(loadConfig()?.projects ?? {});
   const { measured, unlisted } = selectCargoTargets(
     await cargoTargetCandidates(registered, operation),
@@ -172,13 +175,24 @@ export async function measureCargoTargets(
       continue;
     }
     await between?.();
-    const bytes = await measuredDirectorySizeAsync(dir, {
+    const { measure, partial } = await refreshMeasure(dir, {
       timeoutMs: SIZE_TIMEOUT_MS,
+      operation,
+      maxAgeMs: 6 * 60 * 60_000,
+      valid: (cached) => cached.bytes <= cap && !readDiskUsagePartial(dir),
       lowPriority,
-      ...(operation ? { signal: operation.signal, operation } : {}),
+      knownToExist: true,
     });
-    if (bytes === null) scan.unmeasured.set(dir, root);
-    else sizes.push({ name: CARGO_TARGET_SIZE, category: 'other', dir, bytes, measuredAt: now, workspace: root });
+    if (!measure || partial) scan.unmeasured.set(dir, root);
+    else
+      sizes.push({
+        name: CARGO_TARGET_SIZE,
+        category: 'other',
+        dir,
+        bytes: measure.bytes,
+        measuredAt: Date.parse(measure.measuredAt),
+        workspace: root,
+      });
   }
   return sizes;
 }

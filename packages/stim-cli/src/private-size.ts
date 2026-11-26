@@ -60,7 +60,7 @@ interface TreeOptions {
   timeoutMs: number;
   onSpawn?: (child: ChildProcess) => void;
   operation?: StimContext;
-  lowPriority?: true;
+  lowPriority?: boolean;
   targets?: string[];
   private?: false;
 }

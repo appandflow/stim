@@ -919,8 +919,10 @@ level and waits only for the walk claim: a held claim keeps every marker for the
 next period. The walk is the same one the thread already runs: one at a time,
 under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
-build admission reads them, only the order of the pressure ladder's Cargo
-trims: the
+build admission is started by them: the pressure ladder reads them to order its
+Cargo trims, from sizes up to 6 hours old, and the size scan reuses a
+`target/` size at or under the cap, which can only hold a trim back (see the
+cap rule below); the
 caps read the maintenance size scan, the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
@@ -1086,6 +1088,23 @@ window at critical and the editor-reading rule.
 The setting name, the definition of
 activity, the 7-day floor on the runtime keep and the mount-point rule were
 chosen by the coordinator and the reviews of #5540, not by the maintainer.
+
+The hourly size scan reuses shared, leftover and registered cache sizes for
+6 hours. For each capped category (build, Metro and Swift compilation), reuse
+requires a complete cached measurement under 6 hours old for every existing
+entry and a total at or under the nonzero cap, decided once before the scan's
+walks; otherwise the whole category is measured fresh. Uncapped
+categories and a cap of zero use the age limit alone. Cargo targets reuse sizes
+at or under their cap for 6 hours; over-cap targets are measured fresh. Growth
+makes these sizes stale low, delaying a trim safely; fresh over-cap totals avoid
+stale high sizes trimming more after removals. The folders a Cargo trim will
+remove still get fresh walks, since stale low there could delete more. Other
+Stim homes and private machine-cache report folders reuse sizes for 1 hour;
+either stale direction affects display only. An acting `stim gc` plans its
+caps from the same scan, so it too can leave a cache that grew past its cap
+for up to the 6 hours. The 6 hour and 1 hour maximum
+ages and the under-cap reuse rule were chosen by the implementer of #6389,
+not by the maintainer.
 
 ## A dependency tree's size holds until its clone group changes
 

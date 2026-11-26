@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createdDevicesFile, readStimHomes } from '@stim-cli/core/state';
+import { measureTree } from '../private-size.ts';
 import { collectOtherHomes, forgetGoneHomes } from '../commands/gc/other-homes.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
 import { recordStimHome } from '../engine/stim-home-registry.ts';
@@ -10,7 +11,10 @@ import { listMountedVolumes } from '../fs-util.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 
 vi.mock('../private-size.ts', () => ({
-  measureTree: async () => ({ bytes: 5 * 1024 ** 3, privateBytes: 3 * 1024 ** 3 }),
+  measureTree: vi.fn<typeof import('../private-size.ts').measureTree>(async () => ({
+    bytes: 5 * 1024 ** 3,
+    privateBytes: 3 * 1024 ** 3,
+  })),
 }));
 
 function sim(udid: string, name: string): IosSimRecord {
@@ -54,6 +58,23 @@ describe('the other Stim homes of gc', () => {
 
   const collect = (listing: { sims: IosSimRecord[] | null; avds: string[] | null }) =>
     collectOtherHomes(own, listing, mounted, { homesRoot });
+
+  test.each([30, 61])('home size after %i minutes', async (minutes) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    vi.stubEnv('STIM_HOME', own);
+    scratchHome('cached');
+    await collect({ sims: [], avds: [] });
+    const walk = vi.mocked(measureTree);
+    walk.mockClear();
+    walk.mockResolvedValueOnce({ bytes: 7, privateBytes: 2 });
+    vi.advanceTimersByTime(minutes * 60_000);
+    const { homes } = await collect({ sims: [], avds: [] });
+    expect(homes[0]?.bytes).toBe(minutes < 60 ? 5 * 1024 ** 3 : 7);
+    expect(walk).toHaveBeenCalledTimes(minutes < 60 ? 0 : 1);
+    walk.mockReset().mockResolvedValue({ bytes: 5 * 1024 ** 3, privateBytes: 3 * 1024 ** 3 });
+    vi.unstubAllEnvs();
+  });
 
   test('a home that still exists reports its workspaces, its own ledger devices and the commands that tear it down', async () => {
     const project = join(dir, 'project');

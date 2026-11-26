@@ -4,15 +4,19 @@ import { configDir, metroCacheRoot, buildCacheRoot, type StimContext } from '@st
 import {
   buildWorkerRoot,
   loadConfig,
+  readDiskUsage,
+  readDiskUsagePartial,
   readDaemonSnapshot,
   sharedCcache,
   sharedCompilationCache,
   type MaintenancePressure,
+  type DiskMeasure,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
 import { readVolumeSpace, readVolumeSpaceAsync } from './budget.ts';
 import { memoryPressure } from '../../daemon/pressure.ts';
-import { measuredDirectorySizeAsync } from '../../fs-util.ts';
+import { refreshMeasure } from '../../disk-usage.ts';
+import { resolveMaintenanceSettings } from './settings.ts';
 import { readHostMemoryPressure, type HostMemoryPressure } from '../../host-memory.ts';
 import { discoverCachesAsync, type CacheDescriptor } from '../../cache/caches.ts';
 import { planCacheEmptying } from '../../commands/gc/caches.ts';
@@ -75,6 +79,7 @@ function pressureFromObservations(
 }
 
 const SIZE_SCAN_MAX_LOAD_PER_CORE = 4;
+const CACHE_SIZE_MAX_AGE_MS = 6 * 60 * 60_000;
 
 export function sizeScanDeferred(): boolean {
   return loadavg()[0]! / Math.max(1, cpus().length) > SIZE_SCAN_MAX_LOAD_PER_CORE;
@@ -179,22 +184,50 @@ export async function measureSizes(
         : 'other';
     known.push({ name: cache.name, dir: cache.dir, category });
   }
+  const settings = resolveMaintenanceSettings();
+  const reused = new Map<string, DiskMeasure>();
+  const fresh = new Set<string>();
+  for (const [category, capGb] of [
+    ['build-cache', settings.buildCacheMaxGb],
+    ['metro-cache', settings.metroCacheMaxGb],
+    ['compilation-cache', settings.swiftCompilationCacheMaxGb],
+  ] as const) {
+    if (capGb === 0) continue;
+    const dirs = known
+      .filter((entry) => entry.category === category && existsSync(entry.dir))
+      .map((entry) => entry.dir);
+    const current = dirs.flatMap((dir) => {
+      const measure = readDiskUsagePartial(dir) ? null : readDiskUsage(dir);
+      return measure && Date.now() - Date.parse(measure.measuredAt) < CACHE_SIZE_MAX_AGE_MS
+        ? [[dir, measure] as const]
+        : [];
+    });
+    const total = current.reduce((sum, [, measure]) => sum + measure.bytes, 0);
+    if (current.length === dirs.length && total <= capGb * 1024 ** 3)
+      for (const [dir, measure] of current) reused.set(dir, measure);
+    else for (const dir of dirs) fresh.add(dir);
+  }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
     await between?.();
-    const bytes = await measuredDirectorySizeAsync(entry.dir, {
-      timeoutMs: 120_000,
-      ...(operation ? { signal: operation.signal, operation } : {}),
-    });
-    if (bytes === null) {
+    const { measure, partial } = reused.has(entry.dir)
+      ? { measure: reused.get(entry.dir) ?? null, partial: false }
+      : await refreshMeasure(entry.dir, {
+          timeoutMs: 120_000,
+          operation,
+          maxAgeMs: fresh.has(entry.dir) ? 0 : CACHE_SIZE_MAX_AGE_MS,
+          lowPriority: false,
+          valid: () => !readDiskUsagePartial(entry.dir),
+        });
+    if (!measure || partial) {
       failure(entry.dir);
       continue;
     }
     const blocked = cacheBlocked(entry, caches);
     sizes.push({
       ...entry,
-      bytes,
-      measuredAt: now,
+      bytes: measure.bytes,
+      measuredAt: Date.parse(measure.measuredAt),
       ...(blocked ? { blocked } : {}),
     });
   }

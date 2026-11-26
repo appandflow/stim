@@ -1,3 +1,4 @@
+import * as privateSize from '../private-size.ts';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,6 +131,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   Object.defineProperty(process, 'platform', { value: platform });
   resetExecutor();
   vi.unstubAllEnvs();
@@ -255,6 +257,23 @@ const spoilers: [string, (file: string) => void][] = [
   ['names no version', (file) => writeFileSync(file, 'distributionBase=GRADLE_USER_HOME\n')],
 ];
 if (posixModes) spoilers.push(['cannot be read', (file) => chmodSync(file, 0o000)]);
+
+test.each([30, 61])('private machine size after %i minutes', async (minutes) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+  const transforms = join(gradle, 'caches', '9.3.1', 'transforms');
+  writeDirs(transforms);
+  const walk = vi.spyOn(privateSize, 'measureTree').mockResolvedValue({ bytes: 100, privateBytes: 40 });
+  await getMachineCacheReport(null, { maxAgeMs: 0 });
+  walk.mockClear().mockResolvedValue({ bytes: 200, privateBytes: 80 });
+  vi.advanceTimersByTime(minutes * 60_000);
+  const report = await getMachineCacheReport(null, { maxAgeMs: 0 });
+  expect(report.gradle.unusedVersions[0]?.transforms).toMatchObject({
+    bytes: minutes < 60 ? 100 : 200,
+    privateBytes: minutes < 60 ? 40 : 80,
+  });
+  expect(walk).toHaveBeenCalledTimes(minutes < 60 ? 0 : 1);
+});
 
 test('an unused Gradle version lists its transforms with their own size and a manual remedy, and a pinned one does not', async () => {
   const caches = join(gradle, 'caches');
