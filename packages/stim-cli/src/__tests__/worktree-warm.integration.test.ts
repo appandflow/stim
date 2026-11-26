@@ -658,6 +658,8 @@ test.skipIf(process.platform === 'win32')(
 
 test('warm copies project-owned .stim directories unless the main exclusion file skips them', async () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.stim/\n');
+  git(root, 'commit', '-qam', 'ignore .stim');
+  git(target, 'merge', '-q', 'main');
   write(root, '.stim/project.json', 'root project data');
   write(root, 'apps/mobile/.stim/project.json', 'nested project data');
   write(root, '.worktreeexclude', '/.stim\n');
