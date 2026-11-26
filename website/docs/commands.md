@@ -1016,9 +1016,9 @@ store the key first. A `prebuild` or `pod install` may move the fingerprint,
 and the run then checks the new key. A Release hit whose JavaScript swap fails
 builds from scratch. An Android plan uses the ABI of the emulator the slot
 records, or of the system image a new emulator would use. A plan refuses
-`--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
-`--simulator-app` with `STIM_BAD_ARG`. With `ios.remote` or `android.remote`
-set to `auto` or a Mac name, it asks that Mac for its device (a read-only
+`--device`, `--wait`, `--no-wait`, `--no-metro-check` and `--simulator-app`
+with `STIM_BAD_ARG`. With `--remote`, `ios.remote` or `android.remote` set to
+`auto` or a Mac name, it asks that Mac for its device (a read-only
 probe) and prints a `placement` line; it refuses `eas`, `proxy` and a Mac that
 does not answer. Without `--eas-profile`, it also refuses the experimental
 compiler CAS.
