@@ -131,6 +131,7 @@ waiting times out.
   stim stop
   # From the worktree root. From an app folder, it reclaims only that app.
   stim worktree remove
+  # Windows: from outside it, stim worktree remove <path>
 
 RULES DURING THE LOOP
 
