@@ -4,6 +4,11 @@ import { join } from 'node:path';
 import { measureTree } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 
+vi.mock('node:fs', async (original) => {
+  const fs = await original<typeof import('node:fs')>();
+  return { ...fs, lstatSync: vi.fn<typeof fs.lstatSync>(fs.lstatSync) };
+});
+
 vi.mock('real-size', () => ({ binaryPath: () => '/fake/real-size' }));
 
 const platform = process.platform;
@@ -112,6 +117,48 @@ test('file-only targets count their singly linked files without a real-size run'
   expect(await measureTree(root, { timeoutMs: 1000, targets: [join(root, 'file')] })).toEqual({
     bytes,
     privateBytes: bytes,
+  });
+  expect(runFileAsync).not.toHaveBeenCalled();
+});
+
+test('targets skip foreign volumes and retain local private bytes as a lower bound', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  const root = mkdtempSync(join(tmpdir(), 'stim-private-targets-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  const local = join(root, 'src');
+  const foreign = join(root, 'hfsmnt');
+  const file = join(root, 'file');
+  mkdirSync(local);
+  mkdirSync(foreign);
+  writeFileSync(file, 'x'.repeat(10_000));
+  const fileBytes = lstatSync(file).blocks * 512;
+  const foreignStat = lstatSync(foreign);
+  const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
+  vi.mocked(lstatSync).mockImplementation((...args) =>
+    args[0] === foreign ? Object.assign(foreignStat, { dev: foreignStat.dev + 1 }) : fs.lstatSync(...args),
+  );
+  onTestFinished(() => {
+    vi.mocked(lstatSync).mockImplementation(fs.lstatSync);
+  });
+  const runFileAsync = vi.fn<ReturnType<typeof getExecutor>['runFileAsync']>(async () =>
+    JSON.stringify({ paths: [], total: { allocated: 300, private: 90, skipped: 0 } }),
+  );
+  setExecutor({ ...getExecutor(), runFileAsync });
+
+  expect(await measureTree(root, { timeoutMs: 1000, targets: [local, foreign, file] })).toEqual({
+    bytes: 300 + fileBytes,
+    privateBytes: 90 + fileBytes,
+    partial: true,
+  });
+  expect(runFileAsync).toHaveBeenCalledTimes(1);
+  expect(runFileAsync.mock.calls[0]?.[1].slice(-3)).toEqual(['--json', '--', local]);
+  expect(runFileAsync.mock.calls[0]?.[1]).not.toContain(foreign);
+
+  runFileAsync.mockClear();
+  expect(await measureTree(root, { timeoutMs: 1000, targets: [foreign, file] })).toEqual({
+    bytes: fileBytes,
+    privateBytes: fileBytes,
+    partial: true,
   });
   expect(runFileAsync).not.toHaveBeenCalled();
 });

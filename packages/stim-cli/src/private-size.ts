@@ -24,7 +24,7 @@ export interface TreeSize {
   bytes: number;
   /** What deleting the tree would free, measured by real-size; null when unavailable. */
   privateBytes: number | null;
-  /** The walk exited with status 1: the bytes are those of what it could read, a lower bound. Absent otherwise. */
+  /** The walk skipped entries: the bytes are those of what it could read, a lower bound. Absent otherwise. */
   partial?: true;
   /** Why `privateBytes` is null when the walk tried to count them: the volume cannot tell, or the counting walk failed. */
   privateUnknown?: 'volume' | 'walk';
@@ -102,22 +102,32 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
   const dirs: string[] = [];
   let fileBytes = 0;
   let filePrivate = 0;
+  const rootDev = binary && options.targets ? lstatSync(path, { throwIfNoEntry: false })?.dev : undefined;
+  let partial: true | undefined;
   for (const target of binary ? (options.targets ?? []) : []) {
     const info = lstatSync(target, { throwIfNoEntry: false });
-    if (info?.isDirectory()) dirs.push(target);
-    else if (info?.isFile()) {
+    if (info?.isDirectory()) {
+      if (info.dev !== rootDev) partial = true;
+      else dirs.push(target);
+    } else if (info?.isFile()) {
       fileBytes += info.blocks * 512;
       if (info.nlink === 1) filePrivate += info.blocks * 512;
     }
   }
-  if (binary && options.targets && !dirs.length) return { bytes: fileBytes, privateBytes: filePrivate };
+  if (binary && options.targets && !dirs.length)
+    return { bytes: fileBytes, privateBytes: filePrivate, ...(partial ? { partial } : {}) };
   if (binary) {
     try {
       const { total, paths }: RealSizeResult = JSON.parse(
         await walk(binary, ['--json', '--', ...(options.targets ? dirs : [path])]),
       );
       const size = options.targets ? total : paths[0];
-      if (size) return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate };
+      if (size)
+        return {
+          bytes: size.allocated + fileBytes,
+          privateBytes: size.private + filePrivate,
+          ...(partial ? { partial } : {}),
+        };
     } catch (error) {
       const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
