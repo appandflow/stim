@@ -132,7 +132,8 @@ false reports each worktree's buildState only from the disk-usage cache.
 collectGarbage({ pressure?, signal? }) runs stim gc on this home's stimd at the
 measured level or at pressure (\`guide cleanup\`), and returns { report,
 exitCode }; exitCode is 0 or 1 and does not change process.exitCode. Past the
-report budget it rejects with STIM_REPORT_TIMEOUT; the pass goes on. An invalid pressure rejects with STIM_BAD_ARG.
+report budget it rejects with STIM_REPORT_TIMEOUT; the pass goes on. An invalid pressure or any
+other option rejects with STIM_BAD_ARG.
 The CLI's scoped-home rules apply.
 deleteGarbageItem({ item, signal? }) deletes one item, for Stim Desktop's
 Storage page, and returns { results, exitCode }. item is { kind: 'cache', dir },

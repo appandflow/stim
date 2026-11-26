@@ -8,6 +8,7 @@ import type {
   StimClient,
   StimDiagnosticsOptions,
   StimFailure,
+  StimGcMutationOptions,
   StimOptions,
   StimRunOptions,
 } from './types.ts';
@@ -102,6 +103,22 @@ function engineDiagnosticsOptions(options?: StimDiagnosticsOptions): EngineDiagn
   return errorsOnly === undefined ? rest : { ...rest, errors: errorsOnly };
 }
 
+const GC_MUTATION_KEYS = ['signal', 'pressure'];
+
+function collectGarbageOptions(options?: StimGcMutationOptions): StimGcMutationOptions | undefined {
+  if (typeof options !== 'object' || options === null) return options;
+  const unknown = Object.keys(options).find((key) => !GC_MUTATION_KEYS.includes(key));
+  if (unknown === undefined) return options;
+  throw new StimError({
+    code: 'STIM_BAD_ARG',
+    message: `collectGarbage() does not accept ${unknown}; it takes only pressure and signal, and always deletes.`,
+    remedy:
+      unknown === 'delete'
+        ? 'Call previewGarbage() to read the report without deleting, or call collectGarbage() without delete to delete.'
+        : 'Pass only pressure and signal. Call previewGarbage() first to see what collectGarbage() deletes.',
+  });
+}
+
 /** Rejects with the refusal `translate` throws, or runs `send` with what it returns. */
 function translated<T>(translate: () => T, send: (value: T) => Promise<never>): Promise<never> {
   let value: T;
@@ -138,7 +155,8 @@ export function facadeClient(
     requestMachineAccess: op('requestMachineAccess'),
     plan: op('plan'),
     previewGarbage: op('gc'),
-    collectGarbage: op('collectGarbage'),
+    collectGarbage: (options?: StimGcMutationOptions) =>
+      translated(() => collectGarbageOptions(options), op('collectGarbage')),
     deleteGarbageItem: op('deleteGarbageItem'),
     warmWorktree: op('warmWorktree'),
     removeWorktree: op('removeWorktree'),
