@@ -22,7 +22,13 @@ import {
   type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
-import { automaticBuild, namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../build-placement.ts';
+import {
+  busyBuildMachineRemedy,
+  automaticBuild,
+  namedBuildMachine,
+  OffloadRefusal,
+  requireLocalBuild,
+} from '../build-placement.ts';
 import { markBuildEnded } from '../build-end-marker.ts';
 import { createBuildHeadroom } from '../engine/build-headroom-run.ts';
 import { macosDir } from './state.ts';
@@ -92,7 +98,8 @@ export async function buildMacosBundle({
           },
         }),
       );
-      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
+      if (namedBuildMachine(buildMachine))
+        throw new OffloadRefusal(buildMachine, reason, busyBuildMachineRemedy(buildMachine, asked, reason));
       requireLocalBuild(buildMachine, reason);
       offloadFallback = reason;
       if (record) record.offloadFallback = reason;

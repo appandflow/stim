@@ -1,7 +1,7 @@
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { operationState } from './engine/operation-state.ts';
 import { parseMachine, automaticMachineEnabled, placementWord, readBuildMachines } from '@stim-cli/core/state';
-import type { PlacementSetting, SettingSource } from './placement-log.ts';
+import type { PlacementCandidate, PlacementSetting, SettingSource } from './placement-log.ts';
 import { loadConfig } from './workspace/config.ts';
 import { POD_MISSING_REASON } from './engine/deps.ts';
 import { cocoapodsInstall } from './engine/toolchain.ts';
@@ -62,6 +62,17 @@ export function podsFailedRemedy(machine: string, reason: string, localCocoapods
 export function prebuildFailedRemedy(machine: string, reason: string): string | undefined {
   if (!reason.startsWith('prebuild-failed: ')) return undefined;
   return `\`stim logs --source build\` shows the \`expo prebuild\` output from ${machine}. Fix what it reports, then run the same command again, or rerun with --remote-build local.`;
+}
+
+export function busyBuildMachineRemedy(
+  machine: string,
+  candidates: PlacementCandidate[],
+  reason?: string,
+): string | undefined {
+  return reason?.includes('build-busy: ') ||
+    candidates.some((candidate) => candidate.machine === machine && candidate.code === 'busy')
+    ? `${machine} is not taking builds now; the reason above says why. Run the same command again once it accepts builds, or rerun with --remote-build auto or local to build elsewhere.`
+    : undefined;
 }
 
 export class OffloadRefusal extends Error {
