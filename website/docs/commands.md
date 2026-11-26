@@ -1875,7 +1875,7 @@ remote.machines` replaces the whole list; use it to change the order.
 ## `status`
 
 ```text
-stim status [--json] [--watch]
+stim status [--json] [--watch] [--fresh]
 ```
 
 Shows every Stim environment on the machine. Last builds include `buildMachine`
@@ -1890,6 +1890,11 @@ behind its upstream, and whether its branch is merged, as a
 only for live environments; `stim status --watch` shows it for every worktree. See
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
+
+When the home's stimd answers `stim status --json` from its snapshot, the extra
+top-level `ageMs` field says how old that snapshot is in milliseconds; until it
+has one for the directory, the CLI reads the state itself.
+`--fresh` makes stimd read the state first.
 
 One-shot `stim status` takes simulator state and device slot usage from the
 device listing that a boot admission took in the last 10 seconds, when there
