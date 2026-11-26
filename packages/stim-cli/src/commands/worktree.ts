@@ -776,19 +776,19 @@ export async function addWorktreeTarget(opts: {
     const source = await cloneSource(root, path, operation);
     let slow = 'reason' in source ? source.reason : null;
     if (!('reason' in source)) {
-      const branches = new Set(
-        (
-          await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
-            ...git,
-            signal: operation.signal,
-          })
-        ).split('\n'),
-      );
       let head = '';
       // @ref LLP 0029#the-source-claim-spans-the-clone-and-the-warm -- taken before git registers anything, gone before the hook
       const cloned = await withWarmClaim(
         { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
         async () => {
+          const branches = new Set(
+            (
+              await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
+                ...git,
+                signal: operation.signal,
+              })
+            ).split('\n'),
+          );
           await add(['--no-checkout']);
           let gitDir = '';
           let ref = '';

@@ -382,7 +382,7 @@ test.skipIf(!clones)(
 );
 
 test.skipIf(!clones)(
-  'an operation cancelled while it waits for the source claim creates no worktree and no branch (APFS clonefile; darwin only)',
+  'an operation that waits for the source claim creates nothing if cancelled, and never deletes a branch made meanwhile (APFS clonefile; darwin only)',
   async () => {
     const refreshing = tryAcquireClaim({ root: warmClaimPath(root), mode: 'exclusive', label: 'worktree warm' });
     onTestFinished(() => void releaseClaim(refreshing.acquired));
@@ -392,6 +392,22 @@ test.skipIf(!clones)(
     await expect(
       stim.addWorktree({ path: '../added', branch: 'added', signal: AbortSignal.timeout(1500) }),
     ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file.includes('stim-clonefile')) throw new Error('clonefile: Operation not supported');
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+    const waiting = run(addOp, root, ['../made-while-waiting']);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    git(root, 'branch', 'made-while-waiting', 'HEAD~1');
+    releaseClaim(refreshing.acquired);
+    expect((await waiting).code).toBe(0);
+    expect(git(root, 'rev-parse', 'made-while-waiting')).toBe(git(root, 'rev-parse', 'HEAD~1'));
+    git(root, 'worktree', 'remove', '--force', join(base, 'made-while-waiting'));
 
     expect(existsSync(join(base, 'added'))).toBe(false);
     expect(git(root, 'branch', '--list', 'added')).toBe('');
