@@ -52,6 +52,7 @@ import { claimFailure } from '../../ownership-claim.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
 import type { OffloadChoice, BuildHandoff } from '../../offload/client.ts';
 import {
+  busyBuildMachineRemedy,
   fingerprintMismatchRemedy,
   missingPackageManagerRemedy,
   prebuildFailedRemedy,
@@ -609,7 +610,11 @@ export async function acquireAndroidArtifact(
       if (candidate.cacheOnly) return null;
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
-      fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
+      fallBack(choice, choice, {
+        code: 'no-remote-mac-took-it',
+        candidates: asked,
+        remedy: busyBuildMachineRemedy(buildMachine, asked),
+      });
       return null;
     }
     run.openOffload(() => closeOffload(choice));

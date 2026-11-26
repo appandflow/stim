@@ -10201,6 +10201,23 @@ describe('strict remote machine selection', () => {
     expect(readLastBuilds(readWorkspaceState(root)).ios?.errorCode).toBe('STIM_COMPILATION_CACHE_CORRUPT');
   });
 
+  test('a named machine that is busy refuses with a capacity remedy', async () => {
+    reserve();
+    configureMini();
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockImplementation(async ({ onCandidates }) => {
+      onCandidates?.([{ machine: 'mini', code: 'busy', msg: 'busy (no free build slots)' }]);
+      return 'mini: busy (no free build slots)';
+    });
+    const result = await run({ remoteBuild: 'mini', json: true });
+    const failure = parseFirst(result.logs);
+    expect(failure).toMatchObject({
+      code: 'STIM_OFFLOAD_REFUSED',
+      remedy:
+        'mini is busy. Run the same command again once it has capacity, or rerun with --remote-build auto or local to build elsewhere.',
+    });
+    expect(failure.remedy).not.toContain('doctor --fix');
+  });
+
   test('a named machine whose toolchain differs refuses before prebuild and pod install', async () => {
     reserve();
     configureMini();
