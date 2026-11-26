@@ -21,6 +21,7 @@ import { WorkspaceProcessCleanupError, workspaceProcessLockPath } from './worksp
 import { isClaimUnavailable, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { processContext } from '../cli-operation.ts';
 import { readFingerprint } from '../fingerprint-precompute.ts';
+import { nativeRunBusy } from './fingerprint-ownership.ts';
 import { FINGERPRINT_SCHEMA } from '@stim-cli/core/state';
 import type { NativeMode } from '../fingerprint/key.ts';
 import { shortHash } from '../command-output.ts';
@@ -247,7 +248,7 @@ export async function readPrebuildRecord(
   appRoot: string,
   platform: string,
   operation: StimContext = processContext(appRoot),
-): Promise<{ recorded: unknown; current: string | null }> {
+): Promise<{ recorded: unknown; current: string | null; held?: { message: string; remedy: string } }> {
   const recorded = prebuildRecord(readWorkspaceState(appRoot))[platform];
   if (prebuildRecordStatus(recorded, null).kind !== 'unfingerprintable') return { recorded, current: null };
   let settings: SettingsObject | null = null;
@@ -282,6 +283,8 @@ export async function readPrebuildRecord(
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
     operation.signal.throwIfAborted();
+    const held = nativeRunBusy(error);
+    if (held) return { recorded, current, held };
   }
   return { recorded, current };
 }

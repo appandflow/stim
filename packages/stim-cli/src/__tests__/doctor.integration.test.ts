@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { getProject } from '../workspace/config.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { recordPrebuild } from '../engine/prebuild.ts';
 import {
   checkBuildCacheProvider,
   checkOffloadCandidate,
@@ -1402,16 +1403,20 @@ test('doctor reports the run holding the workspace instead of failing its finger
     git('init', '-q');
     git('config', 'user.email', 'test@example.com');
     git('config', 'user.name', 'test');
-    writeFileSync(join(repo, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ dependencies: { expo: '*', 'react-native': '*' } }));
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    writeFileSync(join(repo, '.gitignore'), 'android/\n');
+    mkdirSync(join(repo, 'android'));
     git('add', '.');
     git('commit', '-qm', 'fixture');
+    recordPrebuild(repo, 'android', 'a'.repeat(40));
     const { context } = await inspectDoctor(repo, {
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       host: 'linux',
       platform: 'android',
     });
     const findings = (await reactNativeProjectDoctor(repo).inspectAsync?.(context)) ?? [];
-    const holder = expect.stringContaining(`held by \`stim ios\` (pid ${process.pid}`);
+    const holder = expect.stringContaining(`${repo} is held by \`stim ios\` (pid ${process.pid}`);
     const fix = 'Run the command again after it finishes.';
     expect(findings).toContainEqual(
       expect.objectContaining({ level: 'note', title: 'Build fingerprint', detail: holder, fix }),
@@ -1419,6 +1424,13 @@ test('doctor reports the run holding the workspace instead of failing its finger
     expect(findings).toContainEqual(
       expect.objectContaining({ level: 'note', title: 'Fingerprint parity could not be checked', detail: holder, fix }),
     );
+    expect(findings).toContainEqual({
+      level: 'note',
+      title: "The prebuild record for the source checkout's android/ was not checked",
+      detail: holder,
+      fix,
+    });
+    expect(findings.filter((finding) => finding.level === 'cost')).toEqual([]);
   } finally {
     releaseClaim(held);
     rmSync(base, { recursive: true, force: true });
