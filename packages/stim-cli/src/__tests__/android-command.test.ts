@@ -55,6 +55,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -4448,6 +4449,11 @@ describe('launch verification', () => {
         expect(text.includes('again once the load drops')).toBe(anr);
         expect(text.includes('Fix the crash')).toBe(!anr);
         expect(text.includes('Pinning is deprecated')).toBe(!anr);
+        const anrRecords = readdirSync(workspaceLogsDir(root))
+          .filter((name) => name.startsWith('native-crash-'))
+          .map((name) => JSON.parse(readFileSync(join(workspaceLogsDir(root), name), 'utf8')))
+          .filter((record) => record.event === 'anr_kill');
+        expect(anrRecords.map((record) => record.pid)).toEqual(anr ? [6004] : []);
       } finally {
         resetExecutor();
       }
@@ -5124,7 +5130,9 @@ describe('release skips Metro entirely', () => {
     setExecutor(makeExecutor({ runFileQuiet: (_file, args) => (args.includes('date') ? String(Date.now()) : null) }));
     const read = vi
       .spyOn(crashDiagnostics, 'readAndroidAnrKill')
-      .mockResolvedValue(anr ? { reason: 'failed to complete startup' } : null);
+      .mockResolvedValue(
+        anr ? { reason: 'failed to complete startup', pid: 6004, ts: Date.now(), deviceTs: Date.now() } : null,
+      );
     onTestFinished(() => {
       read.mockRestore();
       resetExecutor();

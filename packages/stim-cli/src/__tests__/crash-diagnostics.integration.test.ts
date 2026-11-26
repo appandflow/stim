@@ -24,6 +24,9 @@ import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/works
 import { upsertProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';
 import { writeDiagnosticOnceAsync } from '../diagnostics/diagnostic-store.ts';
+import { readWorkspaceLogs } from '../engine/logs.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
+import { testContext } from './_context.ts';
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -678,6 +681,7 @@ test('live native collection requires the current launch and device claim, not a
       runFileQuiet: (_file, args) => {
         if (args.includes('date')) return String(Date.now());
         if (args.includes('emu')) return avd + '\nOK';
+        if (args.includes('system')) return '';
         reads++;
         return raw;
       },
@@ -720,6 +724,80 @@ test('live native collection requires the current launch and device claim, not a
         0,
       ),
     ).toEqual([]);
+  } finally {
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('only logs --errors reads record an ActivityManager ANR kill of the current launch, once, after the app restarts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-crash-anr-'));
+  process.env.STIM_HOME = join(root, 'home');
+  const logs = workspaceLogsDir(root);
+  const since = Date.now() - 60_000;
+  const at = Math.floor(since / 1000) + 11;
+  const launch = {
+    appId: 'app.test',
+    deviceId: 'emulator-5556',
+    metroPort: 8081,
+    release: false,
+    launchedAt: new Date(since).toISOString(),
+  };
+  const marker = {
+    src: 'build',
+    marker: true,
+    event: 'launch_attempt',
+    platform: 'android',
+    ts: since,
+    appId: launch.appId,
+    deviceId: launch.deviceId,
+  };
+  const system = [
+    '--------- beginning of system',
+    `         ${at - 10}.177 I/ActivityManager(  537): Start proc 6004:app.test/u0a145 for next-top-activity {app.test/app.test.MainActivity}`,
+    `         ${at}.362 E/ActivityManager(  537): ANR in app.test`,
+    `         ${at}.362 E/ActivityManager(  537): PID: 6004`,
+    `         ${at}.362 E/ActivityManager(  537): Reason: Process ProcessRecord{c0daa15 6004:app.test/u0a145} failed to complete startup`,
+    `         ${at}.363 I/ActivityManager(  537): Killing 6004:app.test/u0a145 (adj 900): bg anr`,
+    `         ${at + 20}.100 I/ActivityManager(  537): Start proc 6100:app.test/u0a145 for next-top-activity {app.test/app.test.MainActivity}`,
+  ].join('\n');
+  let clockReads = 0;
+  let systemReads = 0;
+  try {
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'launch.ndjson'), JSON.stringify(marker) + '\n');
+    writeFileSync(
+      join(logs, 'device.ndjson'),
+      JSON.stringify({ ts: since + 1, src: 'device', level: 'error', msg: 'Pinning is deprecated since Android Q.' }) +
+        '\n',
+    );
+    writeWorkspaceState(root, { launches: { android: launch } });
+    upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-own' } } });
+    setExecutor({
+      runFileQuiet: (_file, args) => {
+        if (args.includes('date')) return String(Date.now() - 400 - 150 * clockReads++);
+        if (args.includes('emu')) return 'stim-own\nOK';
+        if (!args.includes('system')) return '';
+        systemReads++;
+        return args.includes(launch.deviceId) ? system : '';
+      },
+    });
+    const context = testContext({ projectRoot: root, cwd: root });
+    const plain = await readWorkspaceLogs(context);
+    expect(systemReads).toBe(0);
+    expect(plain.some((record) => record.event === 'anr_kill')).toBe(false);
+    await readWorkspaceLogs(context, { errorsOnly: true });
+    const errors = await readWorkspaceLogs(context, { errorsOnly: true });
+    expect(systemReads).toBe(2);
+    expect(clockReads).toBe(3);
+    expect(errors.map((record) => [record.event, record.pid, record.msg])).toEqual([
+      [
+        'anr_kill',
+        6004,
+        'Android killed app.test for not responding (ANR)\nReason: Process ProcessRecord{c0daa15 6004:app.test/u0a145} failed to complete startup',
+      ],
+    ]);
   } finally {
     resetExecutor();
     delete process.env.STIM_HOME;
@@ -905,5 +983,6 @@ test.each([
   },
 ])('an ActivityManager ANR kill counts only for $name', ({ lines, kill, after = [], expected }) => {
   const text = ['--------- beginning of system', ...lines, AM('2011.363', kill), ...after].join('\n');
-  expect(parseAndroidAnrKill(text, { appId: 'app.test', since: 1_000_000 }, 0)).toEqual(expected);
+  const found = parseAndroidAnrKill(text, { appId: 'app.test', since: 1_000_000 }, 0);
+  expect(found && { reason: found.reason }).toEqual(expected);
 });
