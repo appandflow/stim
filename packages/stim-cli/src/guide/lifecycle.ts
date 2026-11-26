@@ -481,9 +481,10 @@ so a worktree of an app pinned to it whose own Cargo.toml files name its crates
 needs the same folder name as the checkout it was created in (otherwise the
 build fails with "Cargo has no <name>-apple target"). Later Exact reads the
 names from those Cargo.toml files or package.json, and any folder name works.
-A worktree at another folder depth than the Exact checkout needs EXACT2 set to
-it (otherwise "no exact2 at ..."). Stim reports these Exact failures as they
-come.
+A worktree at another folder depth than the checkout it was created in needs
+EXACT2 set to the Exact checkout, since the launcher finds exact2 relative to
+the app (otherwise "no exact2 at ..."). Stim reports these Exact failures as
+they come.
 
 stim doctor --platform ios checks what ./exact.mjs ios needs on this Mac,
 where the launcher looks: Bun at the version exact.mjs pins or newer ($BUN,
