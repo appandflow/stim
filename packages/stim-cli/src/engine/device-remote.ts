@@ -1204,6 +1204,7 @@ export async function ensureMetroReachable({
 
   let resolvedUrl: string | null = null;
   let gate = false;
+  let managed = false;
   if ('origin' in plan) {
     resolvedUrl = plan.origin;
     gate = plan.gate;
@@ -1217,6 +1218,7 @@ export async function ensureMetroReachable({
     }
     resolvedUrl = recorded.url;
     gate = true;
+    managed = true;
   } else {
     const port = Number(metroPort);
     if (plan.start === 'tailscale' && ctx.backend === 'eas') {
@@ -1243,12 +1245,14 @@ export async function ensureMetroReachable({
       };
     }
     gate = recorded.provider !== 'tailscale';
+    managed = true;
   }
 
   if (gate && resolvedUrl) {
     const logsDir = workspaceLogsDir(root);
     const result = await gateOrigin({
       origin: resolvedUrl,
+      managed,
       metroPort,
       platform,
       entryPoint: bundleEntryPoint(root, isExpo),
