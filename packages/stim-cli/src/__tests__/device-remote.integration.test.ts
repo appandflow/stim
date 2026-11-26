@@ -135,6 +135,35 @@ describe('explicit backend selection', () => {
     AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
   };
 
+  test('eas refuses a logged-out account with a login remedy', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      backend: 'eas',
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: EAS_CLI_VERSION,
+      checkAuth: async () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
+    });
+    expect(resolved).toEqual({
+      failed:
+        'eas-cli is not logged in to an Expo account; the eas backend needs one to create an EAS Simulator session.',
+      remedy: 'Run `eas login` (or set EXPO_TOKEN), then run the device command with `--remote eas` again.',
+      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+    });
+  });
+
+  test('eas resolves when authentication is unknown', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      backend: 'eas',
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: EAS_CLI_VERSION,
+      checkAuth: async () => ({ unknown: 'eas whoami timed out after 15000ms' }),
+    });
+    expect(resolved).toMatchObject({ ctx: { backend: 'eas', easBin: '/bin/eas' } });
+  });
+
   test('proxy requires both daemon variables with a precise remedy', async () => {
     const missingToken = await resolveRemoteContext({
       root,
@@ -232,6 +261,7 @@ process.stdout.write(${JSON.stringify(CREATED)});
         const resolved = await resolveRemoteContext({
           root,
           backend: 'eas',
+          checkAuth: async () => ({ unknown: 'offline' }),
           easBin,
           env: process.env,
           lookupAgentDevice: () => agentDeviceBin,
@@ -453,6 +483,7 @@ describe('session creation', () => {
         env: {},
         lookupAgentDevice: () => '/bin/agent-device',
         readEasCliVersion: EAS_CLI_VERSION,
+        checkAuth: async () => ({ unknown: 'offline' }),
       });
       if (!('ctx' in resolved)) return resolved;
       const exec = mockExec({ outputs: { sim: CREATED } });

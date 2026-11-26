@@ -134,8 +134,8 @@ REMOTE DEVICE BACKENDS
   report one, cannot be reached within 3 seconds, or runs on EAS, whose hosts
   are Apple silicon. The cache key ends in that architecture.
 
-  The EAS backend needs eas-cli 21.6.0 or later and an account with EAS
-  Simulator access. An EAS session is billable; Stim has EAS stop each session
+  The EAS backend needs eas-cli 21.6.0 or later, logged in (\`eas login\` or
+  EXPO_TOKEN), and an account with EAS Simulator access. An EAS session is billable; Stim has EAS stop each session
   it creates after remote.easMaxDurationMinutes (default 30), and a later run
   replaces a session that expired. Stim prepares the app before
   it creates or reconnects the session, so a failed build starts no session
