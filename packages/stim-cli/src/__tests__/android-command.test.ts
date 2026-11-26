@@ -1047,6 +1047,7 @@ describe('explicit remote backend behavior', () => {
           ctx: {
             root,
             label: 'app',
+            sessionName: 'stim-app-abc123',
             backend: args.backend,
             easBin: '/bin/eas',
             agentDeviceBin: '/bin/agent-device',
@@ -1056,7 +1057,14 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       resolveAvdSerial: never('local AVD resolution for a remote device'),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend, easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend,
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => {
           remoteCalls.push('ensureDevice');
@@ -1189,7 +1197,14 @@ describe('explicit remote backend behavior', () => {
   test('a remote ENOSPC boot failure keeps the remote-device remedy', async () => {
     const { h } = remoteHarness('proxy', {
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'proxy', easBin: null, agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'proxy',
+          easBin: null,
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'remote device', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ failed: true, reason: 'ENOSPC: remote profile write failed' }),
@@ -1211,7 +1226,14 @@ describe('explicit remote backend behavior', () => {
     const failing = () => ({ failed: true, code: 'STIM_INSTALL_FAILED', reason: `agent-device ${step} failed` });
     const { h } = remoteHarness('eas', {
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
@@ -1235,7 +1257,14 @@ describe('explicit remote backend behavior', () => {
       verifyCollector: () => ({ status: 'ours' as const }),
       pidAlive: () => false,
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
@@ -1390,12 +1419,26 @@ describe('explicit remote backend behavior', () => {
       resolveRemoteDeviceContext: async (args: { backend: unknown }) => {
         backends.push(args.backend);
         return {
-          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          ctx: {
+            root,
+            label: 'app',
+            sessionName: 'stim-app-abc123',
+            backend: 'eas',
+            easBin: '/bin/eas',
+            agentDeviceBin: '/bin/agent-device',
+          },
         };
       },
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
@@ -1425,7 +1468,14 @@ describe('explicit remote backend behavior', () => {
       resolveRemoteDeviceContext: async () => {
         order.push('resolveBackend');
         return {
-          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          ctx: {
+            root,
+            label: 'app',
+            sessionName: 'stim-app-abc123',
+            backend: 'eas',
+            easBin: '/bin/eas',
+            agentDeviceBin: '/bin/agent-device',
+          },
         };
       },
       ensureMetroReachable: async () => {
@@ -1433,7 +1483,14 @@ describe('explicit remote backend behavior', () => {
         return { ok: true as const };
       },
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => {
           order.push('ensureDevice');
@@ -1475,7 +1532,14 @@ describe('explicit remote backend behavior', () => {
     const h = harness({
       remoteDevice: 'eas',
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({
         failed: 'The public Metro origin is unavailable.',
@@ -1483,7 +1547,14 @@ describe('explicit remote backend behavior', () => {
         code: 'STIM_REMOTE_METRO_UNREACHABLE',
       }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => {
           remoteCalls.push('ensureDevice');
@@ -1541,11 +1612,25 @@ describe('explicit remote backend behavior', () => {
     const h = harness({
       remoteDevice: 'eas',
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => {
@@ -1611,11 +1696,25 @@ describe('explicit remote backend behavior', () => {
       },
       now: () => clock,
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => {
@@ -1645,11 +1744,25 @@ describe('explicit remote backend behavior', () => {
     const h = harness({
       remoteDevice: 'eas',
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
@@ -1682,11 +1795,25 @@ describe('explicit remote backend behavior', () => {
     const h = harness({
       remoteDevice: 'eas',
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_unmanaged' }),
@@ -1740,11 +1867,25 @@ describe('explicit remote backend behavior', () => {
       return harness({
         remoteDevice: 'eas',
         resolveRemoteDeviceContext: async () => ({
-          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          ctx: {
+            root,
+            label: 'app',
+            sessionName: 'stim-app-abc123',
+            backend: 'eas',
+            easBin: '/bin/eas',
+            agentDeviceBin: '/bin/agent-device',
+          },
         }),
         ensureMetroReachable: async () => ({ ok: true as const }),
         remoteDeviceDeps: () => ({
-          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          ctx: {
+            root,
+            label: 'app',
+            sessionName: 'stim-app-abc123',
+            backend: 'eas',
+            easBin: '/bin/eas',
+            agentDeviceBin: '/bin/agent-device',
+          },
           checkCapacity: async () => null,
           ensureDevice: async () => {
             deviceEntries += 1;
@@ -1820,10 +1961,24 @@ describe('explicit remote backend behavior', () => {
       resolveMetro: never('the local Metro gate'),
       ensureMetroReachable: never('the public Metro gate'),
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       remoteDeviceDeps: () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
@@ -2681,7 +2836,14 @@ describe('metro is verified before any build work', () => {
         return devServerStarted();
       },
       resolveRemoteDeviceContext: async () => ({
-        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'app',
+          sessionName: 'stim-app-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({ failed: 'stop here', remedy: 'none' }),
     });

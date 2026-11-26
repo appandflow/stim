@@ -4335,6 +4335,7 @@ describe('--remote', () => {
             ctx: {
               root,
               label: 'fixture',
+              sessionName: 'stim-fixture-abc123',
               backend: args.backend,
               easBin: '/bin/eas',
               agentDeviceBin: '/bin/agent-device',
@@ -4344,7 +4345,14 @@ describe('--remote', () => {
         ensureMetroReachable: async () => ({ ok: true as const }),
         detectProviders: () => [],
         remoteIosDeps: () => ({
-          ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          ctx: {
+            root,
+            label: 'fixture',
+            sessionName: 'stim-fixture-abc123',
+            backend: 'eas',
+            easBin: '/bin/eas',
+            agentDeviceBin: '/bin/agent-device',
+          },
           checkDeviceCapacity: () => {
             hits.push('checkDeviceCapacity');
             return null;
@@ -5569,12 +5577,26 @@ describe('the remote browser preview', () => {
   function previewStub(url: string | null) {
     return {
       resolveRemoteContext: () => ({
-        ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'fixture',
+          sessionName: 'stim-fixture-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
       }),
       ensureMetroReachable: async () => ({ ok: true as const }),
       detectProviders: () => [],
       remoteIosDeps: () => ({
-        ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: {
+          root,
+          label: 'fixture',
+          sessionName: 'stim-fixture-abc123',
+          backend: 'eas',
+          easBin: '/bin/eas',
+          agentDeviceBin: '/bin/agent-device',
+        },
         checkDeviceCapacity: () => null,
         ensureOwnedDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureBooted: async () => ({ ok: true, udid: 'drs_42' }),
