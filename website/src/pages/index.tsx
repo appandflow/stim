@@ -330,7 +330,7 @@ export default function Home(): ReactNode {
                 </Heading>
                 <CodeBlock language="bash">npx skills add appandflow/stim</CodeBlock>
                 <p>Then ask your agent: &quot;Build and run the app on iOS.&quot; No setup in your project.</p>
-                <DocLink to="/docs/agent-skills">Agent setup</DocLink>
+                <DocLink to="/docs/getting-started">Agent setup</DocLink>
               </section>
             </div>
             <div className={styles.abstractIllustration} data-reveal="">
