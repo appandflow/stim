@@ -64,9 +64,14 @@ export function prebuildFailedRemedy(machine: string, reason: string): string | 
   return `\`stim logs --source build\` shows the \`expo prebuild\` output from ${machine}. Fix what it reports, then run the same command again, or rerun with --remote-build local.`;
 }
 
-export function busyBuildMachineRemedy(machine: string, candidates: PlacementCandidate[]): string | undefined {
-  return candidates.some((candidate) => candidate.machine === machine && candidate.code === 'busy')
-    ? `${machine} is busy. Run the same command again once it has capacity, or rerun with --remote-build auto or local to build elsewhere.`
+export function busyBuildMachineRemedy(
+  machine: string,
+  candidates: PlacementCandidate[],
+  reason?: string,
+): string | undefined {
+  return reason?.includes('build-busy: ') ||
+    candidates.some((candidate) => candidate.machine === machine && candidate.code === 'busy')
+    ? `${machine} is not taking builds now; the reason above says why. Run the same command again once it accepts builds, or rerun with --remote-build auto or local to build elsewhere.`
     : undefined;
 }
 

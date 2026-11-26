@@ -831,7 +831,8 @@ export async function acquireIosArtifact(
           : (fingerprintMismatchRemedy(outcome.reason) ??
             missingPackageManagerRemedy(choice.machine, outcome.reason) ??
             podsFailedRemedy(choice.machine, outcome.reason, localCocoapods) ??
-            prebuildFailedRemedy(choice.machine, outcome.reason)),
+            prebuildFailedRemedy(choice.machine, outcome.reason) ??
+            busyBuildMachineRemedy(choice.machine, [], outcome.reason)),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;

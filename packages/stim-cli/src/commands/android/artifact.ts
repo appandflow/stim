@@ -734,7 +734,8 @@ export async function acquireAndroidArtifact(
             ? undefined
             : (fingerprintMismatchRemedy(outcome.reason) ??
               missingPackageManagerRemedy(choice.machine, outcome.reason) ??
-              prebuildFailedRemedy(choice.machine, outcome.reason))) ??
+              prebuildFailedRemedy(choice.machine, outcome.reason) ??
+              busyBuildMachineRemedy(choice.machine, [], outcome.reason))) ??
           (embedsJs ? androidReleaseRemedy(why) : undefined),
       });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });

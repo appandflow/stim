@@ -99,7 +99,7 @@ export async function buildMacosBundle({
         }),
       );
       if (namedBuildMachine(buildMachine))
-        throw new OffloadRefusal(buildMachine, reason, busyBuildMachineRemedy(buildMachine, asked));
+        throw new OffloadRefusal(buildMachine, reason, busyBuildMachineRemedy(buildMachine, asked, reason));
       requireLocalBuild(buildMachine, reason);
       offloadFallback = reason;
       if (record) record.offloadFallback = reason;

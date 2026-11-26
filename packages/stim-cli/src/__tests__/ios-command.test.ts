@@ -10158,24 +10158,30 @@ describe('strict remote machine selection', () => {
     expect(here.calls.order).toContain('buildIos');
   });
 
-  test.each(['sync failed'])('remote %s never falls back to xcodebuild', async (reason) => {
-    reserve();
-    configureMini();
-    const choice = {
-      machine: 'mini',
-      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
-    } as offloadClient.OffloadChoice;
-    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
-    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
-    const build = vi.fn<() => never>();
-    const slot = vi.fn<() => never>();
-    const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
-    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.stderr).toContain(reason);
-    expect(build).not.toHaveBeenCalled();
-    expect(slot).not.toHaveBeenCalled();
-    expect(readLastBuilds(readWorkspaceState(root)).ios?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
-  });
+  test.each(['sync failed', 'start: build-busy: no free build slots'])(
+    'remote %s never falls back to xcodebuild',
+    async (reason) => {
+      reserve();
+      configureMini();
+      const choice = {
+        machine: 'mini',
+        offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+      } as offloadClient.OffloadChoice;
+      vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+      vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
+      const build = vi.fn<() => never>();
+      const slot = vi.fn<() => never>();
+      const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
+      expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
+      expect(result.stderr).toContain(reason);
+      expect(parseFirst(result.logs).remedy).toContain(
+        reason.includes('build-busy: ') ? 'mini is not taking builds now' : 'doctor --fix',
+      );
+      expect(build).not.toHaveBeenCalled();
+      expect(slot).not.toHaveBeenCalled();
+      expect(readLastBuilds(readWorkspaceState(root)).ios?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
+    },
+  );
 
   test('a named machine whose build failed on its corrupt compilation cache fails with that code and a rerun remedy', async () => {
     reserve();
@@ -10213,7 +10219,7 @@ describe('strict remote machine selection', () => {
     expect(failure).toMatchObject({
       code: 'STIM_OFFLOAD_REFUSED',
       remedy:
-        'mini is busy. Run the same command again once it has capacity, or rerun with --remote-build auto or local to build elsewhere.',
+        'mini is not taking builds now; the reason above says why. Run the same command again once it accepts builds, or rerun with --remote-build auto or local to build elsewhere.',
     });
     expect(failure.remedy).not.toContain('doctor --fix');
   });
