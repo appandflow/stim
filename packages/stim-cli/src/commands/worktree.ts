@@ -788,21 +788,21 @@ export function removalRemedy(
 
   const lines: string[] = [];
   const dir = shellQuoted(worktree);
+  const command = (git: string, porcelain: string[], limit = 5) => {
+    const paths = porcelain.map(porcelainPath).filter((p): p is string => Boolean(p));
+    lines.push(`  git --literal-pathspecs -C ${dir} ${git} -- ${paths.slice(0, limit).map(shellQuoted).join(' ')}`);
+    if (paths.length > limit)
+      lines.push(`  (${paths.length - limit} more not listed; git -C ${dir} status -s shows them all)`);
+  };
   if (tracked.length) {
     lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
-    lines.push(`  git -C ${dir} checkout -- ${pathArgs(tracked)}`);
+    command('checkout', tracked);
   }
   if (untracked.length) {
     lines.push('If a build or a setup script left these untracked files, delete them and retry:');
-    lines.push(`  git -C ${dir} clean -fd -- ${pathArgs(untracked)}`);
+    command('clean -fd', untracked);
   }
   return lines;
-}
-
-function pathArgs(lines: string[] | null | undefined, limit = 5): string {
-  const paths = (lines || []).map(porcelainPath).filter((p): p is string => Boolean(p));
-  const shown = paths.slice(0, limit).map(shellQuoted);
-  return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
 const DIRTY_BLOCKER = 'uncommitted changes or untracked files';
