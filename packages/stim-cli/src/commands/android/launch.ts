@@ -98,6 +98,7 @@ import {
   captureNativeCrashes,
   printNativeCrashReport,
   readAndroidAnrKill,
+  recordAndroidAnrKill,
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
@@ -201,6 +202,8 @@ export function androidMetroRuntime(prepare: AndroidRuntimePlan['prepare']): And
 
 async function reportAnrKill({
   operation,
+  slot,
+  logsDir,
   serial,
   androidPackage,
   launchedAt,
@@ -210,7 +213,10 @@ async function reportAnrKill({
   hostAdb,
   runCommand,
   waitedMs,
-}: Pick<VerifyAndroidRunArgs, 'operation' | 'serial' | 'androidPackage' | 'launchedAt' | 'physical' | 'phase'> & {
+}: Pick<
+  VerifyAndroidRunArgs,
+  'operation' | 'serial' | 'androidPackage' | 'launchedAt' | 'physical' | 'phase' | 'slot' | 'logsDir'
+> & {
   clockOffsetMs: number | null | undefined;
   hostAdb: boolean;
   runCommand: string;
@@ -223,6 +229,7 @@ async function reportAnrKill({
     operation?.signal,
   );
   if (!anr) return false;
+  await recordAndroidAnrKill(anr, { slot, deviceId: serial, appId: androidPackage }, logsDir, operation?.signal);
   phase(
     'verify',
     chalk.red(`FATAL after ${formatDuration(waitedMs ?? 0)}: Android killed the app for not responding (ANR)`),
@@ -286,6 +293,8 @@ async function verifyAndroidProcessRun({
     !crashes.length &&
     (await reportAnrKill({
       operation,
+      slot,
+      logsDir,
       serial,
       androidPackage,
       launchedAt,
@@ -437,6 +446,8 @@ export async function verifyAndroidMetroRun({
       verification.processAlive === false &&
       (await reportAnrKill({
         operation,
+        slot,
+        logsDir,
         serial,
         androidPackage,
         launchedAt,

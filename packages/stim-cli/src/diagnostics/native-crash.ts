@@ -500,6 +500,39 @@ export async function readAndroidAnrKill(
   return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;
 }
 
+/** Stores an ANR kill as an `anr_kill` record, once per device, kill time and pid. */
+export async function recordAndroidAnrKill(
+  kill: AndroidAnrKill,
+  target: Pick<CrashTarget, 'slot' | 'deviceId' | 'appId'>,
+  logsDir: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const slot = target.slot && target.slot !== 'default' ? target.slot : undefined;
+  const record: NdjsonRecord = {
+    ts: kill.ts,
+    deviceTs: kill.deviceTs,
+    pid: kill.pid,
+    src: 'device',
+    platform: 'android',
+    level: 'fatal',
+    event: 'anr_kill',
+    appId: target.appId,
+    deviceId: target.deviceId,
+    ...(slot ? { slot } : {}),
+    msg: `Android killed ${target.appId} for not responding (ANR)${kill.reason ? `\nReason: ${kill.reason}` : ''}`,
+  };
+  const key = createHash('sha256')
+    .update(JSON.stringify(['anr', slot, target.deviceId, kill.deviceTs, kill.pid]))
+    .digest('hex');
+  try {
+    await writeDiagnosticOnceAsync(
+      join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`),
+      `${JSON.stringify(record)}\n`,
+      signal,
+    );
+  } catch {}
+}
+
 async function captureAndroidAnrKill(
   target: CrashTarget,
   clockOffsetMs: number,
@@ -507,31 +540,8 @@ async function captureAndroidAnrKill(
   signal?: AbortSignal,
 ): Promise<void> {
   const text = await readActivityManagerLog(target.deviceId, signal);
-  for (const kill of text ? parseAndroidAnrKills(text, target, clockOffsetMs).kills : []) {
-    const record: NdjsonRecord = {
-      ts: kill.ts,
-      deviceTs: kill.deviceTs,
-      pid: kill.pid,
-      src: 'device',
-      platform: 'android',
-      level: 'fatal',
-      event: 'anr_kill',
-      appId: target.appId,
-      deviceId: target.deviceId,
-      ...(target.slot && target.slot !== 'default' ? { slot: target.slot } : {}),
-      msg: `Android killed ${target.appId} for not responding (ANR)${kill.reason ? `\nReason: ${kill.reason}` : ''}`,
-    };
-    const key = createHash('sha256')
-      .update(JSON.stringify(['anr', record.slot, target.deviceId, kill.deviceTs, kill.pid]))
-      .digest('hex');
-    try {
-      await writeDiagnosticOnceAsync(
-        join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`),
-        `${JSON.stringify(record)}\n`,
-        signal,
-      );
-    } catch {}
-  }
+  for (const kill of text ? parseAndroidAnrKills(text, target, clockOffsetMs).kills : [])
+    await recordAndroidAnrKill(kill, target, logsDir, signal);
 }
 
 export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {

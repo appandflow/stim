@@ -743,6 +743,8 @@ test('logs --errors records an ActivityManager ANR kill of the current launch on
     launchedAt: new Date(since).toISOString(),
   };
   const marker = {
+    src: 'build',
+    marker: true,
     event: 'launch_attempt',
     platform: 'android',
     ts: since,
