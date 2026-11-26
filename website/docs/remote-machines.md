@@ -314,8 +314,8 @@ with `This machine takes only published Stim builds.` and the setting to
 change. Completed artifacts on a worker are reused when both Stim builds carry
 the same build compatibility version. Every connection between two machines
 also compares one wire integer, `peer` (3 for the owned-fingerprint protocol): a worker whose Stim is older than this
-one's is refused with `peer-too-old`, `stim remote update <mac>`, and the
-`npm i -g stim@<version> && stim service install` to run there.
+one's is refused with `peer-too-old` and `stim remote update <mac>`, or, for a
+1.x worker, the `npm i -g stim@<version> && stim service install` to run there.
 
 Stim Desktop's **Install This Mac's Build** only moves a worker forward. It reads
 the worker's Stim release first and disables the button, with the reason beside
@@ -447,10 +447,10 @@ reachability in this run and those revoke commands.
 machines. `stim doctor --fix` in an app directory still asks every listed
 machine that has not been asked.
 
-A worker whose stim-server is older than this machine's peer version, such
-as any 1.x worker, cannot authenticate this machine, and `stim remote update`
-cannot update a 1.x worker. `stim doctor` reports it as `outdated` and names
-the fix on the worker itself: install the Stim this machine runs and reinstall
+A worker whose stim-server is older than this machine's peer version cannot
+authenticate this machine. `stim doctor` reports it as `outdated` and names the
+update. A 2.x worker takes `stim remote update <machine>` here. A 1.x worker
+cannot: on the worker itself, install the Stim this machine runs and reinstall
 its service, as
 [Services and remote machines](./migrate-to-2.md#6-services-and-remote-machines)
 describes, then approve this machine as doctor shows, or run

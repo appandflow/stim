@@ -262,7 +262,7 @@ Do this after steps 1 to 3: `stim start` refuses while a refusing setting or exp
 **Migrate (ask first):**
 
 - A service that a 1.x Stim installed: run `stim service install` with its existing options. `stim service status` prints the exact command on its `stale:` line when the LaunchAgent or systemd unit is out of date.
-- A worker: `stim remote update <machine>`. A stock 1.40 worker cannot take that update. On the worker itself, install the target Stim, reinstall its service with `stim service install` and the same options, then check the connection with `stim remote list` and the next offloaded build.
+- A worker that still runs 1.x cannot take `stim remote update`. On the worker itself, install the target Stim, reinstall its service with `stim service install` and the same options, then check the connection with `stim remote list` and the next offloaded build. A worker that already runs a 2.x Stim takes `stim remote update <machine>` from here.
 
 ### 7. First build
 

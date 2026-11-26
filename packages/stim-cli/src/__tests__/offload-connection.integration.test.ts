@@ -1014,7 +1014,7 @@ describe('native Xcode worker selection', () => {
       'old',
       offer(0.1),
       { result: { job: 'unused' } },
-      { hello: () => ({ result: { capabilities: ['build'], peer: 1, server: { name: 'old', stim: '1.42.0' } } }) },
+      { hello: () => ({ result: { capabilities: ['build'], server: { name: 'old', stim: '1.40.0' } } }) },
     );
     machines.push(machine);
     const result = await chooseBuildMachine({
@@ -1025,7 +1025,7 @@ describe('native Xcode worker selection', () => {
       machines: [credential('old')],
     });
     expect(result).toBe(
-      `old: peer-too-old: old runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update old, or on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
+      `old: peer-too-old: old runs stim 1.40.0 (no peer), this Mac needs peer ${PEER}; on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
     );
     expect(machine.methods).toEqual(['hello']);
   });
