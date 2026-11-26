@@ -22,6 +22,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   claimFilesRemoveCommand,
   claimRemoveCommand,
+  joinRemoveCommands,
   markClaimChildPending,
   processGroupAlive,
   readClaimSet,
@@ -1311,10 +1312,12 @@ export class BuildHost {
             entry.outcome = {
               ok: false,
               code: 'cleanup-unresolved',
-              message: `Build cleanup is unresolved. Verify the worker and its descendants have stopped, then run \`${[
-                claimRemoveCommand(fingerprintTemp),
-                ...[claim, slot, engineClaim].flatMap((held) => (held ? [claimFilesRemoveCommand(held.path)] : [])),
-              ].join(' && ')}\` before retrying.`,
+              message: `Build cleanup is unresolved. Verify the worker and its descendants have stopped, then run \`${joinRemoveCommands(
+                [
+                  claimRemoveCommand(fingerprintTemp),
+                  ...[claim, slot, engineClaim].flatMap((held) => (held ? [claimFilesRemoveCommand(held.path)] : [])),
+                ],
+              )}\` before retrying.`,
             };
           }
           if (!released && stopped && entry.outcome && !entry.outcome.ok)

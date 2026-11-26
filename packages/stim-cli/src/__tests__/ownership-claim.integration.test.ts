@@ -1,4 +1,3 @@
-import { claimFilesRemoveCommand, claimRemoveCommand } from '../../../core/ownership-claim.ts';
 import assert from 'node:assert';
 import { once } from 'node:events';
 import {
@@ -20,12 +19,15 @@ import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import {
   claimFailure,
+  claimFilesRemoveCommand,
   claimLiveness,
+  claimRemoveCommand,
   clearClaimChild,
   clearFreeClaimSet,
   exclusiveClaimDir,
   inspectClaimSet,
   isClaimRefusal,
+  joinRemoveCommands,
   markClaimChildPending,
   readClaimSet,
   releaseClaim,
@@ -168,7 +170,7 @@ describe('refusing instead of guessing', () => {
     expect(err.claimPath).toBe(path);
     expect(err.removeCommand).toBe(claimRemoveCommand(path));
     expect(err.message).toContain(path);
-    expect(err.message).toContain(claimRemoveCommand(path));
+    expect(err.message).toContain(process.platform === 'win32' ? claimRemoveCommand(path) : `rm -f '${path}'`);
     expect(err.message).toContain('ios build');
     expect(existsSync(path)).toBe(true);
   });
@@ -620,21 +622,27 @@ describe('claimFailure', () => {
   });
 });
 
-test('Windows claim remedies quote spaces and single quotes for PowerShell', () => {
+test('claim remedies print POSIX commands, and PowerShell commands on Windows', () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform');
   const dir = join(mkdtempSync(join(tmpdir(), 'stim-claim-pwsh-')), "it's cache");
   const claim = join(dir, 'owner.claim');
-  const quoted = (path: string) => `'${path.replaceAll("'", "''")}'`;
+  const child = join(dir, 'owner.child');
+  const posix = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+  const powershell = (path: string) => `'${path.replaceAll("'", "''")}'`;
   mkdirSync(dir);
   writeFileSync(claim, '');
-  Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
-    expect(claimRemoveCommand(dir)).toBe(`Remove-Item -Recurse -Force -LiteralPath ${quoted(dir)}`);
-    expect(claimFilesRemoveCommand(claim)).toBe(`Remove-Item -Force -LiteralPath ${quoted(claim)}`);
-    writeFileSync(join(dir, 'owner.child'), '');
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    expect(claimFilesRemoveCommand(claim)).toBe(`rm -f ${posix(claim)} ${posix(child)}`);
+    expect(joinRemoveCommands(['a', 'b'])).toBe('a && b');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    expect(claimRemoveCommand(dir)).toBe(`Remove-Item -Recurse -Force -LiteralPath ${powershell(dir)}`);
+    expect(claimFilesRemoveCommand(claim)).toBe(`Remove-Item -Force -LiteralPath ${powershell(claim)}`);
+    writeFileSync(child, '');
     expect(claimFilesRemoveCommand(claim)).toBe(
-      `Remove-Item -Force -LiteralPath ${quoted(claim)}, ${quoted(join(dir, 'owner.child'))}`,
+      `Remove-Item -Force -LiteralPath ${powershell(claim)}, ${powershell(child)}`,
     );
+    expect(joinRemoveCommands(['a', 'b'])).toBe('a; b');
   } finally {
     if (platform) Object.defineProperty(process, 'platform', platform);
     rmSync(dirname(dir), { recursive: true, force: true });

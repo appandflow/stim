@@ -165,7 +165,7 @@ export class ClaimUnavailableError extends Error {
   }
 }
 
-const powershellPath = (path: string): string => `'${path.replaceAll("'", "''")}'`;
+const powershellPath = (path: string): string => `'${path.replaceAll(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
 
 /** A shell-quoted removal command for one claim or child file, or recursively for a directory; PowerShell on Windows. */
 export function claimRemoveCommand(path: string): string {
@@ -186,6 +186,11 @@ export function claimFilesRemoveCommand(path: string): string {
   return path.endsWith(CLAIM_SUFFIX)
     ? `rm -f ${quotedPath(path)} ${quotedPath(childPath(path))}`
     : claimRemoveCommand(path);
+}
+
+/** Removal commands run one after another: `&&` in a POSIX shell, `;` in PowerShell, where `Remove-Item` fails on an absent path. */
+export function joinRemoveCommands(commands: readonly string[]): string {
+  return commands.join(process.platform === 'win32' ? '; ' : ' && ');
 }
 
 /** An unresolved claim as one clause: why, who held it (pid, claim time and whether it still runs), and where it is. */

@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claimFilesRemoveCommand, claimRemoveCommand } from '../ownership-claim.ts';
+import { claimFilesRemoveCommand, claimRemoveCommand, joinRemoveCommands } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import {
   acquireBuildSlot,
@@ -487,7 +487,7 @@ test('status names an unresolved offloaded build slot, its dead owner and one co
   expect(holder?.claim?.unresolved).toContain(repo);
   expect(holder?.claim?.unresolved).toContain(engine);
   expect(holder?.claim?.removeCommand).toBe(
-    [claimRemoveCommand(work), ...[repo, slot, engine].map(claimFilesRemoveCommand)].join(' && '),
+    joinRemoveCommands([claimRemoveCommand(work), ...[repo, slot, engine].map(claimFilesRemoveCommand)]),
   );
 });
 
@@ -515,9 +515,7 @@ test('engine claims of an owner that leaves two offloaded slots unresolved get t
   for (const holder of holders) {
     for (const engine of engines) expect(holder.claim?.removeCommand).not.toContain(engine);
     expect(holder.claim?.unresolved).toContain(
-      `once every build of owner pid ${owner.pid} has stopped, run: ${engines
-        .map((engine) => claimFilesRemoveCommand(engine))
-        .join(' && ')}`,
+      `once every build of owner pid ${owner.pid} has stopped, run: ${joinRemoveCommands(engines.map((engine) => claimFilesRemoveCommand(engine)))}`,
     );
   }
 });
