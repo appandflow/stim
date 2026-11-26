@@ -282,6 +282,19 @@ describe('planAndroid', () => {
     expect(getProject(app)?.platforms).toBeUndefined();
   });
 
+  test.each(['flag', 'setting'])(
+    'the remote backend from the %s is refused: a plan cannot read its ABI',
+    async (origin) => {
+      writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { remote: 'proxy' } }));
+      const { payload, exitCode } = await plan(origin === 'flag' ? { remote: 'proxy' } : {});
+      expect(exitCode).toBe(1);
+      expect(payload).toMatchObject({ code: 'STIM_BAD_ARG' });
+      expect(payload.message).toContain(origin === 'flag' ? '--remote is proxy' : 'android.remote is proxy');
+      expect(payload.remedy).toContain('--remote local');
+      expect((await plan({ remote: 'local' })).exitCode).toBeUndefined();
+    },
+  );
+
   test('a recorded AVD that no longer exists keys by the image a new emulator would use', async () => {
     upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
     const { payload } = await plan({ systemImage: X86.pkg }, { avdSystemImage: () => ARM.pkg });
