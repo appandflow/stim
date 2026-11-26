@@ -1,7 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { quotedPath } from '@stim-cli/core';
-import { gitQuietAsync } from './git.ts';
+import { gitQuietAsync, shellQuoted } from './git.ts';
 
 /**
  * A tracked file hidden from git status (assume-unchanged, or skip-worktree with the file on disk), whose edit removal
@@ -26,7 +25,7 @@ export async function hiddenEditHold(path: string, signal?: AbortSignal): Promis
     )
       continue;
     const kind = skipWorktree ? 'skip-worktree' : 'assume-unchanged';
-    return `its tracked file ${file} is marked ${kind}, so git status may not show an edit to it; show it with git -C ${quotedPath(path)} update-index --no-${kind} ${quotedPath(file)}, then commit or discard it`;
+    return `its tracked file ${file} is marked ${kind}, so git status may not show an edit to it; show it with git -C ${shellQuoted(path)} update-index --no-${kind} ${shellQuoted(file)}, then commit or discard it`;
   }
   return null;
 }

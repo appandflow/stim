@@ -89,3 +89,16 @@ export async function gitQuietAsync(
     return null;
   }
 }
+
+export function shellQuoted(value: string): string {
+  if (value === '<worktree>') return value;
+  if (process.platform === 'win32') {
+    if (/^[\w./\\:-]+$/.test(value)) return value;
+    return /[$`"\u201c\u201d\u201e]/.test(value) ? powershellQuoted(value) : `"${value}"`;
+  }
+  return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function powershellQuoted(value: string): string {
+  return `'${value.replaceAll(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
+}

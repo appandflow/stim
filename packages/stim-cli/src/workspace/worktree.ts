@@ -18,7 +18,7 @@ import {
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
-import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
+import { git, gitAsync, gitQuiet, gitQuietAsync, shellQuoted } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { warmTrash } from './worktree-trash.ts';
 import { childEnvironment } from './git-read.ts';
@@ -1246,7 +1246,7 @@ export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string 
   const bare = first.path;
   const checkouts = entries.filter((entry) => !entry.bare && !entry.prunable);
   const listed = checkouts.map((entry) => `${entry.branch ?? 'detached'} (${entry.path})`).join(', ') || 'none';
-  const pointHead = `  git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`;
+  const pointHead = `  git -C ${shellQuoted(bare)} symbolic-ref HEAD refs/heads/<branch>`;
   if (!bareHead) {
     return {
       refusal:
@@ -1262,8 +1262,8 @@ export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string 
     const beside = checkouts[0] ? dirname(checkouts[0].path) : bare;
     const recreate = stale
       ? `Its worktree at ${stale.path} is missing. Recreate it, then retry:\n` +
-        `  git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${stale.path} ${bareHead}\n`
-      : `Create one, then retry:\n  git -C ${bare} worktree add ${join(beside, bareHead)} ${bareHead}\n`;
+        `  git -C ${shellQuoted(bare)} worktree prune\n  git -C ${shellQuoted(bare)} worktree add ${shellQuoted(stale.path)} ${shellQuoted(bareHead)}\n`
+      : `Create one, then retry:\n  git -C ${shellQuoted(bare)} worktree add ${shellQuoted(join(beside, bareHead))} ${shellQuoted(bareHead)}\n`;
     return {
       refusal:
         `The bare repository at ${bare} points HEAD at ${bareHead}, but no worktree has ${bareHead} checked out, ` +
