@@ -158,6 +158,33 @@ test('a leftover maintenance.mode caps status at report and explains the cap', (
   );
 });
 
+test('a running daemon claim without a tick respects the leftover maintenance cap', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('STIM_DAEMON', 'on');
+  const claim = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'shared',
+    label: 'stimd',
+    details: { mode: 'on' },
+  }).acquired;
+  onTestFinished(() => {
+    if (claim) releaseClaim(claim);
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+  expect(claim).toBeTruthy();
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ maintenance: { mode: 'report' } }));
+
+  const value = daemonStatus({});
+
+  expect(value.mode).toBe('report');
+  expect(value).not.toHaveProperty('setting');
+  expect(daemonLine(value, NOW, {})).toMatch(
+    /^Daemon \(report only; a leftover maintenance\.mode holds it at report\): running since /,
+  );
+});
+
 test("status reports the running daemon's tick and mode, and the setting when the mode differs", () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
   process.env.STIM_HOME = home;

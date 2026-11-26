@@ -56,7 +56,10 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   const snapshot = holder && read?.pid !== holder.owner.pid ? null : read;
   const waiting = listWaiting();
   const testWaiting = listTestWaiting();
-  const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
+  const claimMode = holder ? parseDaemonMode(holder.details.mode) : null;
+  const runningMode = holder
+    ? (parseDaemonMode(snapshot?.mode) ?? (claimMode && leftover ? stricterDaemonMode(claimMode, leftover) : claimMode))
+    : null;
   const mode = runningMode ?? setting;
   const unverified = parseUnverifiedCleanups(holder?.details.unverified);
   const unverifiedConsoles = parseUnverifiedConsoles(holder?.details.unverifiedConsoles);
@@ -147,7 +150,11 @@ function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function daemonLine(status: DaemonStatus, now: number = Date.now()): string {
+export function daemonLine(
+  status: DaemonStatus,
+  now: number = Date.now(),
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
   // compat C32 until 2.1.0
   if (status.older)
@@ -160,7 +167,7 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
     : 'no tick yet';
   const resolves = status.setting ? `; daemon.mode resolves to ${status.setting} here` : '';
   const leftover =
-    status.mode === 'report' && leftoverDaemonCap() ? '; a leftover maintenance.mode holds it at report' : '';
+    status.mode === 'report' && leftoverDaemonCap(env) ? '; a leftover maintenance.mode holds it at report' : '';
   const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode}${leftover}${resolves})`;
   const pressure = status.pressure
     ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
