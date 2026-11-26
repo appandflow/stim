@@ -139,7 +139,9 @@ test('the last daemon action line names the newest action, its age and what it f
 
 test('a leftover maintenance.mode caps status at report and explains the cap', () => {
   vi.stubEnv('STIM_DAEMON', undefined);
-  onTestFinished(() => vi.unstubAllEnvs());
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
   const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
   process.env.STIM_HOME = home;
   onTestFinished(() => {
