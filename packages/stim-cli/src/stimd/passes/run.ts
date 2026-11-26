@@ -363,12 +363,20 @@ async function refreshCargoSizes(
 async function refreshOverCapCargoSizes(
   state: MaintenanceState,
   settings: MaintenanceSettings,
+  pass: { caps: boolean; measuredSizes: boolean; capRan: boolean },
   operation: StimContext | undefined,
   record: Parameters<typeof deferIfLoaded>[3],
   between: (() => Promise<void>) | undefined,
 ): Promise<void> {
   const cap = Math.floor(settings.cargoTargetMaxGb * 1024 ** 3);
-  if (cap === 0 || !state.sizes.some((size) => size.name === 'Cargo target' && size.bytes > cap)) return;
+  if (
+    !pass.caps ||
+    pass.measuredSizes ||
+    pass.capRan ||
+    cap === 0 ||
+    !state.sizes.some((size) => size.name === 'Cargo target' && size.bytes > cap)
+  )
+    return;
   try {
     await refreshCargoSizes(state, Date.now(), operation, between);
   } catch (error) {
@@ -566,8 +574,14 @@ export async function runMaintenance(
       writeState(state);
       return;
     }
-    if (caps && !measuredSizes && !cap.ran)
-      await refreshOverCapCargoSizes(state, settings, tick?.operation, record, between);
+    await refreshOverCapCargoSizes(
+      state,
+      settings,
+      { caps, measuredSizes, capRan: cap.ran },
+      tick?.operation,
+      record,
+      between,
+    );
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
