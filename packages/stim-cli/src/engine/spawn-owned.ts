@@ -1,7 +1,7 @@
 import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { dirname } from 'node:path';
-import { windowsShellLaunchArgs } from '../detached-entry.ts';
+import { windowsDetachedLaunchArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
 import {
   clearClaimChild,
@@ -186,7 +186,7 @@ function startDetached(launch: OwnedLaunch): ChildProcess {
 
 // libuv/libuv#1490: a detached child spawned by Node on win32 inherits every inheritable handle of this process.
 function startWindows(launch: OwnedLaunch): number | undefined {
-  const launcher = windowsShellLaunchArgs(launch);
+  const launcher = windowsDetachedLaunchArgs(launch);
   const pid = Number(
     getExecutor().runFile(launcher.file, launcher.args, {
       cwd: launch.cwd,

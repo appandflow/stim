@@ -26,6 +26,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
+import { windowsDetachedLaunchArgs } from '../detached-entry.ts';
 import { type Executor, getExecutor, windowsSystemExecutable } from '../exec.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
@@ -1273,31 +1274,50 @@ export async function bootAndroidEmulator(
 ): Promise<number | null> {
   const exec = getExecutor();
   const app = await configuredAndroidEmulatorApp(platform, ambientEnv());
-  const child = exec.spawn(
-    androidToolPath('emulator'),
-    [
-      '-avd',
-      avdName,
-      '-port',
-      String(consolePort),
-      '-grpc',
-      String(consolePort + 3000),
-      '-grpc-use-token',
-      ...headlessEmulatorArgs(ambientEnv(), platform, openViewer ? app : 'stim-desktop'),
-      ...suppressEmulatorCrashConsent({ platform }),
-    ],
-    {
-      cwd: androidToolCwd(platform),
-      detached: true,
-      stdio: emulatorStdio(logFile),
-    },
-  );
+  const file = androidToolPath('emulator');
+  const args = [
+    '-avd',
+    avdName,
+    '-port',
+    String(consolePort),
+    '-grpc',
+    String(consolePort + 3000),
+    '-grpc-use-token',
+    ...headlessEmulatorArgs(ambientEnv(), platform, openViewer ? app : 'stim-desktop'),
+    ...suppressEmulatorCrashConsent({ platform }),
+  ];
+  if (platform === 'win32') {
+    const log = logFile && emulatorLogDirectory(logFile) ? { logFile } : {};
+    const home = homedir();
+    const launcher = windowsDetachedLaunchArgs({ file, args, cwd: home, console: 'none', ...log });
+    let pid: number;
+    try {
+      pid = Number(exec.runFile(launcher.file, launcher.args, { cwd: home, env: launcher.env, timeoutMs: 30_000 }));
+    } catch (error) {
+      throw new Error(`Could not start the Android emulator for ${avdName}.`, { cause: error });
+    }
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  }
+  const child = exec.spawn(file, args, {
+    cwd: androidToolCwd(platform),
+    detached: true,
+    stdio: emulatorStdio(logFile),
+  });
   child?.unref?.();
   const pid = child?.pid ?? null;
   if (openViewer && pid !== null && platform === 'darwin' && app === 'stim-desktop') {
     await openEmulatorInStimDesktop(`emulator-${consolePort}`);
   }
   return pid;
+}
+
+function emulatorLogDirectory(logFile: string): boolean {
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function emulatorStdio(logFile?: string | null): 'ignore' | (number | 'ignore')[] {

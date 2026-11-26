@@ -680,8 +680,13 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   process.env.ANDROID_HOME = sdk;
   const cwds: unknown[] = [];
   const args: string[][] = [];
+  let windowsLaunch: { cwd?: string; env?: Record<string, string> } = {};
   setExecutor({
-    runFile: () => '',
+    runFile: (_file: string, _fileArgs: string[], opts: { cwd?: string; env?: Record<string, string> }) => {
+      if (!opts.env?.STIM_WINDOWS_LAUNCH_ARGS) return '';
+      windowsLaunch = opts;
+      return '42';
+    },
     runFileQuiet: (_file: string, fileArgs: string[]) =>
       fileArgs[0] === '-version' ? 'Android emulator version 37.1.11.0 (build_id 1)' : null,
     spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
@@ -693,11 +698,14 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   expect(await bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
   await bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
   await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
-  expect(cwds).toEqual([homedir(), undefined, undefined]);
-  expect(args[0]?.slice(0, 4)).toEqual(['-avd', 'stim-app', '-port', '5556']);
-  expect(args[0]?.slice(-2)).toEqual(['-crash-report-mode', 'never']);
+  expect(windowsLaunch.cwd).toBe(homedir());
+  expect(windowsLaunch.env?.STIM_WINDOWS_LAUNCH_CWD).toBe(homedir());
+  expect(windowsLaunch.env?.STIM_WINDOWS_LAUNCH_ARGS).toMatch(
+    /^"[^"]*emulator[^"]*" "-avd" "stim-app" "-port" "5556" .* "-crash-report-mode" "never"$/,
+  );
+  expect(cwds).toEqual([undefined, undefined]);
+  expect(args[0]).not.toContain('-crash-report-mode');
   expect(args[1]).not.toContain('-crash-report-mode');
-  expect(args[2]).not.toContain('-crash-report-mode');
 });
 
 test('parseDfAvailableBytes reads the free bytes of /data from toybox df -k', () => {
@@ -727,6 +735,25 @@ test('bootAndroidEmulator still boots when the log file cannot be opened', async
   await bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log'), platform: 'linux' });
   expect(spawned.length).toBe(1);
   expect(spawned[0]?.stdio).toBe('ignore');
+});
+
+test('bootAndroidEmulator on Windows boots without a log when the log directory cannot be created', async () => {
+  const launches: Array<Record<string, string> | undefined> = [];
+  setExecutor({
+    runFile: (_file: string, _args: string[], opts: { env?: Record<string, string> }) => {
+      if (!opts.env?.STIM_WINDOWS_LAUNCH_ARGS) return '';
+      launches.push(opts.env);
+      return '42';
+    },
+    runFileQuiet: () => null,
+  });
+  const blocker = join(tmpHome, 'blocker');
+  writeFileSync(blocker, '');
+  expect(
+    await bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'logs', 'emulator.log'), platform: 'win32' }),
+  ).toBe(42);
+  expect(launches).toHaveLength(1);
+  expect(launches[0]?.STIM_WINDOWS_LAUNCH_LOG).toBe('');
 });
 
 test('resolvePhysicalDevice refuses an ambiguous choice and names every candidate', () => {
