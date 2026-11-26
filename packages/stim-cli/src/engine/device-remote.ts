@@ -6,7 +6,7 @@ import { getExecutor } from '../exec.ts';
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
-import { operationState } from './operation-state.ts';
+import { operationState, withDrainingCancellation } from './operation-state.ts';
 import { formatElapsed } from '../command-output.ts';
 import type { ClaimHolder } from '../ownership-claim.ts';
 import { readJsonObject, settingDefinition, settingValueError, type RemoteDeviceBackend } from '@stim-cli/core/state';
@@ -794,7 +794,24 @@ const EAS_START_HOLD_MS =
 
 const SESSION_END_MARGIN_MS = 5 * 60_000;
 
-export async function ensureRemoteBootOwned<T extends BootResult>({
+export async function ensureRemoteBootOwned<T extends BootResult>(
+  options: Parameters<typeof bootOwned<T>>[0],
+): Promise<T | BootResult> {
+  const { operation } = options;
+  if (!operation) return bootOwned(options);
+  const state = operationState(operation);
+  const previous = state.runSignal;
+  if (previous) state.runSignal = AbortSignal.any([previous, operation.signal]);
+  try {
+    return await withDrainingCancellation(operation, operation.signal, () => bootOwned(options), {
+      drainTermination: true,
+    });
+  } finally {
+    if (!state.runSignal?.aborted) state.runSignal = previous;
+  }
+}
+
+async function bootOwned<T extends BootResult>({
   root,
   platform,
   sessionName,

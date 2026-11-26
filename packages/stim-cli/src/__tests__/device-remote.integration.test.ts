@@ -1,4 +1,5 @@
-import { processContext } from '../cli-operation.ts';
+import { processContext, processOperation } from '../cli-operation.ts';
+import { operationState } from '../engine/operation-state.ts';
 import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import {
@@ -1256,3 +1257,69 @@ if (args[0] === 'sim') {
     }
   },
 );
+
+test('a SIGTERM during an EAS create in a native run drains until the session it created is stopped', async () => {
+  resetExecutor();
+  const easBin = join(root, 'terminated-eas.cjs');
+  const marker = join(root, 'terminated-created');
+  const calls = join(root, 'terminated-calls');
+  writeFileSync(
+    easBin,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'sim') {
+  fs.writeFileSync(${JSON.stringify(marker)}, 'ready');
+  setInterval(() => {}, 1000);
+} else if (args[0] === 'simulator:list') {
+  process.stdout.write(JSON.stringify({sessions: [{id:'drs_42',name:'stim-wt-abcdef',status:'NEW'}], pageInfo:{hasNextPage:false,endCursor:null}}));
+} else if (args[0] === 'simulator:stop') {
+  process.stdout.write(JSON.stringify({id:'drs_42',status:'STOPPED'}));
+}
+`,
+  );
+  chmodSync(easBin, 0o755);
+  const operation = processOperation(root);
+  operationState(operation.context).runSignal = new AbortController().signal;
+  const kill = process.kill.bind(process);
+  const raised = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) => (target === process.pid ? true : kill(target, signal)));
+  const exited = vi.spyOn(process, 'exit').mockImplementation((code) => {
+    throw new Error(`exit ${String(code)}`);
+  });
+  watchFile(marker, { interval: 10 }, (stat) => {
+    if (stat.size) operation.cancel('SIGTERM');
+  });
+  try {
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'stim-wt-abcdef',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      operation: operation.context,
+      boot: () => remoteIosDeps(ctx({ easBin, operation: operation.context })).ensureBooted({}),
+      createdSessionId: () => null,
+      abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_42' }),
+      writeState: () => {},
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot: join(tmpHome, 'machine-eas'),
+    });
+    expect(raised).not.toHaveBeenCalledWith(process.pid, expect.anything());
+    expect(exited).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ failed: true, reason: expect.stringContaining('drs_42 was stopped') });
+    const invoked: string[][] = readFileSync(calls, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(invoked.filter((args) => args[0] === 'simulator:stop')).toHaveLength(1);
+    expect(operation.interrupted()).toBe(143);
+  } finally {
+    unwatchFile(marker);
+    raised.mockRestore();
+    exited.mockRestore();
+    operation.dispose();
+  }
+});
