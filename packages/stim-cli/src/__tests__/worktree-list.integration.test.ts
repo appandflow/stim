@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, utimesSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { diskUsageCacheFile, gcMarkFile, GC_MARK_VERSION, loadConfig, getConfigPath } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
@@ -13,6 +13,8 @@ let repository: string;
 let roots: [string, string, string];
 const GIB = 1024 ** 3;
 const savedAt = '2026-01-01T00:00:00.000Z';
+const rest = (root: string) => `${root}${sep}.`;
+
 function save(file: string, value: object) {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(value));
@@ -48,12 +50,13 @@ beforeEach(() => {
   for (const [index, root] of roots.entries()) {
     git(['worktree', 'add', '-q', '-b', `branch-${index}`, root]);
     if (index !== 1) upsertProject(root, { metroPort: null });
-    save(diskUsageCacheFile(root), {
-      path: root,
-      bytes: index === 1 ? 4 * GIB : index === 2 ? 3 * GIB : 100,
-      ...(index === 2 ? {} : { privateBytes: index === 1 ? 2 * GIB : 100 }),
-      measuredAt: new Date().toISOString(),
-    });
+    for (const path of [root, rest(root)])
+      save(diskUsageCacheFile(path), {
+        path,
+        bytes: index === 1 ? 4 * GIB : index === 2 ? 3 * GIB : 100,
+        ...(index === 2 ? {} : { privateBytes: index === 1 ? 2 * GIB : 100 }),
+        measuredAt: new Date().toISOString(),
+      });
   }
   writeFileSync(join(roots[0], 'dirty.txt'), 'changed');
   for (const index of [1, 2] as const) {
@@ -125,8 +128,8 @@ test('JSON is one payload and splits kept totals by gc reason', async () => {
       'large',
     ].toSorted(),
   );
-  save(diskUsageCacheFile(roots[1]), {
-    path: roots[1],
+  save(diskUsageCacheFile(rest(roots[1])), {
+    path: rest(roots[1]),
     bytes: 4 * GIB,
     privateBytes: 2 * GIB,
     partial: true,
@@ -209,6 +212,7 @@ test('machine listing uses saved observations and leaves unobserved worktrees un
   rmSync(gcMarkFile(roots[0]));
   rmSync(gcMarkFile(roots[1]));
   rmSync(diskUsageCacheFile(roots[1]));
+  rmSync(diskUsageCacheFile(rest(roots[1])));
   const neverChecked = await linkedWorktreeFindings(repository);
   expect(neverChecked[0]?.detail).toContain('maintenance worktree check has not run');
   expect(neverChecked[0]?.detail).toContain('2 not checked');

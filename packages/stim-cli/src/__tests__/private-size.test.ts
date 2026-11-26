@@ -1,3 +1,6 @@
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { measureTree } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 
@@ -76,4 +79,39 @@ test.each(['', 'not JSON'])('one deadline covers real-size exit 1 (%j) and the d
   takesMs = 130_000;
   expect(await measureTree('/tree', { timeoutMs: 120_000 })).toBeNull();
   expect(duTimeouts).toEqual([20_000]);
+});
+
+test('targets count private bytes from the real-size total of their directories plus their singly linked files', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  const root = mkdtempSync(join(tmpdir(), 'stim-private-targets-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'a'));
+  writeFileSync(join(root, 'file'), 'x'.repeat(10_000));
+  writeFileSync(join(root, 'linked'), 'y'.repeat(10_000));
+  linkSync(join(root, 'linked'), join(root, 'a', 'link'));
+  const fileBytes = lstatSync(join(root, 'file')).blocks * 512;
+  const linkedBytes = lstatSync(join(root, 'linked')).blocks * 512;
+  const runFileAsync = vi.fn<ReturnType<typeof getExecutor>['runFileAsync']>(async () =>
+    JSON.stringify({ paths: [{ allocated: 300, private: 90 }], total: { allocated: 300, private: 90, skipped: 0 } }),
+  );
+  setExecutor({ ...getExecutor(), runFileAsync });
+  expect(
+    await measureTree(root, { timeoutMs: 1000, targets: [join(root, 'a'), join(root, 'file'), join(root, 'linked')] }),
+  ).toEqual({ bytes: 300 + fileBytes + linkedBytes, privateBytes: 90 + fileBytes });
+  expect(runFileAsync.mock.calls[0]?.[1].slice(-3)).toEqual(['--json', '--', join(root, 'a')]);
+});
+
+test('file-only targets count their singly linked files without a real-size run', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  const root = mkdtempSync(join(tmpdir(), 'stim-private-targets-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'file'), 'x'.repeat(10_000));
+  const bytes = lstatSync(join(root, 'file')).blocks * 512;
+  const runFileAsync = vi.fn<ReturnType<typeof getExecutor>['runFileAsync']>();
+  setExecutor({ ...getExecutor(), runFileAsync });
+  expect(await measureTree(root, { timeoutMs: 1000, targets: [join(root, 'file')] })).toEqual({
+    bytes,
+    privateBytes: bytes,
+  });
+  expect(runFileAsync).not.toHaveBeenCalled();
 });

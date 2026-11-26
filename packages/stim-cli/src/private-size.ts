@@ -37,7 +37,7 @@ function parseDu(output: string): TreeSize | null {
 
 /**
  * Measures allocated and private bytes with the prebuilt real-size binary on macOS and Linux. Falls back to
- * du -sk with private bytes unknown when unavailable. With targets or private: false, only du runs.
+ * du -sk with private bytes unknown when unavailable. With private: false, only du runs.
  * Null when neither walk can measure it or the shared deadline expires. Operation children retain their
  * cancellation and cleanup handling; other walks run at low priority and notify onSpawn.
  */
@@ -93,15 +93,31 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
     const stdout: unknown = error instanceof Error && 'stdout' in error ? error.stdout : undefined;
     return { status, stdout };
   };
-  const counted = !options.targets && options.private !== false;
+  const counted = options.private !== false;
   const binary = counted && process.platform !== 'win32' ? binaryPath() : null;
   let privateUnknown: TreeSize['privateUnknown'] = binary || process.platform === 'darwin' ? 'walk' : 'volume';
   if (Date.now() >= deadline) return null;
+  // real-size measures directories only: a file target with one link counts its allocated bytes as private, which
+  // overstates a clone, and one with several links counts none.
+  const dirs: string[] = [];
+  let fileBytes = 0;
+  let filePrivate = 0;
+  for (const target of binary ? (options.targets ?? []) : []) {
+    const info = lstatSync(target, { throwIfNoEntry: false });
+    if (info?.isDirectory()) dirs.push(target);
+    else if (info?.isFile()) {
+      fileBytes += info.blocks * 512;
+      if (info.nlink === 1) filePrivate += info.blocks * 512;
+    }
+  }
+  if (binary && options.targets && !dirs.length) return { bytes: fileBytes, privateBytes: filePrivate };
   if (binary) {
     try {
-      const { paths }: RealSizeResult = JSON.parse(await walk(binary, ['--json', '--', path]));
-      const size = paths[0];
-      if (size) return { bytes: size.allocated, privateBytes: size.private };
+      const { total, paths }: RealSizeResult = JSON.parse(
+        await walk(binary, ['--json', '--', ...(options.targets ? dirs : [path])]),
+      );
+      const size = options.targets ? total : paths[0];
+      if (size) return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate };
     } catch (error) {
       const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
@@ -109,8 +125,9 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
       if (status === 1 && typeof stdout === 'string') {
         try {
           const { total, paths }: RealSizeResult = JSON.parse(stdout);
-          const size = paths[0];
-          if (total.skipped > 0 && size) return { bytes: size.allocated, privateBytes: size.private, partial: true };
+          const size = options.targets ? total : paths[0];
+          if (total.skipped > 0 && size)
+            return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate, partial: true };
         } catch {}
       }
     }

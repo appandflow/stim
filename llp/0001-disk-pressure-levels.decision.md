@@ -1122,6 +1122,23 @@ not by the maintainer: the daemon scans every 10 minutes, so re-walking on
 every group change would walk a busy repository's trees more often than the
 old 6 hour expiry did.
 
+`stim worktree list` sizes a linked worktree as its `node_modules` and
+`ios/Pods` under this rule plus a walk of the rest of the worktree when that is
+over an hour old. Reason: ignored build output in the rest changes by gigabytes
+without moving git or any install signature, so no cheap signal holds it
+longer. A worktree with a project-local `.pnpm-store` is walked whole hourly,
+because real-size counts a file shared between two measured paths as private in
+neither, and the store shares its files with `node_modules`. So is one whose
+`node_modules`, `ios` or `ios/Pods` is anything but an absent path or a plain
+directory: a symbolic link, which the whole walk does not follow and a split
+walk would count twice or outside the worktree, or a path that cannot be read. The rest is
+measured as its top-level entries, so the same holds for a file linked between
+two of them; real-size takes directories only, so a top-level file with one
+link counts its allocated bytes, overstating a clone. Both errors are bounded
+by files a regular worktree rarely has. The composition
+and that fallback were chosen by the implementer of #6385, not by the
+maintainer.
+
 ## A tree of hard links stays
 
 A `node_modules` or Pods tree whose private size is unknown when it is ranked
