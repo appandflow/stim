@@ -82,7 +82,8 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-test('a pass that measured no Cargo target plans no trim from its saved over-cap size', async () => {
+test('a pass that measured no Cargo target trims nothing from its saved over-cap size', async () => {
+  vi.stubEnv('STIM_DAEMON', 'on');
   vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '1');
   vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
   const now = Date.now();
@@ -112,7 +113,7 @@ test('a pass that measured no Cargo target plans no trim from its saved over-cap
 
   expect(measurements.measureSizes).not.toHaveBeenCalled();
   expect(readMaintenanceState()?.lastAt.worktree).toBe(now);
-  expect(readMaintenanceState()?.plan.filter((action) => action.target === target)).toEqual([]);
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
 });
 
 test('while host load defers the size scan, the cap still measures and plans an over-cap target, and status says since when', async () => {

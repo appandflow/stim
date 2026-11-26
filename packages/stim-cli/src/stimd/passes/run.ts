@@ -351,10 +351,6 @@ async function measureCapOnly(
   return true;
 }
 
-function plannedSizes(sizes: MaintenanceSize[], measuredCargo: boolean): MaintenanceSize[] {
-  return measuredCargo ? sizes : sizes.filter((size) => size.name !== 'Cargo target');
-}
-
 async function measureAllSizes(
   now: number,
   failure: Parameters<typeof measureSizes>[1],
@@ -544,7 +540,7 @@ export async function runMaintenance(
     let result: PlannedMaintenance;
     await unitBoundary(between);
     try {
-      result = await plannedMaintenance(plannedSizes(state.sizes, measuredSizes || cap.ran), settings, {
+      result = await plannedMaintenance(state.sizes, settings, {
         caps,
         cargoOnly: cap.ran,
         cargoLevel: 'normal',
@@ -605,7 +601,10 @@ export async function runMaintenance(
         const began = Date.now();
         let outcome: ActionOutcome;
         try {
-          outcome = await executeAction(action, context);
+          outcome =
+            action.kind === 'would-clear-build-dirs' && action.level === undefined && !measuredSizes && !cap.ran
+              ? { status: 'kept', bytes: 0, detail: 'this pass did not measure its size' }
+              : await executeAction(action, context);
         } catch (error) {
           throwUnverifiedCleanup(error);
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
