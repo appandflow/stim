@@ -109,6 +109,28 @@ describe('createStim', () => {
     expect(calls).toEqual([]);
   });
 
+  it('refuses a collectGarbage option it does not accept before it reaches an engine, so it never deletes', async () => {
+    const calls: unknown[][] = [];
+    engine.runOp = async (...call) => {
+      calls.push(call);
+      return null;
+    };
+    const client = createStim({ projectRoot: scratch, home: join(scratch, 'home') });
+    const collect = (options: object) =>
+      Reflect.apply(client.collectGarbage, client, [options]).catch((error: unknown) => error);
+    expect(await collect({ delete: false })).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      remedy: expect.stringContaining('previewGarbage()'),
+    });
+    expect(await collect({ cache: 'gradle' })).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('cache'),
+    });
+    expect(calls).toEqual([]);
+    await client.collectGarbage({ pressure: 'high' });
+    expect(calls.map(([name, args]) => [name, args])).toEqual([['collectGarbage', [{ pressure: 'high' }]]]);
+  });
+
   it('runs in this build when the caller already runs inside a Stim resident process', async () => {
     engine.runOp = async () => 'engine identity';
     const ctx = { projectRoot: scratch, home: join(scratch, 'home'), admission: 'none' } as const;

@@ -196,6 +196,9 @@ with one scoped `unset` per layer that holds the key.
 | `gc()`                    | `previewGarbage()` to preview, `collectGarbage()` to apply. Both take `{ pressure }`. |
 
 The old spellings refuse with `STIM_BAD_ARG` and name the replacement.
+`collectGarbage()` always deletes: without options it no longer previews, and
+its 1.40 options `delete`, `cache`, `olderThan` and `worktrees` refuse with
+`STIM_BAD_ARG`.
 `collectGarbage()` returns `{ report, exitCode }`. `StimLogsOptions.sources`
 and `minLevel` use the `LogSource` and `LogLevel` unions. Operation errors are
 rejected promises. `stim/internal/*` and `@internal` APIs carry no stability
