@@ -216,10 +216,10 @@ async function reportAnrKill({
   runCommand: string;
   waitedMs: number | undefined;
 }): Promise<boolean> {
-  if (!hostAdb) return false;
+  if (!hostAdb || clockOffsetMs === null || clockOffsetMs === undefined) return false;
   const anr = await readAndroidAnrKill(
-    { deviceId: serial, appId: androidPackage, since: clockOffsetMs == null ? 0 : launchedAt },
-    clockOffsetMs ?? 0,
+    { deviceId: serial, appId: androidPackage, since: launchedAt },
+    clockOffsetMs,
     operation?.signal,
   );
   if (!anr) return false;

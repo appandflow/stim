@@ -256,8 +256,8 @@ app's JavaScript reports `Running "<name>"`. The summary can report
 that bundling is still in progress or that launch is unverified. If the wait
 window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. When Android killed the app for
-not responding (an ANR), the run says so, prints the ANR reason, and names the
-host load, so an overloaded host is not mistaken for an app crash. Release runs
+not responding (an ANR), the run says so and prints the ANR reason and, for an
+emulator, the host load, so an overloaded host is not mistaken for an app crash. Release runs
 check process liveness without Metro.
 
 The wait for the app's bundle request is 20 seconds. An Expo development
