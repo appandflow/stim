@@ -183,7 +183,9 @@ test('every stim guide errors reference in a remedy, a guide or the router names
     ...['..', '../../../ci/src', '../../../server/src'].flatMap((dir) =>
       sourceTexts(new URL(`${dir}/`, import.meta.url)),
     ),
-    ...sourceTexts(new URL('../../../../website/docs/', import.meta.url), '.md'),
+    ...readdirSync(new URL('../../../../website/docs/', import.meta.url), { recursive: true, encoding: 'utf-8' })
+      .filter((file) => file.endsWith('.md') && !/^(changelog\.md|troubleshooting\.md|_generated\/)/.test(file))
+      .map((file) => readFileSync(new URL(`../../../../website/docs/${file}`, import.meta.url), 'utf-8')),
     readFileSync(new URL('../../README.md', import.meta.url), 'utf-8'),
     ...allBodies(),
   ];

@@ -117,6 +117,7 @@ beforeAll(() => {
   appendFileSync(join(installed('c'), 'dist', 'api.mjs'), `\nglobalThis.__stimApiLoadedFrom = 'c';\n`);
   const bin = join(tmp, 'fake-bin');
   mkdirSync(bin);
+  cpSync(process.execPath, join(bin, 'node'));
   writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho ${versions.c}\n`);
   chmodSync(join(bin, 'npm'), 0o755);
 }, 120_000);
@@ -198,7 +199,16 @@ test.skipIf(process.platform === 'win32')(
       pinReason: `rolled back from ${versions.c}`,
     });
     expect(select('c', ['--set-by', 'promote:machine']).refused).toContain('pinned');
-    const update = stim(['engine', 'update'], { PATH: `${join(tmp, 'fake-bin')}:${process.env.PATH}` });
+    const update = spawnSync(
+      join(tmp, 'fake-bin', 'node'),
+      [join(installed('a'), 'bin', 'stim.mjs'), 'engine', 'update'],
+      {
+        cwd: work,
+        env: { ...env, PATH: `${join(tmp, 'fake-bin')}:${process.env.PATH}` },
+        encoding: 'utf8',
+      },
+    );
+    expect(update.status).toBe(0);
     expect(update.stderr).not.toMatch(/STIM_/);
     const updated = readJson(join(root, 'current.json'));
     expect({ dir: updated.dir, pinned: updated.pinned }).toEqual({ dir: c, pinned: false });
