@@ -327,7 +327,7 @@ function removalBlocker(
   if (facts.unregistered) {
     return skip(
       'not-registered',
-      'not known to this Stim home: no project, workspace record or discovery source names it; stim worktree warm makes it one Stim manages when it holds an iOS or Android app, and a checkout without one stays unmanaged',
+      'not known to this Stim home: no project, workspace record or discovery source names it; stim worktree warm makes it one Stim manages when it finds an app there, and a checkout warm finds no app in stays unmanaged',
     );
   }
   if (facts.locked) return skip('locked', LOCKED_REASON);
