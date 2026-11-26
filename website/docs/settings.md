@@ -1209,8 +1209,8 @@ removed setting's old value that turned something off, so it never quietly
 becomes a default that acts: `maintenance.mode` `off` or `report`, or
 `metro.idleStopMinutes` or `devices.idleShutdownMinutes` `0`. The refusal names
 the `stim settings set` and `unset` commands that keep the old behavior, such
-as `stim settings set daemon.mode off` then `stim settings unset maintenance.mode`,
-or only the `unset` when a layer already sets the replacement, and `stim doctor`
+as `stim settings set daemon.mode off` then `stim settings unset maintenance.mode --scope machine`,
+one `unset` per layer that holds the key, or only the `unset` when a layer already sets the replacement, and `stim doctor`
 rates each one a cost. `maintenance.idleStopHours` `0` is still read, for hosted
 sessions, so it never refuses; `stim doctor` rates it a cost until
 `idle.dormantDays` is set, since it no longer keeps workspaces from going

@@ -159,13 +159,13 @@ test.each([
     'maintenance.mode off in the machine config',
     'machine' as const,
     { maintenance: { mode: 'off' } },
-    'Run `stim settings set daemon.mode off`, then `stim settings unset maintenance.mode`.',
+    'Run `stim settings set daemon.mode off`, then `stim settings unset maintenance.mode --scope machine`.',
   ],
   [
     'metro.idleStopMinutes 0 in .stim.json',
     'committed' as const,
     { metro: { idleStopMinutes: 0 } },
-    'Run `stim settings set idle.minutes 0 --scope committed`, then `stim settings unset metro.idleStopMinutes`.',
+    'Run `stim settings set idle.minutes 0 --scope committed`, then `stim settings unset metro.idleStopMinutes --scope committed`.',
   ],
 ])('%s costs: the commands that act refuse while it is there', (_, scope, settings, fix) => {
   const findings = checkMachineSettings({
@@ -222,7 +222,7 @@ test('a leftover whose replacement a layer already sets names that value and ask
     expect.objectContaining({
       level: 'cost',
       detail: expect.stringContaining(`idle.minutes is 0 in ${MACHINE}.`),
-      fix: `Run \`stim settings unset metro.idleStopMinutes\`.${UPGRADE}`,
+      fix: `Run \`stim settings unset metro.idleStopMinutes --scope committed\`.${UPGRADE}`,
     }),
   ]);
 });

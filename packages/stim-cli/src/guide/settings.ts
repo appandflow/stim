@@ -1962,7 +1962,7 @@ ${[...REMOVED_SETTINGS]
   .filter(([, entry]) => !entry.kept)
   .map(
     ([key, removed]) =>
-      `  \`${key}\`${removed.env ? ` (${removed.env}${removed.refuses ? ', refused' : ''})` : ''}\n    ${removed.key ? `replaced by ${removed.replacement}` : removed.replacement}; stim settings unset ${key}`,
+      `  \`${key}\`${removed.env ? ` (${removed.env}${removed.refuses ? ', refused' : ''})` : ''}\n    ${removed.key ? `replaced by ${removed.replacement}` : removed.replacement}; stim settings unset ${key} --scope <layer>`,
   )
   .join('\n')}`,
 };
