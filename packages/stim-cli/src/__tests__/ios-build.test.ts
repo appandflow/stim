@@ -39,6 +39,7 @@ let cancelBuild: boolean;
 let copies: string[];
 let projectBundleId: string | null;
 let linkedApp: boolean;
+let offloadRuntime: (() => string | null) | undefined;
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-ios-build-'));
@@ -54,6 +55,7 @@ beforeEach(() => {
   copies = [];
   projectBundleId = 'org.example.native';
   linkedApp = false;
+  offloadRuntime = undefined;
   const runFile = getExecutor().runFileAsync;
   vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async (command, args, options) => {
     if (command === 'plutil') {
@@ -73,6 +75,7 @@ beforeEach(() => {
       throw new Error('Build-only must not create a runtime.');
     },
     artifact({ configuration, target }) {
+      offloadRuntime = target.offloadRuntime;
       const hash = createHash('sha256')
         .update(readFileSync(join(root, 'Main.swift')))
         .digest('hex');
@@ -159,6 +162,29 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(scratch, { recursive: true, force: true });
+});
+
+test('build offload uses the configured installed iOS runtime', async () => {
+  writeFileSync(
+    join(root, '.stim.json'),
+    JSON.stringify({ optimizations: { releaseBundleSwap: false }, ios: { runtime: '27.0' } }),
+  );
+  const runFile = getExecutor().runFile;
+  vi.spyOn(getExecutor(), 'runFile').mockImplementation((command, args, options) => {
+    if (command === 'xcrun' && JSON.stringify(args) === JSON.stringify(['simctl', 'list', 'runtimes', '--json']))
+      return JSON.stringify({
+        runtimes: ['27.0', '27.1'].map((version) => ({
+          identifier: `com.apple.CoreSimulator.SimRuntime.iOS-${version.replace('.', '-')}`,
+          name: `iOS ${version}`,
+          version,
+          platform: 'iOS',
+          isAvailable: true,
+        })),
+      });
+    return runFile(command, args, options);
+  });
+  await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+  expect(offloadRuntime?.()).toBe('com.apple.CoreSimulator.SimRuntime.iOS-27-0');
 });
 
 test.each(['failure', 'cancellation'])(

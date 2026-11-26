@@ -5,7 +5,7 @@ import { constants, promises as fs } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
-import { listIosRuntimes } from '../../devices/ios.ts';
+import { iosRuntimeMatches, listIosRuntimes } from '../../devices/ios.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
@@ -38,6 +38,7 @@ import {
   iosProjectPathError,
   resolveConfiguration,
   resolveIosBuildSetup,
+  resolveRuntime,
   resolveSchemeSelection,
   simulatorBuildArch,
 } from './support.ts';
@@ -221,10 +222,18 @@ export async function buildIosOperation(
                   sdk: 'iphonesimulator',
                   arch,
                   keyArch: arch,
-                  offloadRuntime: () =>
-                    listIosRuntimes().toSorted((a, b) =>
+                  offloadRuntime: () => {
+                    const runtimes = listIosRuntimes().toSorted((a, b) =>
                       b.version.localeCompare(a.version, undefined, { numeric: true }),
-                    )[0]?.identifier ?? null,
+                    );
+                    const requested = resolveRuntime(null, settings);
+                    return (
+                      (requested ? runtimes.find((runtime) => iosRuntimeMatches(runtime, requested)) : null)
+                        ?.identifier ??
+                      runtimes[0]?.identifier ??
+                      null
+                    );
+                  },
                   ...(arch ? { hostedArchitecture: arch } : {}),
                   offloadRefusal: null,
                 },
