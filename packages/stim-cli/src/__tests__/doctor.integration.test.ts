@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { getProject } from '../workspace/config.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import {
   checkBuildCacheProvider,
   checkOffloadCandidate,
@@ -48,7 +49,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
-import { buildCacheKey } from '@stim-cli/core';
+import { buildCacheKey, workspaceName } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import {
   analyzeStimVersions,
@@ -1385,6 +1386,44 @@ test('a parity check leaves no workspace state for its temporary worktree', asyn
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('doctor reports the run holding the workspace instead of failing its fingerprint checks', async () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-held-')));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  const held = tryAcquireClaim({
+    root: join(testHome, 'workspaces', workspaceName(repo), 'native-run.lock'),
+    mode: 'exclusive',
+    details: { command: 'ios', platform: 'ios', slot: 'default' },
+  }).acquired;
+  assert(held);
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    git('add', '.');
+    git('commit', '-qm', 'fixture');
+    const { context } = await inspectDoctor(repo, {
+      concurrency: { maxBuilds: 0, maxDevices: 0 },
+      host: 'linux',
+      platform: 'android',
+    });
+    const findings = (await reactNativeProjectDoctor(repo).inspectAsync?.(context)) ?? [];
+    const holder = expect.stringContaining(`held by \`stim ios\` (pid ${process.pid}`);
+    const fix = 'Run the command again after it finishes.';
+    expect(findings).toContainEqual(
+      expect.objectContaining({ level: 'note', title: 'Build fingerprint', detail: holder, fix }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({ level: 'note', title: 'Fingerprint parity could not be checked', detail: holder, fix }),
+    );
+  } finally {
+    releaseClaim(held);
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test('parity retains its registered worktree when fingerprint cleanup is unverified', async () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-retained-'));
