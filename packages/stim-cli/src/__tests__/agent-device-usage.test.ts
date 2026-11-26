@@ -182,5 +182,10 @@ test.skipIf(process.platform !== 'darwin')(
       JSON.stringify({ pid: process.pid, startTime: new Date(start.startedAtMs - 2000).toISOString() }),
     );
     expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]!.entries[0]!.inUse).toBe(false);
+    writeFileSync(
+      ownerFile,
+      JSON.stringify({ pid: process.pid, startTime: `posix:${Math.floor(start.startedAtMs / 1000) * 1000 - 2000}` }),
+    );
+    expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]?.entries[0]?.inUse).toBe(false);
   },
 );

@@ -108,6 +108,14 @@ installer with the impossible iOS version `0.0`, verifies Xcode accepts the
 arguments and refuses the version, and downloads no runtime. It uses a private
 Stim home; it does not create, boot or delete a simulator.
 
+The focused `agent-device-start-time.compat.test.ts` probe requires macOS and
+the installed agent-device (the fixed binary location or
+`STIM_AGENT_DEVICE_BIN`). It starts a real agent-device daemon in a temporary
+state directory, under a time zone other than the reader's, and checks that
+Stim reads the start time agent-device records for it as the live process, then
+stops that daemon. A change in how agent-device records process start times
+fails here. It needs no simulator, emulator or phone.
+
 The focused `native-android-cache.compat.test.ts` probe requires an installed
 Android SDK platform, `aapt`, `apksigner`, and JDK `keytool`. It creates and signs
 a temporary manifest-only APK with a disposable keystore, verifies cache reuse,

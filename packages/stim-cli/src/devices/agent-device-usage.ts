@@ -13,7 +13,13 @@ import {
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { listWorkspaceDirs } from '../commands/gc/workspaces.ts';
-import { envDir, parseAgentDeviceRecord, processMatches, type AgentDeviceRecord } from './activity.ts';
+import {
+  envDir,
+  parseAgentDeviceRecord,
+  processMatches,
+  recordedStartTime,
+  type AgentDeviceRecord,
+} from './activity.ts';
 
 const MAX_AGE_MS = 10 * 60_000;
 
@@ -195,7 +201,7 @@ function readRunnerLock(dir: string): { pid: number; startTime: string } | 'unre
       owner.pid > 0 &&
       'startTime' in owner &&
       typeof owner.startTime === 'string' &&
-      Number.isFinite(Date.parse(owner.startTime))
+      Number.isFinite(recordedStartTime(owner.startTime))
     ) {
       return { pid: owner.pid, startTime: owner.startTime };
     }

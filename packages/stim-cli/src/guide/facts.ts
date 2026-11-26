@@ -1530,9 +1530,11 @@ RULES
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
-                     with its recorded start time, so a reused pid is dead.
-                     A runner lease that declares agent-device's device
-                     claims is never a driver: without a claim, the runner
+                     with its recorded start time, so a reused pid is dead;
+                     a readable one whose start time cannot be checked
+                     counts as live when its last command is dated. A runner
+                     lease that declares agent-device's device claims is
+                     never a driver: without a claim, the runner
                      is one agent-device kept warm after close or handed
                      off when its daemon exited
                    device-lock          an unexpired \`stim device lock\` lease

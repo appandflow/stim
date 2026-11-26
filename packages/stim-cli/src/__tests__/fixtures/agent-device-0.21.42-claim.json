@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 3,
+  "deviceKey": "local:apple:ios:75BA8874-0F27-4D59-A6A6-6C827FEF9D37",
+  "session": "stim-default-ios",
+  "workspace": "/Users/me/trailhead",
+  "stateDir": "/Users/me/.stim/workspaces/trailhead--0000000000000000/agent-device.noindex",
+  "device": {
+    "id": "75BA8874-0F27-4D59-A6A6-6C827FEF9D37",
+    "family": "apple",
+    "appleOs": "ios",
+    "kind": "simulator",
+    "target": "mobile",
+    "name": "stim-trailhead-6476 (iPhone 18 Pro 27.0)"
+  },
+  "ownerPid": 76219,
+  "ownerStartTime": "posix:1795678814000",
+  "ownerToken": "c76eb98b-fd44-4915-a8c8-94ac1dac764e",
+  "createdAtMs": 1795678815524,
+  "updatedAtMs": 1795678815572,
+  "claimOwnerKind": "open-session"
+}
