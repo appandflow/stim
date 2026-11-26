@@ -549,8 +549,8 @@ its channel. `use <version|path>` pins a version or a built checkout, with
 and `--restore-state` also puts back the state snapshot taken before a newer
 build migrated the home. `install` makes this copy the engine and `uninstall`
 removes it. Each install, use, update and rollback, and `stim gc`, deletes the
-engine versions that are not current, previous, staged, in use or used by an
-offload job in the last 24 hours.
+engine versions that are not current, previous, staged, in use, or among the
+three builds offload jobs used most recently in the last 24 hours.
 
 ### `plugin`
 
