@@ -46,13 +46,17 @@ test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath('   ')).toBe(null);
 });
 
+const quoted = (path: string) => (process.platform === 'win32' ? `"${path}"` : `'${path.replaceAll("'", "'\\''")}'`);
+
 test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
   expect(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
     /checkout -- src\/app\.js/,
   );
-  expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/clean -fd 'we ird\.txt'/);
-  expect(removalRemedy([' M app/(tabs)/index.tsx'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
-    /checkout -- 'app\/\(tabs\)\/index\.tsx'/,
+  expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toContain(
+    `clean -fd ${quoted('we ird.txt')}`,
+  );
+  expect(removalRemedy([' M app/(tabs)/index.tsx'], { worktree: '/tmp/wt' }).join('\n')).toContain(
+    `checkout -- ${quoted('app/(tabs)/index.tsx')}`,
   );
   const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
   expect(many).toMatch(/checkout -- a b c d e \.\.\./);
@@ -1463,8 +1467,6 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     expect(existsSync(wt)).toBe(true);
     expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
     expect(errs.join('\n')).toMatch(/locked/);
-    const quoted = (path: string) =>
-      process.platform === 'win32' ? `"${path}"` : `'${path.replaceAll("'", "'\\''")}'`;
     expect(errs.join('\n')).toContain(`git -C ${quoted(repo)} worktree unlock ${quoted(wt)}`);
   } finally {
     console.error = originalError;
@@ -2297,8 +2299,8 @@ test('staged paths get no ineffective checkout remedy', () => {
 test('intent-to-add paths get no checkout remedy and spaced worktree paths are quoted', () => {
   const remedy = removalRemedy([' A intent', ' M edited', '?? new'], { worktree: '/tmp/my wt' }).join('\n');
   expect(remedy).not.toContain('intent');
-  expect(remedy).toContain("git -C '/tmp/my wt' checkout -- edited");
-  expect(remedy).toContain("git -C '/tmp/my wt' clean -fd new");
+  expect(remedy).toContain(`git -C ${quoted('/tmp/my wt')} checkout -- edited`);
+  expect(remedy).toContain(`git -C ${quoted('/tmp/my wt')} clean -fd new`);
 });
 
 test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () => {
@@ -2330,7 +2332,7 @@ test('real git: detached unique commits have a recovery branch command before di
     realGitFakeSimctl(simctlJson([]));
     await removeWorktreeTarget(wt, { output: { error: (line) => errs.push(line), fail: () => {} } });
     const text = errs.join('\n');
-    expect(text).toContain(`git -C '${wt}' branch <name> ${sha}`);
+    expect(text).toContain(`git -C ${quoted(wt)} branch <name> ${sha}`);
     expect(text).not.toContain('work stays on the branch');
     expect(text.indexOf('commit or push')).toBeLessThan(text.indexOf('checkout --'));
     expect(text.indexOf('checkout --')).toBeLessThan(text.indexOf('--force is a last resort'));
