@@ -1,7 +1,6 @@
 import { existsSync, statfsSync, statSync } from 'node:fs';
 import { stat, statfs } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { volumeRootFor } from '../../fs-util.ts';
 import { discoverCachesAsync } from '../../cache/caches.ts';
 import { planCacheEmptying, type GcCache } from '../../commands/gc/caches.ts';
 
@@ -30,7 +29,9 @@ export function readVolumeSpace(paths: readonly string[]): VolumeSpace[] {
       if (seen.has(device)) continue;
       seen.add(device);
       const fs = statfsSync(existing);
-      volumes.push({ volume: volumeRootFor(path), freeMb: (fs.bavail * fs.bsize) / MB });
+      let volume = existing;
+      while (dirname(volume) !== volume && statSync(dirname(volume)).dev === device) volume = dirname(volume);
+      volumes.push({ volume, freeMb: (fs.bavail * fs.bsize) / MB });
     } catch {}
   }
   return volumes;
@@ -57,7 +58,15 @@ export async function readVolumeSpaceAsync(paths: readonly string[], signal?: Ab
       seen.add(info.dev);
       const fs = await statfs(existing);
       signal?.throwIfAborted();
-      volumes.push({ volume: volumeRootFor(path), freeMb: (fs.bavail * fs.bsize) / MB, device: info.dev });
+      let volume = existing;
+      while (dirname(volume) !== volume) {
+        const parent = dirname(volume);
+        const parentInfo = await stat(parent);
+        signal?.throwIfAborted();
+        if (parentInfo.dev !== info.dev) break;
+        volume = parent;
+      }
+      volumes.push({ volume, freeMb: (fs.bavail * fs.bsize) / MB, device: info.dev });
     } catch {
       signal?.throwIfAborted();
     }

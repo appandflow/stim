@@ -18,7 +18,19 @@ const hooks: {
   volume: ((path: string) => { volume: string; freeMb: number; device: number } | null) | null;
   du: ((dir: string, signal?: AbortSignal) => Promise<string> | null) | null;
   dev: Record<string, number> | null;
-} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null, dev: null }));
+  statDev: ((path: string) => number) | null;
+} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null, dev: null, statDev: null }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    statSync: (path: string) => {
+      const stats = actual.statSync(path);
+      return hooks.statDev ? Object.assign(stats, { dev: hooks.statDev(path) }) : stats;
+    },
+  };
+});
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -31,9 +43,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     realpath: (path: string) => hooks.realpath?.(path) ?? actual.realpath(path),
     readdir: (path: string, ...rest: []) =>
       path === '/dev' && hooks.dev ? Promise.resolve(Object.keys(hooks.dev)) : actual.readdir(path, ...rest),
-    stat: (path: string) => {
+    stat: async (path: string) => {
       const rdev = path.startsWith('/dev/') ? hooks.dev?.[path.slice(5)] : undefined;
-      return rdev === undefined ? actual.stat(path) : Promise.resolve({ rdev });
+      if (rdev !== undefined) return { rdev };
+      const stats = await actual.stat(path);
+      return hooks.statDev ? Object.assign(stats, { dev: hooks.statDev(path) }) : stats;
     },
   };
 });
@@ -111,6 +125,7 @@ beforeEach(() => {
   hooks.volume = null;
   hooks.du = null;
   hooks.dev = null;
+  hooks.statDev = null;
   docker = null;
   slow = null;
   dockerOutput = DOCKER_DF;
@@ -609,4 +624,16 @@ test.skipIf(process.platform !== 'win32')('on Windows the scan does nothing and 
   docker = '/usr/bin/docker';
   expect(await unmanagedUsage(levelRun({}), false)).toBeNull();
   expect(calls).toEqual([]);
+});
+
+test.skipIf(process.platform === 'win32')('labels volumes by their mount points outside /Volumes', async () => {
+  const mount = join(home, 'vol');
+  const worktree = join(mount, 'wt');
+  mkdirSync(worktree, { recursive: true });
+  hooks.statDev = (path) => (path === mount || path.startsWith(`${mount}/`) ? 2 : 1);
+  const { readVolumeSpace, readVolumeSpaceAsync } =
+    await vi.importActual<typeof import('../stimd/passes/budget.ts')>('../stimd/passes/budget.ts');
+
+  expect(readVolumeSpace([worktree, home]).map((space) => space.volume)).toEqual([mount, '/']);
+  expect((await readVolumeSpaceAsync([worktree, home])).map((space) => space.volume)).toEqual([mount, '/']);
 });
