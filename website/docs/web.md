@@ -80,9 +80,11 @@ Typed text is never recorded, only its length.
 ## Cleanup
 
 - `stim stop` closes Chrome and keeps the profile, so cookies and storage
-  survive. `stim stop --slot web` closes only Chrome.
+  survive. It also stops the workspace's Metro and devices.
+- `stim stop --slot web` closes only Chrome; Metro and devices keep running.
 - `stim worktree remove` closes Chrome and deletes the profile.
-- Neither stops your dev server. Use `stim ports stop web` for that.
+- A dev server you started yourself, such as Vite, keeps running. Use
+  `stim ports stop web` to stop it.
 
 Stim Desktop and the phone app show the page as a **Web** tile you can watch
 and, with **Control**, click and type into. Chrome and Chromium are the only
