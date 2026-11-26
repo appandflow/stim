@@ -157,7 +157,7 @@ test('a supplied environment selects the ownership home without an operation', S
           index: 'skip',
         },
       ),
-    ).rejects.toMatchObject({ code: 'STIM_LOCK_TIMEOUT' });
+    ).rejects.toMatchObject({ code: 'STIM_LOCK_REFUSED' });
   } finally {
     releaseClaim(attempt.acquired);
   }
