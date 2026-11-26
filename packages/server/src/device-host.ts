@@ -153,6 +153,7 @@ export interface DeviceHostOptions {
   busy?: (count: number) => void;
 }
 
+const UNKNOWN_STOP_ATTEMPTS = 5;
 const HOSTED_HOME_GRACE_MS = 3_600_000;
 
 type HostedViewTarget = { home: string; claim: ClaimHandle } & (
@@ -263,6 +264,7 @@ function loopbackAccepts(port: number): Promise<boolean> {
 
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
 export class DeviceHost {
+  private readonly unknownStopAttempts = new Map<string, number>();
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, { client: string; mutating?: true }>();
@@ -314,6 +316,7 @@ export class DeviceHost {
       if (!record) throw new Error('Hosted session journal no longer contains this reservation.');
       const before = record.state;
       update(record);
+      if (record.state !== 'unknown' && record.state !== 'stopping') this.unknownStopAttempts.delete(id);
       if (record.state !== 'stopped') delete record.stoppedAt;
       else if (before !== 'stopped') record.stoppedAt = new Date().toISOString();
     });
@@ -2071,6 +2074,7 @@ export class DeviceHost {
   }
 
   private release(id: string, owned: OwnedSession): void {
+    this.unknownStopAttempts.delete(id);
     if (releaseClaim(owned.claim) && this.owned.delete(id)) this.reportBusy();
   }
 
@@ -2176,6 +2180,45 @@ export class DeviceHost {
         'journal',
         `hosted idle check could not use the journal: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+    void this.reconcileUnknown();
+  }
+
+  // @ref LLP 0010#resume-the-recorded-session -- the sweep retries the stop path, then keeps the device
+  private async reconcileUnknown(): Promise<void> {
+    try {
+      for (const record of readHostedSessions()) {
+        if (record.state !== 'unknown') continue;
+        const owned = this.owned.get(record.id);
+        if (!owned || this.resuming.has(record.id) || this.idleUnresolved(record.id) !== null) continue;
+        try {
+          const attempts = this.unknownStopAttempts.get(record.id) ?? 0;
+          if (attempts < UNKNOWN_STOP_ATTEMPTS) {
+            this.unknownStopAttempts.set(record.id, attempts + 1);
+            this.beginStop(record);
+            continue;
+          }
+          const outcome = await owned.run?.done;
+          if (outcome && !outcome.settled) continue;
+          if (
+            this.closed ||
+            this.owned.get(record.id) !== owned ||
+            this.resuming.has(record.id) ||
+            this.idleUnresolved(record.id) !== null ||
+            readHostedSessions().find((each) => each.id === record.id)?.state !== 'unknown'
+          )
+            continue;
+          this.change(record.id, (current) => {
+            current.notice =
+              'The host could not verify the device after repeated attempts and kept it. Run stim stop from the client to reconcile it.';
+          });
+          this.release(record.id, owned);
+        } catch (error) {
+          this.logIdleKept(record.id, error instanceof Error ? error.message : String(error));
+        }
+      }
+    } catch (error) {
+      this.logIdleKept('journal', error instanceof Error ? error.message : String(error));
     }
   }
 

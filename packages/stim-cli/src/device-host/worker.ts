@@ -37,8 +37,8 @@ export const hostedNotify = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
 
-function inventory(): ReturnType<typeof listAllIosSims> {
-  return listAllIosSims({ includeUnavailable: true });
+function inventory(timeoutMs?: number): ReturnType<typeof listAllIosSims> {
+  return listAllIosSims({ includeUnavailable: true, timeoutMs });
 }
 
 export async function selectHostedIosDevice(selectors: HostedDeviceSelectors): Promise<HostedIosChoice> {
@@ -81,7 +81,7 @@ export async function runHostedDevice(
       });
       assertHostedDeviceLedger(home, device.udid);
       await bootIosSim(device.udid, { openViewer: false });
-      if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
+      if (inventory(90_000).find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
         throw new Error('Hosted simulator boot could not be verified.');
       await muteBootedSimulator(device.udid, hostedNotify);
       return { state: 'ready', device };
@@ -115,7 +115,7 @@ export async function runHostedDevice(
       }
       if (mode === 'inspect') return { state: 'compatible', device };
       await bootIosSim(device.udid, { openViewer: false });
-      if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
+      if (inventory(90_000).find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
         throw new Error('Hosted simulator boot could not be verified.');
       await resetIosPrivacy(device.udid);
       await resetIosKeychain(device.udid);
