@@ -121,6 +121,7 @@ test('concurrent fingerprints wait for engine admission and release their claims
   try {
     for (let attempt = 0; attempt < 240; attempt++) {
       if (settled) break;
+      await new Promise((resolve) => setImmediate(resolve));
       await vi.advanceTimersByTimeAsync(50);
     }
     expect(settled).toBe(true);
@@ -158,6 +159,7 @@ test('engine admission times out after ten seconds while the store lock stays he
     expect(lock).not.toBeNull();
     for (let attempt = 0; attempt < 240; attempt++) {
       if (settled) break;
+      await new Promise((resolve) => setImmediate(resolve));
       await vi.advanceTimersByTimeAsync(50);
     }
     expect(settled).toBe(true);
