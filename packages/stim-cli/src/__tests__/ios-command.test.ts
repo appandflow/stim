@@ -8964,16 +8964,25 @@ describe('--plan', () => {
 
   const debugKey = buildCacheKey('ios', FINGERPRINT, { isSimulator: true, arch: 'arm64' });
 
-  test('the ios.remote setting is refused: the run keys the remote arch, which a plan cannot read', async () => {
-    const { logs, exitCode, calls } = await run(
-      { plan: true, json: true, configuration: 'Release' },
-      { resolveSettings: () => ({ ios: { remote: 'proxy' } }) },
-    );
-    expect(exitCode).toBe(1);
-    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
-    expect(parseFirst(logs).message).toContain('ios.remote');
-    expect(calls.order).not.toContain('fingerprint');
-  });
+  test.each(['flag', 'setting'])(
+    'the remote backend from the %s is refused: a plan cannot read its architecture',
+    async (origin) => {
+      const { logs, exitCode, calls } = await run(
+        { plan: true, json: true, configuration: 'Release', ...(origin === 'flag' ? { remote: 'proxy' } : {}) },
+        { resolveSettings: () => ({ ios: { remote: 'proxy' } }) },
+      );
+      expect(exitCode).toBe(1);
+      expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+      expect(parseFirst(logs).message).toContain(origin === 'flag' ? '--remote is proxy' : 'ios.remote is proxy');
+      expect(parseFirst(logs).remedy).toContain('--remote local');
+      expect(calls.order).not.toContain('fingerprint');
+      const local = await run(
+        { plan: true, json: true, configuration: 'Release', remote: 'local' },
+        { resolveSettings: () => ({ ios: { remote: 'proxy' } }) },
+      );
+      expect(local.calls.order).toContain('fingerprint');
+    },
+  );
 
   test('ios.remote auto with an invalid STIM_REMOTE_BUILD blames the variable, not ios.remote', async () => {
     process.env.STIM_REMOTE_BUILD = 'bad word';
@@ -10116,6 +10125,9 @@ describe('strict remote machine selection', () => {
         { resolveBuild: cache, buildIos: build, acquireBuildSlot: slot, recordStats },
       );
       expect(parseFirst(result.logs).code).toBe(reason === 'invalid' ? 'STIM_BAD_ARG' : 'STIM_OFFLOAD_REFUSED');
+      expect(parseFirst(result.logs).remedy).toMatch(
+        reason === 'not listed' ? /^(?!.*doctor --fix).*stim remote add mini/ : /./,
+      );
       expect(cache).not.toHaveBeenCalled();
       expect(choose).not.toHaveBeenCalled();
       expect(build).not.toHaveBeenCalled();

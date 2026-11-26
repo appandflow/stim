@@ -82,6 +82,9 @@ export async function planReactNativeIos(
   const isExpo = d.detectIsExpo(root);
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
   const iosRemote = opts.remote !== undefined ? parseIosRemote(opts.remote) : remoteIosSetting(settings);
+  const remoteSource = opts.remote !== undefined ? '--remote' : 'ios.remote';
+  const remotePlanRemedy =
+    'Run `stim ios` to build for the remote device, or plan again with --remote local to plan the owned simulator.';
   const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
@@ -126,8 +129,8 @@ export async function planReactNativeIos(
   if (iosRemote?.kind === 'backend') {
     return refuse({
       code: 'STIM_BAD_ARG',
-      message: `ios.remote is ${iosRemote.backend}, whose simulator architecture --plan cannot read without a session.`,
-      remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
+      message: `${remoteSource} is ${iosRemote.backend}, whose simulator architecture --plan cannot read without a session.`,
+      remedy: remotePlanRemedy,
     });
   }
   const scheme = resolveSchemeSelection(opts, settings);
@@ -214,8 +217,8 @@ export async function planReactNativeIos(
     if (planned.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',
-        message: `ios.remote is ${iosRemote.placement ?? iosRemote.machine}, and its simulator architecture is unknown here: ${planned.reason}.`,
-        remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
+        message: `${remoteSource} is ${iosRemote.placement ?? iosRemote.machine}, and its simulator architecture is unknown here: ${planned.reason}.`,
+        remedy: remotePlanRemedy,
       });
     }
     placement = planned.placement;
