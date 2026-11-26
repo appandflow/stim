@@ -320,7 +320,7 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
       expect(findings).toEqual([
         expect.objectContaining({
-          fix: expect.stringMatching(/stim remote update mini.*stim engine update/),
+          fix: expect.stringMatching(/On mini, run `npm install --global stim@9\.9\.9` and reinstall its service/),
         }),
       ]);
       expect(readBuildMachines()).toEqual(before);
