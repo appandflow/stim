@@ -549,7 +549,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
   uploads, device selectors, shutdown and host paths are refused. `stim stop` closes its connection and removes the config.
 - `--remote proxy` uses a configured Agent Device daemon.
-- `--remote eas` uses an EAS remote simulator. It needs eas-cli 21.6.0 or later.
+- `--remote eas` uses an EAS remote simulator. It needs eas-cli 21.6.0 or later. If not logged in, run `eas login` or set `EXPO_TOKEN`.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
   including with `--device`. It needs eas-cli 18.9.0 or later. A miss stops
   and prints an EAS build command; cloud builds require authorization. Cannot
@@ -932,7 +932,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   combined with `--wait`.
 - `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--remote remote` tries the approved hosts first, in `remote.machines` order, and runs here only when none admits; `--remote remote-only` never runs here and waits for a host with room (`--no-wait`, `--wait 0` or the end of `--wait` refuse with `STIM_AT_CAPACITY`). `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
-- `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
+- `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later. If not logged in, run `eas login` or set `EXPO_TOKEN`.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
   including with `--device`. It needs eas-cli 18.9.0 or later. A miss stops
   and prints an EAS build command; cloud builds require authorization. Cannot

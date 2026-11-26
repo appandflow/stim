@@ -56,6 +56,7 @@ import {
   removeEasSessionClaim,
   removeEasSessionClaimAsync,
 } from './eas-session-ledger.ts';
+import { checkEasAuth } from './remote-cache.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 
 export type { RemoteDeviceBackend } from '@stim-cli/core/state';
@@ -478,6 +479,7 @@ export async function resolveRemoteContext({
   env = process.env,
   lookupAgentDevice = defaultLookupAgentDevice,
   readEasCliVersion = readInstalledEasCliVersionAsync,
+  checkAuth = checkEasAuth,
   operation,
   maxDurationMinutes = null,
   deviceType = null,
@@ -494,6 +496,7 @@ export async function resolveRemoteContext({
   env?: NodeJS.ProcessEnv;
   lookupAgentDevice?: () => string | null;
   readEasCliVersion?: (easBin: string, root: string, operation?: StimContext) => string | null | Promise<string | null>;
+  checkAuth?: typeof checkEasAuth;
   operation?: StimContext;
   maxDurationMinutes?: number | null;
   deviceType?: string | null;
@@ -556,6 +559,19 @@ export async function resolveRemoteContext({
         failed: `eas-cli ${version} (${easBin}) cannot choose the EAS Simulator model; --device-type on the eas backend needs eas-cli ${MIN_EAS_CLI_DEVICE_VERSION} or later.`,
         remedy: `${easCliUpgradeRemedy(MIN_EAS_CLI_DEVICE_VERSION)}, or drop --device-type to let EAS pick the model.`,
         code: 'STIM_BAD_ARG',
+      };
+    }
+    const auth = await checkAuth({
+      context: operation,
+      projectRoot: root,
+      resolveBin: () => ({ file: easBin, source: 'path' }),
+    });
+    if ('failed' in auth && auth.failed && auth.code === 'logged-out') {
+      return {
+        failed:
+          'eas-cli is not logged in to an Expo account; the eas backend needs one to create an EAS Simulator session.',
+        remedy: 'Run `eas login` (or set EXPO_TOKEN), then run the device command with `--remote eas` again.',
+        code: 'STIM_REMOTE_EAS_UNAVAILABLE',
       };
     }
   }
