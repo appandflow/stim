@@ -1,6 +1,20 @@
 import type { StimContext } from '@stim-cli/core';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { access, chmod, lstat, mkdir, readFile, readdir, realpath, stat as statAsync, utimes } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  stat as statAsync,
+  symlink,
+  utimes,
+} from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
@@ -503,13 +517,40 @@ export async function cloneIgnoredEntries({
             return false;
           }
         };
-        const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
-        if (
-          !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
-          !(await copiedWith('cp', ['-Rc', from, to]))
-        ) {
-          await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+        if (process.platform === 'win32') {
+          await cp(from, to, {
+            recursive: true,
+            errorOnExist: true,
+            force: false,
+            filter: async (source, destination) => {
+              operation.signal.throwIfAborted();
+              if (!(await lstat(source)).isSymbolicLink()) return true;
+              let link = await readlink(source);
+              const inSource = isAbsolute(link) ? relative(root, link) : '..';
+              if (!inSource.startsWith('..') && !isAbsolute(inSource)) link = join(target, inSource);
+              const file = await statAsync(source).then(
+                (stat) => !stat.isDirectory(),
+                () => false,
+              );
+              // Windows: symbolic links need the create-symlink privilege; without it a junction stands in for a directory.
+              // Git for Windows leaves junctions behind on worktree remove: git-for-windows/git#6543.
+              await symlink(link, destination, file ? 'file' : 'dir').catch(async (error: NodeJS.ErrnoException) => {
+                if (error.code !== 'EPERM') throw error;
+                await (file ? copyFile(source, destination) : symlink(link, destination, 'junction'));
+              });
+              return false;
+            },
+          });
           cloned = false;
+        } else {
+          const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+          if (
+            !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+            !(await copiedWith('cp', ['-Rc', from, to]))
+          ) {
+            await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+            cloned = false;
+          }
         }
         if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal, trash);
         copied.push(rel);

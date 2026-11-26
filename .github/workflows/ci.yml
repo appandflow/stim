@@ -397,6 +397,11 @@ jobs:
           pnpm test packages/stim-cli/src/__tests__/worktree-marks.test.ts
           -t 'publishes a missing generation before a current clean finished removal'
 
+      - name: Windows worktree warm links
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/worktree-warm.integration.test.ts
+          -t 'warm carries pnpm directory links into the destination checkout'
+
       - name: Windows worktree mark retirement
         run: >-
           pnpm test packages/stim-cli/src/__tests__/worktree-archive.integration.test.ts
