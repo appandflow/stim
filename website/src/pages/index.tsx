@@ -74,21 +74,11 @@ const pillars: Pillar[] = [
 
 const frameworks = [
   { name: 'Expo', detail: 'Expo apps', logo: 'expo', width: 26 },
-  {
-    name: 'React Native',
-    detail: 'React Native CLI and Re.Pack apps',
-    logo: 'react',
-    width: 28,
-  },
+  { name: 'React Native', detail: 'React Native CLI and Re.Pack apps', logo: 'react', width: 28 },
   { name: 'Xcode', detail: 'Native Xcode apps', logo: 'apple', width: 24 },
   { name: 'Gradle', detail: 'Native Gradle apps', logo: 'android', width: 28 },
   { name: 'Exact', detail: 'Exact apps', logo: 'exact', width: 34 },
-  {
-    name: 'Web',
-    detail: 'Web pages in an owned Chrome',
-    logo: 'web',
-    width: 26,
-  },
+  { name: 'Web', detail: 'Web pages in an owned Chrome', logo: 'web', width: 26 },
 ];
 
 function tapIllustration({ currentTarget, clientX, clientY, detail }: MouseEvent<HTMLButtonElement>) {
@@ -99,9 +89,7 @@ function tapIllustration({ currentTarget, clientX, clientY, detail }: MouseEvent
   const angle = Math.hypot(x, y);
   for (const animation of illustration.getAnimations()) animation.cancel();
   illustration.animate(
-    {
-      rotate: ['0deg', `${x} ${y} 0 ${angle}deg`, `${x} ${y} 0 ${-angle / 3}deg`, '0deg'],
-    },
+    { rotate: ['0deg', `${x} ${y} 0 ${angle}deg`, `${x} ${y} 0 ${-angle / 3}deg`, '0deg'] },
     { duration: 600, easing: 'ease-in-out' },
   );
 }
@@ -154,10 +142,7 @@ export default function Home(): ReactNode {
         <nav className={styles.nav} aria-label="Main navigation">
           <Link to="/" aria-label="Stim home" className={`${styles.logo} stim-logo`}>
             <ThemedImage
-              sources={{
-                light: `${assetBase}logo.svg`,
-                dark: `${assetBase}logo-dark.svg`,
-              }}
+              sources={{ light: `${assetBase}logo.svg`, dark: `${assetBase}logo-dark.svg` }}
               alt=""
               width="48"
               height="48"
@@ -208,10 +193,7 @@ export default function Home(): ReactNode {
             >
               <span className={styles.heroStage}>
                 <ThemedImage
-                  sources={{
-                    light: `${assetBase}hero-bg.svg`,
-                    dark: `${assetBase}hero-bg-dark.svg`,
-                  }}
+                  sources={{ light: `${assetBase}hero-bg.svg`, dark: `${assetBase}hero-bg-dark.svg` }}
                   alt=""
                   width="520"
                   height="520"
@@ -234,17 +216,11 @@ export default function Home(): ReactNode {
                 </div>
                 <div
                   className={styles.pillarArt}
-                  style={{
-                    aspectRatio: `${pillar.width} / ${pillar.height}`,
-                    maxWidth: pillar.width,
-                  }}
+                  style={{ aspectRatio: `${pillar.width} / ${pillar.height}`, maxWidth: pillar.width }}
                   data-reveal=""
                 >
                   <ThemedImage
-                    sources={{
-                      light: `${assetBase}${pillar.art}.svg`,
-                      dark: `${assetBase}${pillar.art}-dark.svg`,
-                    }}
+                    sources={{ light: `${assetBase}${pillar.art}.svg`, dark: `${assetBase}${pillar.art}-dark.svg` }}
                     alt=""
                     width={pillar.width}
                     height={pillar.height}
@@ -359,10 +335,7 @@ export default function Home(): ReactNode {
             </div>
             <div className={styles.abstractIllustration} data-reveal="">
               <ThemedImage
-                sources={{
-                  light: `${assetBase}abstract.svg`,
-                  dark: `${assetBase}abstract-dark.svg`,
-                }}
+                sources={{ light: `${assetBase}abstract.svg`, dark: `${assetBase}abstract-dark.svg` }}
                 alt=""
                 width="520"
                 height="520"

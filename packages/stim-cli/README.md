@@ -39,9 +39,9 @@ stim stop
 
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and ends with a summary. Use `--json`
-when a script needs structured data. `worktree warm`, `start`, `ios` and
-`android` run project code; `stim doctor` does not load
-`fingerprint.config.js` or run an `eas` from the project tree.
+when a script needs structured data. `doctor`, `worktree warm`, `start`, `ios` and
+`android` run project code, such as `fingerprint.config.js`,
+so run them only in a checkout you trust.
 
 ## Programmatic API
 

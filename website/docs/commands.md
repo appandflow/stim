@@ -366,8 +366,10 @@ cache Stim registered and cleans other tools' caches through their own
 commands.
 
 `gc` never touches a workspace that is building, driven, leased, hosted or
-pinned with `maintenance.keep`, tracked or unignored files, uncommitted or
-unpushed work, or a simulator or emulator you created. See
+pinned with `maintenance.keep`, unpushed work, or a simulator or emulator you
+created. A finished worktree past its grace period is removed even with
+uncommitted changes, after they are archived; pin it with `maintenance.keep`
+or `git worktree lock` to keep it. See
 [build caches](./build-caches.md#automatic-maintenance) and
 `stim guide cleanup gc`.
 
@@ -408,8 +410,8 @@ stim share stop
 ```
 
 Gives anyone a public web link to watch the running app, and with `--control`
-to tap and type in it. The link is public on the internet through Tailscale
-Funnel and protected by a generated password unless you pass `--no-password`.
+to tap and type in it. The link is public on the internet, through Tailscale
+Funnel or your own reverse proxy (`share.exposure`), and protected by a generated password unless you pass `--no-password`.
 A share expires after 60 minutes by default, at most 480, and ends with
 `stim share stop` or `stim stop`. See [share](./share.md) for the security
 model.

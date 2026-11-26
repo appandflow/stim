@@ -158,7 +158,8 @@ Before and After recordings captured; named assertion passed; PR opened with the
   log path. `launch UNVERIFIED` means the agent must follow the printed remedy
   before it claims success. None of this proves the screen looks right; ask for
   a screenshot when that matters.
-- `stim stop` shuts the device down but keeps it. `stim worktree remove`
+- `stim stop` shuts the device down but keeps it; an owned iOS simulator can
+  stay booted for a grace period while memory allows. `stim worktree remove`
   reclaims everything the worktree owns. `stim gc --dry-run` shows what is
   left over from workspaces that are gone.
 

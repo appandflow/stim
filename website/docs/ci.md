@@ -73,6 +73,7 @@ Stim does not own, and refuses a physical device. A run that `ios.remote` or
 - On GitHub-hosted runners the home and build cache are job-local
   automatically. Elsewhere, pass the same `--home` to `build` and `run`.
 - Persist only build cache entries between jobs, never the Stim home.
+  Independent Stim homes must not write one shared filesystem cache.
 - `build` targets this machine's architecture. When `run` can land on another
   machine or on EAS, build with `--arch all` (iOS) or `--abi all` (Android).
 

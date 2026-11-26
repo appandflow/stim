@@ -23,13 +23,14 @@ Upgrading from 1.40 takes three steps. Then hand the leftovers to your agent.
    use.
 2. Upgrade the [CLI](./getting-started.md) and any project pins or
    CI inputs that still select 1.x. Keep the same `STIM_HOME` so 2.0 reads your
-   settings, workspaces and device ownership.
+   settings, workspaces and device ownership. Before you open Desktop or run
+   any other command, decide on the [changed defaults](#changed-defaults) and
+   set the ones you want to keep with `stim settings set`: the first workspace
+   command after the upgrade runs cleanup under the values then in force.
 3. Update [Stim Desktop](./desktop.md), the phone app and any
    [remote workers](./remote-machines.md). Run `stim doctor` in each app
-   directory whose project code you trust. Decide on the
-   [changed defaults](#changed-defaults) before you restart any workspace: the
-   first command after the upgrade runs cleanup under the 2.0 values. Then
-   restart the workspaces you need. Check the connection and the next build on each worker before you rely
+   directory whose project code you trust, then restart the workspaces you
+   need. Check the connection and the next build on each worker before you rely
    on it.
 
 ## Let an agent migrate

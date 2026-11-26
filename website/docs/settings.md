@@ -70,6 +70,8 @@ For editor completion, point `.stim.json` at the shipped schema:
 
 Each app in a monorepo reads its own `.stim.json`. Do not put secrets in it:
 keep them in ignored files, which `worktree warm` carries into a worktree.
+`android.keystorePassword` is stored there only as an `env:` or `file:`
+reference, and `stim settings` never prints it.
 `cache.provider` names a module Stim runs in every worktree of the app, so
 review a committed value the way you review a build script.
 
@@ -94,8 +96,9 @@ review a committed value the way you review a build script.
   caches and temporary copies to another volume (absolute paths, machine only).
 - `ios.autoInstallRuntime` (default `false`): allow Stim to install an iOS
   runtime you asked for. A runtime download is typically 8 to 10 GB and needs
-  20 GB free. Stim never removes runtimes; do that in Xcode Settings >
-  Components.
+  20 GB free. Maintenance deletes an older runtime only when no
+  simulator uses it and no project pins it with `ios.runtime`; remove others
+  in Xcode Settings > Components.
 
 #### Installing a missing Android system image
 
