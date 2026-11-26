@@ -22,7 +22,7 @@ stim worktree warm`}
 
 ## Warm ignored state
 
-Warm copies missing Git-ignored entries from the source checkout, such as `node_modules`, Pods and `.env`. It preserves tracked files and existing entries, including entire directories. On the same APFS volume it can clone files to save disk space. Wait for warm to finish before editing, installing or building in the worktree.
+Warm copies missing Git-ignored entries from the source checkout, such as `node_modules`, Pods and `.env`. It leaves out an entry the new worktree's branch does not ignore, which would otherwise show as untracked there. It preserves tracked files and existing entries, including entire directories. On the same APFS volume it can clone files to save disk space. Wait for warm to finish before editing, installing or building in the worktree.
 
 - **Dependencies missing or stale?** Run the project's install command when warm reports a lockfile mismatch or has nothing to copy. Warm itself does not install packages.
 - **Expo generated native directories?** Warm copies ignored `ios/` and `android/` only when Stim recorded a current prebuild. Run `stim doctor --fix` in the source checkout to prepare them, or let the first run generate them in the worktree. [Doctor](./commands.md#doctor)
