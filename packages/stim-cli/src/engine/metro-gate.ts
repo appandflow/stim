@@ -58,11 +58,13 @@ export async function gateMetroOrigin({
     const attempt = new AbortController();
     const timer = setTimeout(() => attempt.abort(), 8_000);
     request = (async () => {
+      let answer: number | null = null;
       try {
-        status = await probe(bundleUrl, AbortSignal.any([controller.signal, attempt.signal]));
+        answer = await probe(bundleUrl, AbortSignal.any([controller.signal, attempt.signal]));
       } catch {
-        status = null;
+        answer = null;
       } finally {
+        if (!controller.signal.aborted) status = answer;
         clearTimeout(timer);
         nextProbeAt = now() + 1_000;
         pending = false;

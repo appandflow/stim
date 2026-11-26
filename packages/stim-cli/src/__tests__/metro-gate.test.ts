@@ -125,6 +125,27 @@ test('keeps the manual tunnel remedy by default', async () => {
   expect(result.remedy).toContain('rebuild a manual tunnel');
 });
 
+test('a retry the deadline cuts off keeps the last answered status', async () => {
+  const probe = vi.fn<(url: string, signal: AbortSignal) => Promise<number | null>>(async (_url, signal) =>
+    probe.mock.calls.length === 1
+      ? 530
+      : new Promise<null>((resolve) => signal.addEventListener('abort', () => resolve(null), { once: true })),
+  );
+  const pending = gateMetroOrigin({
+    origin: ORIGIN,
+    metroPort: 8085,
+    platform: 'ios',
+    readRecords: () => [],
+    isProof: () => false,
+    probe,
+    timeoutMs: 5_000,
+  });
+  await vi.advanceTimersByTimeAsync(6_000);
+  const result = await pending;
+  expect(probe).toHaveBeenCalledTimes(2);
+  expect(result.reason).toContain('answered 530');
+});
+
 test('a refusal describes the last probe response', async () => {
   const probe = vi.fn<() => Promise<number>>(async () => 502).mockResolvedValueOnce(530);
   const result = await gate({ probe });
