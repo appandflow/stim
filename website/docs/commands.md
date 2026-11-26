@@ -2571,6 +2571,9 @@ path; from a subfolder it reclaims only that project and leaves the tree. A bare
 repository directory is refused because it is not a worktree. `--force` permits removal
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
+On Windows, removal is refused when it runs from inside the worktree, because
+Windows cannot delete a folder that is a working directory; run it from the
+parent folder with the worktree path.
 When a background pass such as a stim-daemon stage or a fingerprint evaluation
 holds the workspace's native-run lock, removal says so on stderr and waits up to
 60 seconds for it; a `stim ios`, `android` or `stop` run holding it keeps the

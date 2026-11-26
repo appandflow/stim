@@ -581,7 +581,7 @@ describe('in a linked worktree, from a subfolder', () => {
         `Refusing to remove ${wtDir}: Windows cannot delete a folder that is a working directory, and this command runs inside it.`,
       );
       expect(errors.mock.calls.flat().join('\n')).toContain(
-        `Run it from outside the worktree with its path, in PowerShell: cd '${dirname(wtDir)}'; stim worktree remove '${wtDir}'`,
+        `Run it from outside the worktree with its path, in PowerShell: Set-Location -LiteralPath '${dirname(wtDir)}'; stim worktree remove '${wtDir}'`,
       );
       expect(removedTree()).toBe(false);
       expect(getProject(wtDir)?.worktreeRoot).toBe(true);

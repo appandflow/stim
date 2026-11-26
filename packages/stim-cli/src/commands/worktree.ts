@@ -1604,12 +1604,7 @@ function recordedSpelling(canonical: string, target: string | undefined, operati
   return !hasRegisteredProjectUnder(canonical) && hasRegisteredProjectUnder(literal) ? literal : canonical;
 }
 
-function refusedLocation(
-  worktrees: readonly WorktreeEntry[],
-  path: string,
-  opts: RemoveOptions,
-  output: RemovalOutput,
-): boolean {
+function refusedLocation(worktrees: readonly WorktreeEntry[], path: string, output: RemovalOutput): boolean {
   const nested = nestedWorktrees(worktrees, path);
   if (nested.length) {
     output.error(chalk.red(`Refusing to remove ${path}: it contains the worktree ${nested.join(', ')}.`));
@@ -1617,8 +1612,8 @@ function refusedLocation(
     output.fail();
     return true;
   }
-  const cwd = opts.operation?.cwd ?? process.cwd();
-  if (process.platform !== 'win32' || !isPathPrefix(nativeCanonicalPath(path), nativeCanonicalPath(cwd))) return false;
+  if (process.platform !== 'win32' || !isPathPrefix(nativeCanonicalPath(path), nativeCanonicalPath(process.cwd())))
+    return false;
   output.error(
     chalk.red(
       `Refusing to remove ${path}: Windows cannot delete a folder that is a working directory, and this command runs inside it.`,
@@ -1626,7 +1621,7 @@ function refusedLocation(
   );
   output.error(
     chalk.dim(
-      `Run it from outside the worktree with its path, in PowerShell: cd ${powershellQuoted(dirname(path))}; stim worktree remove ${powershellQuoted(path)}`,
+      `Run it from outside the worktree with its path, in PowerShell: Set-Location -LiteralPath ${powershellQuoted(dirname(path))}; stim worktree remove ${powershellQuoted(path)}`,
     ),
   );
   output.fail();
@@ -1813,7 +1808,7 @@ async function removeOrRefuse(
     output.fail();
     return;
   }
-  if (refusedLocation(worktrees, path, opts, output)) return;
+  if (refusedLocation(worktrees, path, output)) return;
 
   const service = serviceRunningFrom(path, nativeCanonicalPath);
   if (service) {
