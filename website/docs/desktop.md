@@ -75,8 +75,10 @@ logs and recordings stay under **Archived**.
 
 - **Pair a phone:** turn on **Phone app** in **Settings > Advanced > Feature
   flags**, then **Using this machine > Add… > Pair a Phone…**. See [Phone app](./phone-app.md).
-- **Pause incoming connections:** turn off **Allow connections**. Pairings stay.
-  Stop web shares separately under **Share links**.
+- **Pause incoming connections:** for the server Desktop starts, turn off
+  **Allow connections**. Pairings stay. A standalone service keeps listening;
+  check its exposure with `stim service status`. Stop web shares separately
+  under **Share links**.
 - **Remove access:** **Revoke Access…** on a phone or machine's row.
 
 ### Pair with another machine
