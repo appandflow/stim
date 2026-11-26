@@ -219,7 +219,7 @@ describe('needsRevive', () => {
   });
 });
 
-test('EAS replaces the owned default device, ignores expired records, and uses the remote profile', () => {
+test('EAS replaces the owned default device until stop clears it, even past its expiry, and uses the remote profile', () => {
   const project: ProjectRecord = { platforms: { ios: { deviceUdid: 'SIM-1', owned: true } } };
   const state: WorkspaceState = {
     remoteDevice: { sessionId: 'eas-1', platform: 'ios', expiresAt: '2026-11-27T00:00:00Z' },
@@ -239,5 +239,5 @@ test('EAS replaces the owned default device, ignores expired records, and uses t
     session: null,
   });
   expect(workspaceDevices(project, null)).toMatchObject([{ kind: 'owned', id: 'SIM-1' }]);
-  expect(workspaceDevices(project, state, Date.parse('2026-11-28T00:00:00Z'))).toEqual(workspaceDevices(project, null));
+  expect(workspaceDevices(project, state, Date.parse('2026-11-28T00:00:00Z'))).toMatchObject([{ kind: 'eas' }]);
 });

@@ -44,7 +44,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { daemonEnv, remoteProfilePath } from '../engine/agent-device.ts';
 import { getSessionArgs, inspectSessionForTeardown, remoteDaemonFrom } from '../engine/eas-simulator.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
-import { parseRemoteSession, remoteSessionExpired, readWorkspaceLaunches } from '../stimd/metro/state.ts';
+import { parseRemoteSession, readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -300,7 +300,7 @@ export function planAgentDevice(
     return refusal(
       'STIM_BAD_ARG',
       `${config} is not the agent-device remote config of this workspace's device.`,
-      "Leave out --remote-config: stim agent-device passes the hosted session's config itself.",
+      "Leave out --remote-config: stim agent-device passes the remote session's config itself.",
     );
   }
   const second = rest[next];
@@ -425,7 +425,7 @@ export function workspaceDevices(
     }
   }
   const remote = parseRemoteSession(state);
-  if (remote?.platform && !remoteSessionExpired(remote, now)) {
+  if (remote?.platform) {
     const index = devices.findIndex((device) => device.platform === remote.platform && device.slot === 'default');
     if (index !== -1) devices.splice(index, 1);
     devices.push({
@@ -851,7 +851,7 @@ async function execute(
         src: 'agent',
         level: failed ? 'error' : 'info',
         event: failed ? 'agent_failed' : 'agent_action',
-        msg: `Hosted agent-device ${hosted.command} ${failed ? 'failed' : 'finished'}`,
+        msg: `${hosted.device.kind === 'eas' ? 'EAS' : 'Hosted'} agent-device ${hosted.command} ${failed ? 'failed' : 'finished'}`,
         command: hosted.command,
         platform: hosted.device.platform,
         ...(target.slot === undefined ? {} : { slot: target.slot }),

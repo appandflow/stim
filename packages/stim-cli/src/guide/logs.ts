@@ -723,7 +723,7 @@ WHAT WRITES WHAT
   archive rather than a stream. Streaming with full fidelity needs
   libimobiledevice or pymobiledevice3, which are third-party installs Stim
   does not require. See appandflow/stim#179.
-  agent                hosted iOS and Android command summaries are in
+  agent                hosted and EAS iOS and Android command summaries are in
                        hosted-agent.ndjson. Agent input on the owned Chrome
                        page is in web.ndjson (\`guide web\`). For local
                        devices, each query reads agent-device's

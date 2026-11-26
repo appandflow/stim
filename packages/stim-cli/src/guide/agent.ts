@@ -281,9 +281,6 @@ placement reason and the reported device. Stop reconciles a recorded host
 before changing named placement.
 DRIVING THE DEVICE
 
-stim agent-device drives the workspace's EAS Simulator session. Each call fetches
-its token from eas-cli and passes it only in agent-device's environment.
-
 Drive this workspace's iOS or Android device through stim agent-device, never
 agent-device directly. Use the exact command Stim prints after launch. For other
 commands, keep its device selector if the slot also has a leased phone.
@@ -298,7 +295,9 @@ Stim adds the platform, the UDID or serial and AGENT_DEVICE_STATE_DIR, or the
 remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
 hosted-android), and the session (stim-<slot>-<platform> unless you pass
 --session; a hosted session adds -<8 hex digits of the workspace id>, so two
-workspaces on one machine do not share a name).
+workspaces on one machine do not share a name). For an EAS Simulator session
+(--remote eas) it passes that session's remote config and no --session; each
+call fetches the session token from eas-cli into agent-device's environment only.
 --slot picks a slot; --platform is needed only when the slot has both. It
 revives an idle-stopped workspace before the command (progress on stderr).
 For a hosted session, a single-action command (snapshot, press, tap, scroll,
