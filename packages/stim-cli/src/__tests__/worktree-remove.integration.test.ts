@@ -1464,7 +1464,7 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
     expect(errs.join('\n')).toMatch(/locked/);
     const quoted = (path: string) =>
-      process.platform === 'win32' ? `'${path.replaceAll("'", "''")}'` : `'${path.replaceAll("'", "'\\''")}'`;
+      process.platform === 'win32' ? `"${path}"` : `'${path.replaceAll("'", "'\\''")}'`;
     expect(errs.join('\n')).toContain(`git -C ${quoted(repo)} worktree unlock ${quoted(wt)}`);
   } finally {
     console.error = originalError;
@@ -2301,15 +2301,16 @@ test('intent-to-add paths get no checkout remedy and spaced worktree paths are q
   expect(remedy).toContain("git -C '/tmp/my wt' clean -fd new");
 });
 
-test('on Windows the remedy quotes paths for PowerShell', () => {
+test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform');
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
-    const remedy = removalRemedy([' M edited', '?? "it\'s new"'], {
-      worktree: "C:\\Users\\o'brien\\it\u2019s wt",
-    }).join('\n');
-    expect(remedy).toContain("git -C 'C:\\Users\\o''brien\\it\u2019\u2019s wt' checkout -- edited");
-    expect(remedy).toContain("git -C 'C:\\Users\\o''brien\\it\u2019\u2019s wt' clean -fd 'it''s new'");
+    expect(removalRemedy(['?? "it\'s new"'], { worktree: "C:\\Users\\o'brien\\wt" }).join('\n')).toContain(
+      `git -C "C:\\Users\\o'brien\\wt" clean -fd "it's new"`,
+    );
+    expect(removalRemedy([' M edited'], { worktree: 'C:\\Users\\$o\u2019brien\\wt' }).join('\n')).toContain(
+      "git -C 'C:\\Users\\$o\u2019\u2019brien\\wt' checkout -- edited",
+    );
   } finally {
     if (platform) Object.defineProperty(process, 'platform', platform);
   }

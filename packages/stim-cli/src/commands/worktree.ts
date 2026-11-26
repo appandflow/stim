@@ -779,7 +779,10 @@ function powershellQuoted(path: string): string {
 
 function quoteWorktree(path: string): string {
   if (path === '<worktree>') return path;
-  if (process.platform === 'win32') return /^[\w./\\:-]+$/.test(path) ? path : powershellQuoted(path);
+  if (process.platform === 'win32') {
+    if (/^[\w./\\:-]+$/.test(path)) return path;
+    return /[$`"\u201c\u201d\u201e]/.test(path) ? powershellQuoted(path) : `"${path}"`;
+  }
   return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", `'\\''`)}'`;
 }
 
