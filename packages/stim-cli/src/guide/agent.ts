@@ -383,7 +383,7 @@ Ask the user before these actions:
   it also empties every shared cache and, when
   stim gc --pressure critical names the level or a measured critical still
   leaves the disk under the critical level after the earlier rungs, cleans
-  other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). That includes the workspace
+  other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM, Xcode's compilation cache). That includes the workspace
   you run it from: an app you are not driving right now stops. It never
   touches a workspace that is building, driven, leased, shared with stim
   share, hosted or pinned by maintenance.keep. Run stim gc --dry-run first

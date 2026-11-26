@@ -162,6 +162,22 @@ describe('removing a cache directory Stim deletes itself', () => {
     }
   });
 
+  test("removes Xcode's compilation cache only while no Xcode build runs", async () => {
+    const cache = join(root, 'Library', 'Developer', 'Xcode', 'DerivedData', 'CompilationCache.noindex');
+    mkdirSync(join(cache, 'aa'), { recursive: true });
+    vi.stubEnv('HOME', root);
+    try {
+      const plan = (await surveyToolCaches()).find((entry) => entry.cache.paths.includes(cache));
+      assert(plan);
+      const running = [`/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -scheme App`];
+      expect(planToolCaches([plan.cache], running, new Map())[0]?.kept).toContain('xcodebuild');
+      expect((await cleanToolCache(plan, true)).outcome).toBe('done');
+      expect(existsSync(cache)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   test('keeps a cache directory that is a link, and what it points to', async () => {
     const target = join(root, 'external-modules');
     mkdirSync(target);

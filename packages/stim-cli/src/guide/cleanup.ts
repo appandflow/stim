@@ -270,11 +270,11 @@ DISK PRESSURE
   cache and Gradle daemons and versions. It deletes no node_modules, Pods or
   worktree: rungs 5 and 7 only report them, and only the dormant stage and
   worktree removal (step 5 above) delete them. The last rung, 9, cleans other tools' caches (npm,
-  Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM) through each
-  tool's own command, only at critical and only while the earlier rungs left
-  the disk short (\`stim guide cleanup gc\`). Xcode DerivedData outside Stim
-  is never deleted, except that rung 3 empties Xcode's CompilationCache.noindex
-  at critical outside a scoped STIM_HOME. Every command prints stderr lines while the daemon's last tick, at most 10
+  Yarn, pnpm, CocoaPods, Gradle's version-independent caches, SwiftPM, Xcode's
+  CompilationCache.noindex) through each tool's own command, only at critical
+  and only while the earlier rungs left the disk short (\`stim guide cleanup
+  gc\`). Xcode DerivedData outside Stim is never deleted, except that rung 9
+  removes Xcode's CompilationCache.noindex while no Xcode build runs. Every command prints stderr lines while the daemon's last tick, at most 10
   minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass
@@ -570,8 +570,8 @@ After updating Stim Host, unregister and register the helper again.`,
             the level clears, shared caches trimmed to half their caps, owned
             devices of workspaces idle 10 minutes, idle daemons; it only
             reports dependencies and finished worktrees
-  critical  plus every parked device, every shared cache Stim registered or
-            detected (Xcode's compilation cache) emptied, owned devices of
+  critical  plus every parked device, every shared cache Stim registered
+            emptied, owned devices of
             workspaces idle 2 minutes,
             every unpinned Gradle version,
             every device recording not being written, archived logs,
@@ -625,8 +625,8 @@ After updating Stim Host, unregister and register the helper again.`,
     copy-on-write clone), in use, a running process inside, pinned.
   Parked devices
     rung 2, H until the level clears, C all.
-  Shared caches trimmed to half their caps; at C every registered or detected
-  cache (Xcode's compilation cache) emptied, the fingerprint index and memo
+  Shared caches trimmed to half their caps; at C every registered cache
+  emptied, the fingerprint index and memo
     rung 3, H and C. Kept: entries a running build protects, report-only
     caches, detected ones in a scoped STIM_HOME.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), last in rung 3
@@ -659,7 +659,8 @@ After updating Stim Host, unregister and register the helper again.`,
     native-run claim); worktree archives and archive records.
   Caches Stim does not own: npm (npm cache clean --force), Yarn (yarn cache
   clean), pnpm (pnpm store prune), CocoaPods (pod cache clean --all), Gradle
-  caches/modules-2, caches/transforms-N and caches/build-cache-N
+  caches/modules-2, caches/transforms-N and caches/build-cache-N, Xcode's
+  CompilationCache.noindex
     rung 9, C only, never in a STIM_HOME-scoped home or in the in-process
     ladder a build runs at disk.hardFloorGb; only the stim-daemon (at most
     hourly, while the disk is still short) and stim gc run it. stim gc with
@@ -668,11 +669,11 @@ After updating Stim Host, unregister and register the helper again.`,
     level; stim gc --pressure critical always runs it. Each through the
     tool's own command, listed with its size before and after. Kept: the tool
     is not installed, a process of that tool runs, processes cannot be
-    listed. Gradle (modules-2, transforms-N, build-cache-N) and SwiftPM have
-    no command, so Stim renames each directory aside to a .stim-delete-*
-    sibling and deletes it, only while no Stim build lock or build slot is
-    live or unresolved and no matching tool process runs (rung 6 stops idle
-    daemons first); a cache directory that is itself a symbolic link is kept
+    listed. Gradle (modules-2, transforms-N, build-cache-N), SwiftPM and
+    Xcode's compilation cache have no command, so Stim renames each
+    directory aside to a .stim-delete-* sibling and deletes it, only while
+    no Stim build lock or build slot is live or unresolved and no matching
+    tool process runs (rung 6 stops idle daemons first); a cache directory that is itself a symbolic link is kept
     with a remedy to remove its target yourself. npm is found by
     npm_config_cache (or NPM_CONFIG_CACHE), else ~/.npm; Yarn by
     YARN_CACHE_FOLDER or the platform default; pnpm by PNPM_HOME/store or the
@@ -848,10 +849,10 @@ removal, even while the versions are blocked (not while the home is outside
 a scoped STIM_HOME or its layout is unsafe), since nothing uses those
 directories, and reports it again when that fails; automatic maintenance
 never touches them. Rung 9 uses the same convention for modules-2,
-transforms-N and build-cache-N in caches/ and for the SwiftPM cache: a later
-gc finds and finishes a leftover in Gradle's caches/ or the SwiftPM cache's
-parent and measures it, and a removal that fails after the rename is reported
-as failed with the bytes still left aside. jdks and the other shared Gradle caches are never
+transforms-N and build-cache-N in caches/, the SwiftPM cache and Xcode's
+CompilationCache.noindex: a later gc finds and finishes a leftover beside each
+and measures it, and a removal that fails after the rename is reported as failed
+with the bytes still left aside. jdks and the other shared Gradle caches are never
 deleted; modules-2, transforms-N and build-cache-N go only in rung 9 (THE
 PRESSURE LADDER).
 With STIM_HOME set, gc deletes nothing in a Gradle home outside it. Pressure
@@ -1216,10 +1217,11 @@ THE PRESSURE LADDER
        --force, yarn cache clean, pnpm store prune, pod cache clean --all, and
        Gradle's version-independent caches (caches/modules-2,
        caches/transforms-N and caches/build-cache-N under GRADLE_USER_HOME,
-       which Stim removes itself because Gradle has no command, and SwiftPM's
-       cache, both only while no Stim build lock or build slot is live or
-       unresolved and no matching tool process runs, by renaming the directory
-       aside to a .stim-delete-* sibling on the same volume and deleting it;
+       which Stim removes itself because Gradle has no command, SwiftPM's
+       cache and Xcode's DerivedData/CompilationCache.noindex, each only
+       while no Stim build lock or build slot is live or unresolved and no
+       matching tool process runs, by renaming the directory aside to a
+       .stim-delete-* sibling on the same volume and deleting it;
        rung 6 stops idle daemons first; a cache directory that is itself a
        symbolic link is kept with a remedy to remove its target yourself).
        npm is found by npm_config_cache (or NPM_CONFIG_CACHE), else ~/.npm,
@@ -1249,7 +1251,7 @@ THE PRESSURE LADDER
   share, a hosted placement, unreadable evidence), and maintenance.keep
   protects a workspace. Report-only caches and what Stim never deletes (other
   DerivedData than CompilationCache.noindex, Android NDKs, system images, ~/.cache/exact) are never touched;
-  the SwiftPM cache goes only with rung 9, at critical. Caches whose loss slows the next build go only for an idle
+  the SwiftPM cache and Xcode's CompilationCache.noindex go only with rung 9, at critical. Caches whose loss slows the next build go only for an idle
   workspace or at critical. An acting run appends each item to
   $STIM_HOME/gc/gc.ndjson. \`stim revive\` resumes an idle workspace; the next
   \`stim ios\` or \`stim android\` creates the devices of a dormant one.

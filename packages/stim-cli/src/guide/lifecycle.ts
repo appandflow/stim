@@ -2623,9 +2623,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        cap); at critical the Metro and compilation caches emptied, the build
        cache trimmed to the entries a workspace, parked device or build still
        uses, the fingerprint index and memo emptied, and every other cache
-       Stim registered or detected emptied whole (ccache, the macOS artifact
-       cache, the React Native and Android caches and, outside a scoped
-       STIM_HOME, Xcode's CompilationCache.noindex), except
+       Stim registered emptied whole (ccache, the macOS artifact
+       cache, the React Native and Android caches), except
        report-only caches, caches inside a workspace, a folder that is or holds
        HOME, TMPDIR or STIM_HOME,
        caches outside a scoped STIM_HOME and one a build holds. At high each
