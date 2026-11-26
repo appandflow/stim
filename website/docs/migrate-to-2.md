@@ -26,8 +26,10 @@ Upgrading from 1.40 takes three steps. Then hand the leftovers to your agent.
    settings, workspaces and device ownership.
 3. Update [Stim Desktop](./desktop.md), the phone app and any
    [remote workers](./remote-machines.md). Run `stim doctor` in each app
-   directory whose project code you trust, then restart the workspaces you
-   need. Check the connection and the next build on each worker before you rely
+   directory whose project code you trust. Decide on the
+   [changed defaults](#changed-defaults) before you restart any workspace: the
+   first command after the upgrade runs cleanup under the 2.0 values. Then
+   restart the workspaces you need. Check the connection and the next build on each worker before you rely
    on it.
 
 ## Let an agent migrate
@@ -147,9 +149,10 @@ The pressure ladder now uses fixed rules. Remove `budget.maxCommittedMemoryGb`,
 `budget.maxLiveWorkspaces`, the old `maintenance.*` tuning keys listed in
 [For agents](#for-agents), and their `STIM_` exports.
 
-These names make `start`, `ios`, `android`, `web`, `macos`, `revive` and `gc`
-refuse until you migrate them. The refusal prints the `stim settings` commands
-to run.
+`start`, `ios`, `android`, `web`, `macos`, `revive` and `gc` refuse when a
+removed environment variable below is set to a nonempty value, when old config
+sets `maintenance.mode` to `off` or `report`, or when it sets either old local
+idle timeout to `0`. The refusal prints the `stim settings` commands to run.
 
 | Old key or environment variable                                             | Replacement                                                     |
 | --------------------------------------------------------------------------- | --------------------------------------------------------------- |

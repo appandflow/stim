@@ -105,7 +105,8 @@ simulator, installs, launches and checks the launch. Useful options:
   run and never creates, boots or deletes hardware.
 - `--eas-profile <name>` downloads a matching
   [EAS development build](./eas-builds.md) instead of compiling.
-- `--remote <target>` runs on an approved Mac, or on `eas` or `proxy`. An EAS
+- `--remote <target>` runs on an approved Mac, on `eas` (an EAS cloud
+  simulator) or on `proxy` (a device an existing Agent Device daemon serves). An EAS
   Simulator session can be billable while it runs; `stim stop` ends it.
 - `--remote-build <value>` compiles on a [remote machine](./remote-machines.md).
 - `--device-type`, `--runtime` and `--configuration` pick the simulator model,
@@ -253,7 +254,8 @@ stim device lock android --for 30m
 stim device unlock
 ```
 
-Leases a connected phone to this workspace, so another workspace's `--device`
+Leases a connected phone, or this workspace's own simulator or emulator, to
+this workspace, so another workspace's `--device`
 run waits instead of installing over it. `--for` runs from `10s` to `30m` and
 defaults to `5m`. A `--device` run takes its own lease, so `lock` is for holding
 a phone across runs, such as a device-tool session. See
@@ -332,8 +334,8 @@ stim worktree remove --force
 
 Reclaims the workspace's port, build output and owned devices, then removes the
 linked worktree when that is safe. It refuses when the worktree has
-uncommitted, untracked or unpushed work, or is locked with
-`git worktree lock`. `--force` discards that work. In the source checkout it
+uncommitted, untracked or unpushed work; `--force` discards that work. A
+worktree locked with `git worktree lock` is kept even with `--force`. In the source checkout it
 reclaims the environment and keeps the files. Git branches with commits of
 their own stay.
 
@@ -486,7 +488,7 @@ STIM_SETUP_TICKET=<ticket> stim setup --expires <ISO-time> --build --device-host
 <TabItem value="npx" label="npx">
 
 ```bash
-STIM_SETUP_TICKET=<ticket> npx stim setup --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> npx --yes stim setup --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>

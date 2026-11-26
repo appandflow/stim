@@ -86,6 +86,13 @@ com.appandflow.trailhead · ready · cache hit · 58.8s · errors clean`}
     {`Run the app on an iPhone 17 simulator with iOS 26.5.`}
   </PromptBox>
   <PromptBox
+    title="Run on Android"
+    response={`Trailhead launched on stim-trailhead (Pixel 9 / API 36).
+com.appandflow.trailhead · ready · cache hit · errors clean`}
+  >
+    {`Run the app on an Android emulator.`}
+  </PromptBox>
+  <PromptBox
     title="Use an EAS build"
     response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
 com.appandflow.trailhead · ready · EAS build · errors clean`}
@@ -124,7 +131,7 @@ The simulator stays assigned for the next run.`}
   </PromptBox>
   <PromptBox
     title="Work in parallel"
-    response={`Implemented on @janic/example in an isolated worktree.
+    response={`Implemented on feature/settings-toggle in an isolated worktree.
 Trailhead · iPhone 17 / iOS 26.5 · ready · cache hit · errors clean
 Branch preserved.`}
   >

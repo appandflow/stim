@@ -55,7 +55,8 @@ code={`stim stop
 stim worktree remove`}
 />
 
-This deletes the checkout, its owned devices, build outputs and Metro port, and
+This deletes the checkout, its build outputs and Metro port, parks its owned
+devices for reuse, and
 the branch if Stim created it and nothing else uses it. It refuses uncommitted,
 untracked or unpushed work and initialized submodules. `--force` removes them
 anyway and discards that work. A Git-locked worktree, one that contains another
@@ -112,8 +113,10 @@ from regenerable folders such as `node_modules` and `build`. It never runs
 `git fetch` there.
 
 `maintenance.autoDiscover` (off by default) also reaches the folders next to
-your registered projects and a scan of your home folder. Checkouts found that
-way are only reduced, never removed. `stim doctor` reports how much build
+your registered projects and the linked worktrees of every repository Stim
+knows, with the same rules: finished linked worktrees there can be removed. It
+also adds `~/.codex/worktrees` and a scan of your home folder; checkouts found
+those two ways are only reduced, never removed. `stim doctor` reports how much build
 output such checkouts hold and the command that adds their folder.
 
 <PromptBox title="Find reclaimable checkouts">

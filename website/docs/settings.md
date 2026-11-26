@@ -134,6 +134,9 @@ stim settings set concurrency.maxDevices 4 --scope machine
   workspace shrinks to its minimal size. Its build outputs and owned devices
   are deleted, and a linked worktree's `node_modules` and Pods are deleted
   for the next Stim command to restore. All of it is regenerable.
+- `idle.sourceDormantDays` (default `7`, `0` never): the main checkout's
+  `node_modules` and Pods are deleted after this many idle days too, at any
+  disk level. Reinstall them with your package manager.
 - `maintenance.keep` (project): pin a workspace so nothing automatic touches
   it.
 - `maintenance.removeFinishedWorktrees` (default `true`): remove linked
@@ -180,6 +183,15 @@ stim settings set share.port 7790                           # loopback port the 
 `auto` uses Tailscale Funnel when Tailscale is installed and logged in.
 `proxy` never runs `tailscale serve` or `tailscale funnel`. See
 [Share a running app](./share.md).
+
+Two other settings open this machine to others:
+
+- `server.lanAddresses` (default empty): stim-server also accepts machines and
+  phones on these local network addresses, authenticated and encrypted but
+  without TLS. See [remote machines](./remote-machines.md).
+- `metro.tunnel`: `auto` gives Metro a public ngrok or cloudflared URL for a
+  remote device; `tailscale` keeps it on your tailnet. See
+  [dev server and logs](./dev-server-and-logs.md).
 
 ### Privacy
 

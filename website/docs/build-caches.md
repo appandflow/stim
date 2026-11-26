@@ -168,6 +168,10 @@ or `node_modules`. Expo's `buildCacheProvider`, such as `eas`, also works.
 
 ## Clean up
 
+<PromptBox title="Free disk space" response={`stim gc would free 38 GB: idle build outputs, 2 stale simulators, caches over their caps. Nothing in use. Run it?`}>
+{`Run stim gc --dry-run, summarize what it would delete and how much space that frees, and ask me before you run stim gc.`}
+</PromptBox>
+
 <StimTabs
 code={`stim gc --dry-run           # what would be deleted, with sizes; deletes nothing
 stim gc                     # one maintenance pass now
@@ -176,7 +180,8 @@ stim gc --pressure critical # free everything; the next builds are cold`}
 
 `stim gc` deletes regenerable data: build outputs of idle workspaces, caches
 over their caps, devices of removed projects, and the `node_modules` and Pods
-of linked worktrees idle for `idle.dormantDays` (1 day). It never touches a
+of linked worktrees idle for `idle.dormantDays` (1 day), and those of the main
+checkout idle for `idle.sourceDormantDays` (7 days). It never touches a
 workspace that is building, driven, leased, hosted or pinned with
 `maintenance.keep`. `--pressure critical` also empties every shared cache and
 cleans other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Use
@@ -214,8 +219,9 @@ When free disk drops under `disk.minFreeGb` (40 GB), the daemon cleans harder
 until there is room again: parked devices first, then caches, then idle
 workspaces. Under `disk.criticalFreeGb` (20 GB) it empties shared caches and
 cleans other tools' caches. A native build that may not fit asks for cleanup
-first and builds anyway; it never refuses for space. If a run reports
-`STIM_LOW_DISK`, run `stim gc` or free space yourself, then retry.
+first and builds anyway. Under `disk.hardFloorGb` (5 GB), `start`, `ios` and
+`android` refuse with `STIM_LOW_DISK`: run `stim gc` or free space yourself,
+then retry.
 
 Run `stim logs --source gc` to see what cleanup removed.
 

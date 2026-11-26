@@ -3,6 +3,13 @@ title: 'Android CAS'
 description: 'Experimental Apple Clang CAS for Android builds: setup, evidence, and limits'
 ---
 
+:::note[Command examples]
+
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim`.
+
+:::
+
 Android CAS is an opt-in macOS experiment. It compiles Android native code with
 Apple Clang and its content-addressed compile cache, so precompiled headers and
 objects are reused after you move to another worktree. You prepare the

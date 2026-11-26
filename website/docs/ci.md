@@ -46,8 +46,9 @@ npx --yes stim ci run --platform ios --project ./app --artifacts ./test-results 
 
 - `stim ci build` is the only step that compiles. It records the app; add
   `--export <path>` to also write an APK or a `tar.gz`.
-- `stim ci run` installs the last recorded build and never builds. With no
-  recorded build it refuses and prints the build command to run.
+- On iOS and Android, `stim ci run` installs the last recorded build and never
+  builds. With no recorded build it refuses and prints the build command to
+  run. On macOS, `run` builds its app itself.
 - The command after `--` gets the device and app in `STIM_CI_*` variables,
   including `STIM_CI_RUN_RESULT`, the exact target to test.
 - stdout holds one JSON result. With `--artifacts`, results and diagnostics
@@ -58,11 +59,12 @@ npx --yes stim ci run --platform ios --project ./app --artifacts ./test-results 
 
 ## What a run deletes
 
-Every iOS and Android `run` starts the app from clean state on the workspace's
-own simulator or emulator. Before it installs, it uninstalls every other user
-app on that device except XCUITest runners, clears the app's data, and on iOS
-resets the simulator keychain. It refuses a simulator or emulator Stim does
-not own, and refuses a physical device.
+Every local iOS and Android `run` starts the app from clean state on the
+workspace's own simulator or emulator. Before it installs, it uninstalls every
+other user app on that device except XCUITest runners, clears the app's data,
+and on iOS resets the simulator keychain. It refuses a simulator or emulator
+Stim does not own, and refuses a physical device. A run that `ios.remote` or
+`android.remote` places on another machine or on EAS is not cleaned.
 
 ## Isolation
 

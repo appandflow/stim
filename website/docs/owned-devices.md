@@ -69,8 +69,15 @@ Run on a connected phone with `stim ios --device [udid]` or
 workspaces never install on it at once. `stim device lock ios|android` holds
 the lease for a set time, 5 minutes by default and 30 at most.
 
-A physical iPhone needs a development signing profile that lists it; see
-`stim device provision`. Stim Desktop and the phone app can watch a leased
+A physical iPhone needs a development signing profile that lists it. The first
+time, `stim device provision ios` registers the phone with your Apple team; it
+is the only command that changes your developer account, and it asks first:
+
+<PromptBox title="Set up my iPhone for signing" response={`Provisioning would register this iPhone with team ABCDE12345 and refresh the development profile. Confirm?`}>
+{`My iPhone is connected but stim ios --device fails on signing. Run stim device provision ios without --yes, show me what it would change, and wait for me to confirm.`}
+</PromptBox>
+
+Stim Desktop and the phone app can watch a leased
 Android phone and control it with permission. A physical iPhone is view only,
 and must be unlocked, trusted and connected by USB.
 
@@ -155,6 +162,10 @@ runtime, the newest one when none is used, and any runtime a project pins with
   running and billed until you rerun or stop. This also works from Windows or
   Linux with `eas-cli` 21.6.0 or later, `agent-device`, and `ngrok` or
   `cloudflared` for the Metro tunnel. See [EAS development builds](./eas-builds.md).
+- **An Agent Device daemon.** `stim ios --remote proxy` (or `android`) runs on
+  a device an existing Agent Device daemon serves, with its URL and token.
+- EAS and proxy devices cannot prove a Release or native launch, so it stays
+  unverified, and they collect no device logs or crash reports.
 - **Your tailnet.** Set `metro.tunnel` to `tailscale` and run
   `stim start --remote` to serve Metro to a device on the same tailnet. Stim
   never enables Funnel.

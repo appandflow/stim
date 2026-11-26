@@ -383,7 +383,8 @@ stim settings set server.devicesPaused true`} />
   managed server updates.
 - An offloaded build sends your tracked and untracked files, the gitignored
   files the build reads (such as Expo `.env` files), and the environment
-  variables the build reads from your shell. These can hold secrets: Stim
+  variables the build reads from your shell, which is every variable in your
+  shell when project code enumerates `process.env`. These can hold secrets: Stim
   assumes every paired machine belongs to you. It never sends `node_modules`,
   Stim's own secrets, or toolchain and home paths.
 - An iOS offload leaves out `*.p8`, `*.p12`, `*.mobileprovision` and
