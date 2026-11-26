@@ -6,7 +6,7 @@ import { getExecutor } from '../exec.ts';
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
-import { operationState, withDrainingCancellation } from './operation-state.ts';
+import { isTermination, operationState, withDrainingCancellation } from './operation-state.ts';
 import { formatElapsed } from '../command-output.ts';
 import type { ClaimHolder } from '../ownership-claim.ts';
 import { readJsonObject, settingDefinition, settingValueError, type RemoteDeviceBackend } from '@stim-cli/core/state';
@@ -807,6 +807,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>(
       drainTermination: true,
     });
   } finally {
+    if (isTermination(operation.signal.reason)) state.cancelled ??= 'terminated by SIGTERM';
     if (!state.runSignal?.aborted) state.runSignal = previous;
   }
 }
