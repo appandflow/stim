@@ -203,13 +203,15 @@ export async function runMaintenanceAtLevel({
     operation?.signal.throwIfAborted();
     if (!act) {
       const outcome =
-        action.kind === 'would-trim-cache'
+        action.kind === 'would-trim-cache' && action.olderThanDays === undefined
           ? await trimCache(action, context, true)
           : { status: 'done' as const, bytes: action.bytes, detail: 'stim gc would do this' };
-      take({
-        ...fromOutcome(action, outcome),
-        outcome: outcome.status === 'done' ? 'would' : outcome.status,
-      });
+      const row = fromOutcome(action, outcome);
+      if (outcome.status === 'done') {
+        row.outcome = 'would';
+        row.detail = 'stim gc would do this';
+      }
+      take(row);
       continue;
     }
     if (action.kind === 'would-clear-outputs' || action.kind === 'would-clear-build-dirs') await between?.();

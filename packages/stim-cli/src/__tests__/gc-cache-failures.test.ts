@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { saveConfig } from '../workspace/config.ts';
 
 const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
@@ -103,6 +104,7 @@ test('cache cap dry runs agree with acting runs for recent and old entries', asy
     const cache = metroCacheRoot();
     const dir = join(cache, 'project', 'bucket');
     mkdirSync(dir, { recursive: true });
+    register({ dir: join(cache, 'project'), name: 'Fixture Metro store', prune: 'entries', entriesDepth: 2 });
     const entries = Array.from({ length: 5 }, (_, i) => join(dir, `entry-${i}`));
     for (const entry of entries) writeFileSync(entry, Buffer.alloc(2_000_000));
     const trim = (payload: {
@@ -130,8 +132,19 @@ test('cache cap dry runs agree with acting runs for recent and old entries', asy
     const old = new Date(Date.now() - 7 * 86_400_000);
     for (const entry of entries) utimesSync(entry, old, old);
     vi.restoreAllMocks();
-    const oldDry = trim(await gcJson({ dryRun: true, pressure: 'normal' }));
-    expect(oldDry).toMatchObject({ outcome: 'would', bytes: 10_000_000 });
+    const oldPayload = await gcJson({ dryRun: true, pressure: 'normal' });
+    const oldDry = trim(oldPayload);
+    expect(oldDry).toMatchObject({ outcome: 'would', bytes: 10_000_000, detail: 'stim gc would do this' });
+    expect(oldPayload.actions).toContainEqual(
+      expect.objectContaining({
+        rung: null,
+        kind: 'trim-cache',
+        target: `Fixture Metro store ${join(cache, 'project')}`,
+        outcome: 'would',
+        bytes: 0,
+        detail: 'stim gc would do this',
+      }),
+    );
     expect(entries.every((entry) => existsSync(entry))).toBe(true);
     vi.restoreAllMocks();
     const oldLadder = await gcJson({ dryRun: true, pressure: 'high' });
