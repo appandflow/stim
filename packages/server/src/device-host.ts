@@ -100,7 +100,6 @@ import { signalChild } from './stim-command.ts';
 
 interface WorkerRun {
   settled?: Promise<void>;
-  exited?: boolean;
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
   cancel: () => void;
 }
@@ -1956,7 +1955,7 @@ export class DeviceHost {
         outcome.settled &&
         isJsonObject(value) &&
         (value.state === 'ready' || value.state === 'installed');
-      if (!outcome.settled && !owned.run.exited)
+      if (!outcome.settled)
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
       if (
         (owned.imagePhase || (isJsonObject(value) && value.state === 'stopped' && value.device === null)) &&
@@ -2189,7 +2188,6 @@ export class DeviceHost {
   private async reconcileUnknown(): Promise<void> {
     try {
       for (const record of readHostedSessions()) {
-        if (this.closed) return;
         if (record.state !== 'unknown') continue;
         const owned = this.owned.get(record.id);
         if (!owned || this.resuming.has(record.id) || this.idleUnresolved(record.id) !== null) continue;
@@ -2201,8 +2199,7 @@ export class DeviceHost {
             continue;
           }
           const outcome = await owned.run?.done;
-          if (outcome && !outcome.settled && !owned.run?.exited) continue;
-          await this.settleLogs(owned);
+          if (outcome && !outcome.settled) continue;
           if (
             this.closed ||
             this.owned.get(record.id) !== owned ||
@@ -2734,7 +2731,6 @@ export class DeviceHost {
               ? this.limits.offerMs
               : this.limits.prepareMs,
       maxOutputBytes: 16_384,
-      trackSettlement: true,
     });
   }
 
@@ -2895,11 +2891,7 @@ export class DeviceHost {
         cancel('request-write');
       }
     }
-    const run: WorkerRun = { done, cancel, ...(settlement ? { settled: settlement } : {}) };
-    void settlement?.finally(() => {
-      run.exited = true;
-    });
-    return run;
+    return { done, cancel, ...(settlement ? { settled: settlement } : {}) };
   }
 }
 

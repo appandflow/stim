@@ -3429,39 +3429,11 @@ test('unknown stop retries are bounded and a client can stop after the host rele
   expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toEqual([]);
   expect(await state(session.id, 'unknown')).toHaveProperty('notice', expect.stringContaining('kept it'));
   host.sweepIdle();
-  expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('unknown');
   expect(stops()).toBe(6);
   expect(host.stop('client', { session: session.id })).toHaveProperty('result.state', 'stopping');
   await state(session.id, 'unknown');
   expect(stops()).toBe(7);
   expect(host.working()).toBe(1);
-});
-
-test('a worker group that exits after its cancel deadline lets the sweep stop the session', async () => {
-  const session = await reserve({ deviceType: 'held-prepare' });
-  const area = join(deviceHostArea(session.id), 'home');
-  await vi.waitFor(() => expect(existsSync(join(area, 'entered'))).toBe(true));
-  const pid = await readPid(join(area, 'entered'));
-  const kill = process.kill.bind(process);
-  const withheld = vi
-    .spyOn(process, 'kill')
-    .mockImplementation((target, signal) =>
-      target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
-    );
-  try {
-    host.stop('client', { session: session.id });
-    expect(await state(session.id, 'unknown')).toHaveProperty('notice', expect.stringContaining('unresolved'));
-  } finally {
-    withheld.mockRestore();
-    writeFileSync(join(area, 'release-prepare'), '');
-  }
-  await groupGone(pid);
-  await vi.waitFor(() => {
-    host.sweepIdle();
-    expect(readHostedSessions().find((record) => record.id === session.id)?.state).not.toBe('unknown');
-  });
-  await state(session.id, 'stopped');
-  expect(host.working()).toBe(0);
 });
 
 test('revocation during inspection refuses adoption and retires the parked device after releasing its claim', async () => {
