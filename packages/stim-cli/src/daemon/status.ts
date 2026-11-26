@@ -23,7 +23,7 @@ import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
 import { crashHoldRemedy } from '../stimd/crash-hold.ts';
 import { ownStoreEngine } from './engine-switch.ts';
 import { isStimDaemonClaim, legacyDaemonStop } from './legacy-daemon.ts';
-import { daemonMode, parseDaemonMode } from './mode.ts';
+import { daemonMode, leftoverDaemonCap, parseDaemonMode, stricterDaemonMode } from './mode.ts';
 import { diskPacerVolumes } from './pacer.ts';
 
 const DAY_MS = 86_400_000;
@@ -33,7 +33,8 @@ const DAY_MS = 86_400_000;
  * tick or else its claim, since it keeps the mode the command that started it resolved.
  */
 export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus {
-  const setting = daemonMode(env);
+  const leftover = leftoverDaemonCap(env);
+  const setting = leftover ? stricterDaemonMode(daemonMode(env), leftover) : daemonMode(env);
   let holder: ReturnType<typeof readClaimSet>['live'][number] | undefined;
   // compat C32 until 2.1.0
   let older: ReturnType<typeof readClaimSet>['live'][number] | undefined;
@@ -158,7 +159,9 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`
     : 'no tick yet';
   const resolves = status.setting ? `; daemon.mode resolves to ${status.setting} here` : '';
-  const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode}${resolves})`;
+  const leftover =
+    status.mode === 'report' && leftoverDaemonCap() ? '; a leftover maintenance.mode holds it at report' : '';
+  const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode}${leftover}${resolves})`;
   const pressure = status.pressure
     ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
     : '';
