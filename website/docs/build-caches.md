@@ -184,8 +184,8 @@ of linked worktrees idle for `idle.dormantDays` (1 day), and those of the main
 checkout idle for `idle.sourceDormantDays` (7 days). It never touches a
 workspace that is building, driven, leased, hosted or pinned with
 `maintenance.keep`. `--pressure critical` also empties every shared cache and
-cleans other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Use
-plain `stim gc` for routine cleanup.
+cleans other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM,
+Xcode's `CompilationCache.noindex`). Use plain `stim gc` for routine cleanup.
 
 The next Stim command in a worktree whose dependencies were cleaned restores
 them with `stim worktree warm`, or refuses with `STIM_DEPS_FAILED` and asks

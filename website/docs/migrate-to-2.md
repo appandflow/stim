@@ -119,8 +119,8 @@ stim gc --dry-run --json`}
   `stim engine status` shows it, `stim engine update` follows its channel, and
   `stim engine rollback` returns to the previous build.
 - 2.0 workers use peer compatibility version 3 and build compatibility
-  version 6. Workers: run `stim remote update <machine>`. A stock 1.40 worker cannot take
-  that update, so on the worker install 2.0 and rerun `stim service install`
+  version 6. Workers: run `stim remote update <machine>`. A worker that still
+  runs 1.x cannot take that update, so on the worker install 2.0 and rerun `stim service install`
   with its existing options. On Windows, reinstall the service after an engine
   update too. If an old server still holds the serving port, stop it or pick
   another port with `stim serve --port <port>` and point clients at it.

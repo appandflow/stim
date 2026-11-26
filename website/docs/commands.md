@@ -151,7 +151,8 @@ $ stim ios --plan
 
 `stim ios --plan` and `stim android --plan` say whether the next run comes from
 the cache and how long it should take. They build nothing, boot nothing and
-write no Stim state. See `stim guide facts plan`.
+write no Stim state. A native Xcode plan refuses a remote; plan it with
+`--remote local`. See `stim guide facts plan`.
 
 ### `web`
 
