@@ -654,11 +654,42 @@ function carriedFileList(files: string[]): string {
   return files.length > 3 ? `${shown}, +${files.length - 3}` : shown;
 }
 
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+function unquoteC(text: string): { value: string; rest: string } | null {
+  const bytes = Buffer.from(text, 'utf8');
+  const out: number[] = [];
+  for (let i = 1; i < bytes.length; i++) {
+    const byte = bytes[i] ?? 0;
+    if (byte === 34) return { value: Buffer.from(out).toString('utf8'), rest: bytes.subarray(i + 1).toString('utf8') };
+    if (byte !== 92) {
+      out.push(byte);
+      continue;
+    }
+    const next = String.fromCharCode(bytes[i + 1] ?? 0);
+    if (/[0-7]/.test(next)) {
+      out.push(parseInt(bytes.subarray(i + 1, i + 4).toString('latin1'), 8));
+      i += 3;
+    } else {
+      const code = C_ESCAPES[next];
+      if (code === undefined) return null;
+      out.push(code);
+      i += 1;
+    }
+  }
+  return null;
+}
+
 export function porcelainPath(line: string): string | null {
-  const raw = String(line).slice(3).trim();
-  if (raw === '') return null;
-  const renamed = raw.includes(' -> ') ? raw.slice(raw.lastIndexOf(' -> ') + 4) : raw;
-  return renamed.replace(/^"(.*)"$/, '$1');
+  let path = String(line).slice(3);
+  if (path === '') return null;
+  if (path.startsWith('"')) {
+    const first = unquoteC(path);
+    if (!first) return path;
+    if (!first.rest.startsWith(' -> ')) return first.value;
+    path = first.rest.slice(4);
+  } else if (path.includes(' -> ')) path = path.slice(path.indexOf(' -> ') + 4);
+  return path.startsWith('"') ? (unquoteC(path)?.value ?? path) : path;
 }
 
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;

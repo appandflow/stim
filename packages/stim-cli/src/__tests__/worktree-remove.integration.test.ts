@@ -43,6 +43,11 @@ test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath(' M ios/Podfile.lock')).toBe('ios/Podfile.lock');
   expect(porcelainPath('R  old/name.js -> new/name.js')).toBe('new/name.js');
   expect(porcelainPath('?? "we\u00e4rd path"')).toBe('we\u00e4rd path');
+  expect(porcelainPath('?? "a\\"q\\\\b"')).toBe('a"q\\b');
+  expect(porcelainPath('?? "caf\\303\\251\\r.txt"')).toBe('caf\u00e9\r.txt');
+  expect(porcelainPath('?? "untr -> acked"')).toBe('untr -> acked');
+  expect(porcelainPath('R  "old name" -> "new name"')).toBe('new name');
+  expect(porcelainPath('?? \u00a0x\u00a0')).toBe('\u00a0x\u00a0');
   expect(porcelainPath('   ')).toBe(null);
 });
 
@@ -2348,6 +2353,32 @@ test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () =>
     if (platform) Object.defineProperty(process, 'platform', platform);
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'real git: the printed remedy restores and deletes files with non-ASCII names',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remedy-utf8-')));
+    const errs: string[] = [];
+    try {
+      const { wt, git } = realRepoWithWorktree(base);
+      const tracked = 'caf\u00e9.txt';
+      const untracked = '\u00a0na\u00efve.txt\u00a0';
+      writeFileSync(join(wt, tracked), 'tracked');
+      git('git add -A && git commit -q -m utf8', wt);
+      writeFileSync(join(wt, tracked), 'edited');
+      writeFileSync(join(wt, untracked), '');
+      realGitFakeSimctl(simctlJson([]));
+      await removeWorktreeTarget(wt, { output: { error: (line) => errs.push(line), fail: () => {} } });
+      const commands = errs.filter((line) => /^ +git .* (checkout|clean -fd) -- /.test(line));
+      expect(commands).toHaveLength(2);
+      for (const command of commands) git(command.trim(), wt);
+      expect(readFileSync(join(wt, tracked), 'utf-8')).toBe('tracked');
+      expect(existsSync(join(wt, untracked))).toBe(false);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+);
 
 test('real git: detached unique commits have a recovery branch command before discard advice', async () => {
   const base = canon(mkdtempSync(join(tmpdir(), 'stim test detached remedy ')));
