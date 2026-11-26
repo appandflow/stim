@@ -451,15 +451,6 @@ function writeNote(line: string): void {
   console.error(line);
 }
 
-function nestedContext(context: StimContext): StimContext {
-  return {
-    ...context,
-    output: (stream, text) => {
-      if (stream === 'stderr') context.output('stderr', text);
-    },
-  };
-}
-
 function findWorkspace(cwd: string): Promise<string | null> {
   return findCommandWorkspaceAsync(cwd, repoRootAsync, writeNote);
 }
@@ -494,11 +485,10 @@ export function reviveDeps(context: StimContext): ReviveDeps {
       return started.ok ? { ok: true, port: started.facts.port } : { ok: false, error: started.error };
     },
     run: async (platform, root, { slot, configuration, recordedBuild, installedApp, expectedDevice }) => {
-      const nested = nestedContext(context);
       if (platform === 'ios') {
         let error: RunOutcome['error'];
         const result = await runIosOperation(
-          nested,
+          context,
           root,
           {
             slot,
@@ -522,7 +512,7 @@ export function reviveDeps(context: StimContext): ReviveDeps {
             }
           : { ok: false, error };
       }
-      const result = await runAndroidOperation(nested, root, {
+      const result = await runAndroidOperation(context, root, {
         slot,
         ...(recordedBuild ? { recordedBuild } : {}),
         ...(installedApp ? { installedApp } : {}),
@@ -561,19 +551,26 @@ export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
         return;
       }
       await recordWorkspaceUseAsync(root);
-      const { value: result, interrupted } = await runProcessOperation(root, (context) =>
-        runRevive({
-          root,
-          note: writeNote,
-          requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
-          deps: { ...reviveDeps(context), ...overrides },
-        }).catch((error: unknown) => {
-          if (!context.signal.aborted) throw error;
-          const claim = claimFailure(error, 'stim revive');
-          return claim
-            ? failure(claim.code, claim.message, claim.remedy)
-            : failure('STIM_CANCELLED', 'The revive was cancelled.', null);
-        }),
+      const { value: result, interrupted } = await runProcessOperation(
+        root,
+        (context) =>
+          runRevive({
+            root,
+            note: writeNote,
+            requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
+            deps: { ...reviveDeps(context), ...overrides },
+          }).catch((error: unknown) => {
+            if (!context.signal.aborted) throw error;
+            const claim = claimFailure(error, 'stim revive');
+            return claim
+              ? failure(claim.code, claim.message, claim.remedy)
+              : failure('STIM_CANCELLED', 'The revive was cancelled.', null);
+          }),
+        {
+          output: (stream, text) => {
+            if (stream === 'stderr') process.stderr.write(text);
+          },
+        },
       );
       if (!result.ok) {
         if (json) console.log(JSON.stringify(result.error));

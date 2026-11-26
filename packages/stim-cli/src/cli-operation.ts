@@ -6,7 +6,13 @@ const EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 } as const;
 type Interrupt = keyof typeof EXIT_CODES;
 
 /** A CLI context bound to `signal`; when omitted, reuse the current operation or create a fresh CLI context. */
-export function processContext(projectRoot: string, signal?: AbortSignal): StimContext {
+export function processContext(
+  projectRoot: string,
+  signal?: AbortSignal,
+  output: StimContext['output'] = (stream, text) => {
+    process[stream].write(text);
+  },
+): StimContext {
   if (!signal) {
     const current = ambientContext();
     if (current) return current;
@@ -20,9 +26,7 @@ export function processContext(projectRoot: string, signal?: AbortSignal): StimC
     cwd: process.cwd(),
     runId: runId(),
     signal,
-    output: (stream, text) => {
-      process[stream].write(text);
-    },
+    output,
   };
 }
 
@@ -44,9 +48,12 @@ export interface ProcessOperation {
   dispose(): void;
 }
 
-export function processOperation(projectRoot: string, { hangup = false }: { hangup?: boolean } = {}): ProcessOperation {
+export function processOperation(
+  projectRoot: string,
+  { hangup = false, output }: { hangup?: boolean; output?: StimContext['output'] } = {},
+): ProcessOperation {
   const controller = new AbortController();
-  const context = processContext(projectRoot, controller.signal);
+  const context = processContext(projectRoot, controller.signal, output);
   let received: Interrupt | null = null;
   const runExitCleanups = () => {
     for (const cleanup of operationState(context).exitCleanups) {
@@ -105,7 +112,7 @@ export function processOperation(projectRoot: string, { hangup = false }: { hang
 export async function runProcessOperation<T>(
   projectRoot: string,
   fn: (context: StimContext) => Promise<T>,
-  options: { hangup?: boolean } = {},
+  options: { hangup?: boolean; output?: StimContext['output'] } = {},
 ): Promise<{ value: T; interrupted: number | null }> {
   const operation = processOperation(projectRoot, options);
   operation.listen();
