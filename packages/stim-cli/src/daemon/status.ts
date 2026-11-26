@@ -30,7 +30,7 @@ const DAY_MS = 86_400_000;
 
 /**
  * The daemon's mode, whether it runs, and its last tick. A running daemon reports the mode it runs in, from its last
- * tick or else its claim, since it keeps the mode the command that started it resolved.
+ * tick or else the mode its claim recorded at start.
  */
 export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus {
   const leftover = leftoverDaemonCap(env);
