@@ -615,14 +615,17 @@ async function revive(root: string, device: WorkspaceDevice): Promise<AgentDevic
     const entered = await runOperation({ caller: 'cli', command: 'revive', plan: false, cwd: root, env: process.env });
     if ('refusal' in entered) return entered.refusal;
   } catch {}
-  const { runRevive, reviveDeps, reviveLines } = await import('./revive.ts');
-  const { value: result, interrupted } = await runProcessOperation(root, (context) =>
-    runRevive({
-      root,
-      note: (line) => console.error(line),
-      requestedDevice: device.platform === 'ios' ? device.id : (device.avdName ?? null),
-      deps: reviveDeps(context),
-    }),
+  const { runRevive, reviveDeps, reviveLines, reviveOutput } = await import('./revive.ts');
+  const { value: result, interrupted } = await runProcessOperation(
+    root,
+    (context) =>
+      runRevive({
+        root,
+        note: (line) => console.error(line),
+        requestedDevice: device.platform === 'ios' ? device.id : (device.avdName ?? null),
+        deps: reviveDeps(context),
+      }),
+    { output: reviveOutput },
   );
   if (interrupted !== null) process.exit(interrupted);
   if (!result.ok)
