@@ -972,7 +972,7 @@ final class AddMachineModelTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(1100))
     XCTAssertEqual(ios(), 1)
     harness.now = harness.now.addingTimeInterval(1)
-    try await Task.sleep(for: .milliseconds(1100))
+    await waitUntil { ios() == 2 }
     XCTAssertEqual(ios(), 2)
   }
 
