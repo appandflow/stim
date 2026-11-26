@@ -147,6 +147,7 @@ test('JSON is one payload and splits kept totals by gc reason', async () => {
   });
   expect(partial.total.removePartial).toBeUndefined();
   expect(partial.total.kept).toContainEqual({ reason: 'dirty', count: 1, realBytes: 100 });
+  expect(partial.total.kept).toContainEqual(expect.objectContaining({ realBytes: 2 * GIB, partial: true }));
   const plain = await run({});
   expect(plain[0]).toContain(`at least ${formatBytes(2 * GIB)} real, at least ${formatBytes(4 * GIB)} apparent`);
   expect(plain[3]).toContain(`; at least ${formatBytes(2 * GIB + 100)} real; 1 without a known real size;`);

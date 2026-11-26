@@ -1180,7 +1180,9 @@ that cannot report private sizes, mounted inside it or at a top-level entry)
 lists its sizes as lower bounds, "at least", and so does every total that
 includes it, in the listing, its JSON and the doctor note (#6415). Reason: the
 private bytes of the rest are still measured, and a lower bound tells more
-than an unknown size.
+than an unknown size. The JSON field names (`partial` on a worktree and a kept
+group, `realPartial`, `removePartial` and `keptPartial` on a summary) were
+chosen by the implementer of #6415, after `freedPartial`.
 
 ## A tree of hard links stays
 
