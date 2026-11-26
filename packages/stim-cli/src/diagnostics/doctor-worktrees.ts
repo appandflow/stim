@@ -72,8 +72,8 @@ export async function linkedWorktreeFindings(
         code: 'linked-worktrees',
         level: 'note',
         title: repo?.summary.count
-          ? `${plural(repo.summary.count, 'linked worktree')} here use ${formatBytes(repo.summary.realBytes)} real; kept ones hold ${formatBytes(repo.summary.keptBytes)}`
-          : `No linked worktrees here; ${plural(total.count, 'linked worktree')} on this machine use ${formatBytes(total.realBytes)} real`,
+          ? `${plural(repo.summary.count, 'linked worktree')} here ${repo.summary.count === 1 ? 'uses' : 'use'} ${formatBytes(repo.summary.realBytes)} real; kept ones hold ${formatBytes(repo.summary.keptBytes)}`
+          : `No linked worktrees here; ${plural(total.count, 'linked worktree')} on this machine ${total.count === 1 ? 'uses' : 'use'} ${formatBytes(total.realBytes)} real`,
         detail: detail.join(' '),
         fix: 'Run `stim worktree list` here for current verdicts and sizes, or `stim worktree list --all` for every repository. Doctor reads only saved verdicts and saved sizes; it measures nothing.',
       },
