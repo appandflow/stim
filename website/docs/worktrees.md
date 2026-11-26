@@ -56,9 +56,13 @@ code={`stim stop
 stim worktree remove`}
 />
 
-This deletes the checkout, its build outputs and Metro port, parks its owned
-devices for reuse, and
-the branch if Stim created it and nothing else uses it. It refuses uncommitted,
+This deletes the checkout with its git-ignored files, such as `.env` (it
+reports some that differ from the source checkout, best effort, so copy out
+the ones you need first), its build outputs and Metro port,
+and the branch if Stim created it and nothing else uses it. It runs each
+service's `teardown`, archives the logs, and parks its owned devices for reuse,
+or deletes them at critical disk pressure, with parking set to `0`, or when
+parking fails. It refuses uncommitted,
 untracked or unpushed work and initialized submodules. `--force` removes them
 anyway and discards that work. A Git-locked worktree, one that contains another
 worktree, and the one your running Stim comes from are protected even with
