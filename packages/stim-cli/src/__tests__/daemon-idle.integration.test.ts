@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { acquireDisk, LADDER, CRITICAL, requestGcItem } from '../daemon/disk-owner.ts';
-import { runLadder } from '../daemon/ladder.ts';
+import { idleOutputBytes, runLadder } from '../daemon/ladder.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { testContext } from './_context.ts';
 import * as iosApi from '../devices/ios.ts';
@@ -30,6 +30,7 @@ import { runIdlePass } from '../daemon/idle.ts';
 import type { DaemonLog } from '../daemon/step-timing.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { LOCKED_REASON } from '../workspace/worktree.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { liveClaimOwner, writeDerivedData } from './_factories.ts';
 import { serveShareList, shareRow, type ShareListAnswer } from './_share-list-server.ts';
@@ -252,6 +253,45 @@ test('the idle stage deletes the git-ignored .dd and CMake output of a workspace
   expect(existsSync(join(root, '.dd'))).toBe(false);
   expect(existsSync(join(root, 'android', 'app', '.cxx'))).toBe(false);
   expect(existsSync(join(root, 'build-device', 'Build'))).toBe(true);
+});
+
+test.each([
+  ['without pressure', {}],
+  ['under disk pressure', { disk: {} }],
+])('%s the idle stage stops a git-locked worktree and keeps its build outputs', async (_name, pressure) => {
+  const git = (cwd: string, ...args: string[]) =>
+    execSync(['git -c user.email=t@example.com -c user.name=t', ...args].join(' '), { cwd, timeout: 15_000 });
+  const repo = join(projects, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init -q -b main');
+  git(repo, 'commit -q --allow-empty -m init');
+  git(repo, 'worktree add -q --detach', join(projects, 'locked'));
+  git(repo, 'worktree lock', join(projects, 'locked'));
+  const { root, udid, derivedData } = bootedWorkspace('locked', 20 * MINUTE_MS);
+  writeFileSync(join(root, '.gitignore'), '.dd/\n');
+  writeDerivedData(join(root, '.dd'));
+  const config = loadConfig();
+  if (!config) throw new Error('no config');
+  const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+  expect(await idleOutputBytes(root, config)).toBe(0);
+
+  const decisions = await runIdlePass({
+    config,
+    now: Date.now(),
+    sims,
+    simsError: null,
+    devices,
+    act: true,
+    log: () => {},
+    ...pressure,
+  });
+
+  expect(decisions).toEqual([
+    expect.objectContaining({ path: root, outcome: 'idle', detail: expect.stringContaining(LOCKED_REASON) }),
+  ]);
+  expect(tornDown).toEqual([udid]);
+  expect(existsSync(derivedData)).toBe(true);
+  expect(existsSync(join(root, '.dd'))).toBe(true);
 });
 
 test('under disk pressure on another volume only, a workspace stopped at idle.minutes loses all its outputs', async () => {

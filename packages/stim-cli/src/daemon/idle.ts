@@ -52,6 +52,7 @@ import {
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import type { DaemonLog } from './step-timing.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
+import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
@@ -362,7 +363,7 @@ async function recordStage(path: string, minutes: number, shutDown: readonly str
  * The idle stage, in one pass under the workspace's native-run and metro-start locks after deciding again: the idle
  * stop (Metro stopped with its port and launch records kept, the owned devices shut down through teardown, their
  * collectors ended), then the workspace's regenerable build outputs, its in-tree build directories and its Metro
- * store deleted.
+ * store deleted, unless its worktree is locked with git worktree lock or git cannot list it.
  */
 async function enterIdleStage(
   path: string,
@@ -404,11 +405,15 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const volumes = input.disk?.volumes;
-            const outputs = await idleOutputs(
-              path,
-              config,
-              volumes ? (output) => onShortVolume([output], volumes) : undefined,
-            );
+            // @ref LLP 0001#one-idle-day-reduces-a-workspace -- a locked worktree keeps its build outputs
+            const lock = await worktreeLockAsync(path, {
+              env: input.operation?.env,
+              signal: input.operation?.signal,
+              declareFor: input.operation,
+            });
+            const outputs = lock
+              ? { paths: [], targets: [], kept: [`kept its build outputs: ${lockReason(lock)}`] }
+              : await idleOutputs(path, config, volumes ? (output) => onShortVolume([output], volumes) : undefined);
             const freed = await deleteOutputs(outputs.paths, input.operation?.signal, {
               ...outputs,
               operation: input.operation,

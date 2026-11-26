@@ -870,6 +870,7 @@ export async function runForcedLadder({
                   entry.path,
                   config,
                   volumes && onDiskVolumes(entry.path, volumes) ? (path) => onShortVolume([path], volumes) : undefined,
+                  operation,
                 )
               : 0),
           ...(entry.freedPartial ? { partial: true as const } : {}),
