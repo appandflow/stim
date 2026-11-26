@@ -476,15 +476,15 @@ On this Mac, drive and test the app with Exact's own commands, with EXACT_SIM
 set to the simulator stim ios reported. Without it Exact picks a simulator by its own
 rule, which another worktree of the same app may be using.
 
-Exact before mid-November 2026 looked for crates named after the app's folder,
-so a worktree of an app pinned to it whose own Cargo.toml files name its crates
-needs the same folder name as the checkout it was created in (otherwise the
-build fails with "Cargo has no <name>-apple target"). Later Exact reads the
-names from those Cargo.toml files or package.json, and any folder name works.
-A worktree at another folder depth than the checkout it was created in needs
-EXACT2 set to the Exact checkout, since the launcher finds exact2 relative to
-the app (otherwise "no exact2 at ..."). Stim reports these Exact failures as
-they come.
+Older Exact limits worktrees of an app. Exact before mid-November 2026 looks
+for crates named after the app's folder, so a worktree of an app whose own
+Cargo.toml files name its crates needs the same folder name as the checkout it
+was created in (otherwise "Cargo has no <name>-apple target"); later Exact reads
+the names from those files or package.json. An app's exact.mjs written before
+then finds exact2 by a path relative to the app, so a worktree at another folder
+depth than its checkout needs EXACT2 set to the Exact checkout (otherwise "no
+exact2 at ..."); later launchers find the checkout from a worktree. Stim
+reports these Exact failures as they come.
 
 stim doctor --platform ios checks what ./exact.mjs ios needs on this Mac,
 where the launcher looks: Bun at the version exact.mjs pins or newer ($BUN,
