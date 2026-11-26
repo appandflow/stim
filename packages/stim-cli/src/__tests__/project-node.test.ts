@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { toolchainReport } from '../commands/doctor.ts';
 import { unmetNodePin, withProjectNode } from '../stimd/metro/project-node.ts';
 
 describe('project Node pins', () => {
@@ -50,5 +51,17 @@ describe('project Node pins', () => {
     mkdirSync(join(dir, 'home', '.nvm', 'alias', 'lts'), { recursive: true });
     writeFileSync(join(dir, 'home', '.nvm', 'alias', 'lts', 'jod'), '1\n');
     expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '1.5.0' })).toBeNull();
+  });
+
+  it("doctor reports the pin in a monorepo's repository root that Metro and the fingerprint use", () => {
+    mkdirSync(join(top(), '.git'));
+    const bin = nvm('v1.2.0');
+    expect(toolchainReport(app, {}).projectNode).toEqual({
+      pin: '.nvmrc',
+      spec: '1.2.0',
+      bin,
+      version: '1.2.0',
+      match: 'exact',
+    });
   });
 });

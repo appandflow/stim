@@ -33,7 +33,7 @@ import {
   scriptEnvNames,
   templateScripts,
 } from './env.ts';
-import { gitLocation, trackedPaths } from './git-index.ts';
+import { gitLocation, nodePinScope, trackedPaths } from './git-index.ts';
 import {
   IndexSession,
   indexDir,
@@ -443,8 +443,8 @@ export interface FingerprintRuntime {
 }
 
 function pinnedNode(root: string, env: NodeJS.ProcessEnv) {
-  const real = realpathSync.native(root);
-  return projectNodeBin(real, env, undefined, gitLocation(real)?.top ?? real);
+  const scope = nodePinScope(root);
+  return projectNodeBin(scope.root, env, undefined, scope.top);
 }
 
 export function fingerprintRuntime(root: string, env: NodeJS.ProcessEnv): FingerprintRuntime | Uncertain {

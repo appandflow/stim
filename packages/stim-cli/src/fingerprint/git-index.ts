@@ -105,6 +105,12 @@ export function gitLocation(root: string): { top: string; gitDir: string; common
   return { top, gitDir, commonDir: common ? resolve(gitDir, common) : gitDir };
 }
 
+/** The real path of `root` and the git work tree top above it, or `root` itself outside one: where a Node pin search stops. */
+export function nodePinScope(root: string): { root: string; top: string } {
+  const real = realpathSync.native(root);
+  return { root: real, top: gitLocation(real)?.top ?? real };
+}
+
 /**
  * The real paths git tracks in the work tree that holds `root`, or null when no work tree does. Reads
  * the index file in process, and runs `git ls-files` only for an index this reader does not handle.
