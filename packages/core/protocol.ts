@@ -57,7 +57,7 @@ export const PEER = 3;
 export function peerTooOld(machine: string, stim: string, peer: number, version: string): string {
   const sent = peer > 0 ? `peer ${peer}` : 'no peer';
   const install = `on ${machine} run: npm i -g stim@${version} && stim service install`;
-  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; ${peer > 0 ? `run stim remote update ${machine}, or ${install}` : install}`;
+  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; ${peer > 0 ? `run stim remote update ${machine} --version ${version}, or ${install}` : install}`;
 }
 // compat end
 

@@ -176,6 +176,7 @@ test.each(
     ['remote', 'add', 'a', 'b'],
     ['remote', 'update', 'mini', '--channel', 'next'],
     ['remote', 'update', 'mini', '--channel'],
+    ['remote', 'update', 'mini', '--version', '2.0.0'],
     ['remote', 'list', '--json'],
     ['remote', 'remove', 'mini', '--json'],
     ['remote', '-V'],

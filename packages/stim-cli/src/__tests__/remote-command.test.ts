@@ -80,10 +80,13 @@ async function approveMini(): Promise<void> {
   await inspectDeviceHostMachines({ fix: false }, fakeIo([granted('device-host')]), ['mini']);
 }
 
+let errors: string[] = [];
+
 async function remote(io: TailnetMachineIo, ...args: string[]): Promise<string> {
   const out: string[] = [];
+  errors = [];
   vi.spyOn(console, 'log').mockImplementation((line: string) => void out.push(line));
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation((line: string) => void errors.push(line));
   await runCli(remoteOp(io), args, { version: '9.9.9' });
   return out.join('\n');
 }
@@ -143,6 +146,39 @@ test('update resolves an approved worker, selects its channel and prints its sta
   expect(out).toContain('mini: stim 9.11.0-next.1. Build bbbbbbbbbbbb is staged');
   expect(close).toHaveBeenCalled();
   expect(process.exitCode).toBeUndefined();
+});
+
+test('update --version sends that exact release even when the channel would pick another', async () => {
+  await approveMini();
+  updating.open.mockResolvedValue(undefined);
+  updating.request
+    .mockResolvedValueOnce({ result: { state: 'installing' } })
+    .mockResolvedValueOnce({ result: { running: null, last: { ok: true, message: 'Staged.' } } });
+  vi.spyOn(getExecutor(), 'runFileAsync').mockResolvedValue(
+    JSON.stringify({
+      versions: ['9.9.0', '9.10.0', '9.11.0-next.1'],
+      'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' },
+    }),
+  );
+  const out = await remote(fakeIo([]), 'update', 'mini', '--version', '9.9.0');
+  expect(updating.request).toHaveBeenCalledWith('engine.update', { version: '9.9.0' });
+  expect(out).toContain('mini: stim 9.9.0. Staged.');
+  expect(process.exitCode).toBeUndefined();
+});
+
+test.each([
+  { args: ['--version', '9.12.0'], refusal: 'STIM_BAD_ARG: stim 9.12.0 is not published on npm.' },
+  { args: ['--version', '9.9.0', '--channel', 'next'], refusal: 'STIM_BAD_ARG: --version names one release' },
+])('update $args refuses before asking the worker to update', async ({ args, refusal }) => {
+  await approveMini();
+  updating.open.mockResolvedValue(undefined);
+  vi.spyOn(getExecutor(), 'runFileAsync').mockResolvedValue(
+    JSON.stringify({ versions: ['9.9.0', '9.10.0'], 'dist-tags': { latest: '9.10.0' } }),
+  );
+  await remote(fakeIo([]), 'update', 'mini', ...args);
+  expect(errors.join('\n')).toContain(refusal);
+  expect(updating.request).not.toHaveBeenCalled();
+  expect(process.exitCode).toBe(1);
 });
 
 test('list --json gives each machine its server key fingerprint, reachability and the revoke command for there', async () => {

@@ -38,7 +38,7 @@ export async function updateRemoteMachine(
   ctx: StimContext,
   machine: string,
   callerVersion: string,
-  channel: 'latest' | 'next' | undefined,
+  request: { channel: 'latest' | 'next' | undefined } | { version: string },
   io: TailnetMachineIo,
 ): Promise<string> {
   const build = readBuildMachines().find((entry) => entry.machine === machine && entry.state === 'approved');
@@ -48,6 +48,12 @@ export async function updateRemoteMachine(
   const credential = build ?? host;
   if (!credential?.serverKey) throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
   const serverKey = credential.serverKey;
+  if ('version' in request && !Object.hasOwn((await packument(ctx)).versions, request.version))
+    throw Object.assign(new Error(`stim ${request.version} is not published on npm.`), {
+      code: 'STIM_BAD_ARG',
+      remedy:
+        'Run `npm view stim versions` to list the published versions, then run the command again with one of them.',
+    });
   const target = await resolveEndpoint(credential, io.status);
   if (typeof target === 'string') throw new Error(target);
   const connect = async () => {
@@ -62,14 +68,19 @@ export async function updateRemoteMachine(
   };
   let connection: Upstream | null = await connect();
   try {
-    const selected = channel ?? connection.channel;
-    const version = pickUpdateVersion(await packument(ctx), selected, PEER);
-    if (!version)
-      throw new Error(
-        selected === 'next'
-          ? `${machine} follows next; nothing carries peer ${PEER}; build locally`
-          : `${machine} follows ${selected}; peer ${PEER} exists only on next; run stim remote update ${machine} --channel next, or build locally`,
-      );
+    let version: string;
+    if ('version' in request) version = request.version;
+    else {
+      const selected = request.channel ?? connection.channel;
+      const picked = pickUpdateVersion(await packument(ctx), selected, PEER);
+      if (!picked)
+        throw new Error(
+          selected === 'next'
+            ? `${machine} follows next; nothing carries peer ${PEER}; build locally`
+            : `${machine} follows ${selected}; peer ${PEER} exists only on next; run stim remote update ${machine} --version ${callerVersion}, or build locally`,
+        );
+      version = picked;
+    }
     const started = await connection.request('engine.update', { version });
     if ('error' in started) throw new Error(started.error.message);
     const deadline = Date.now() + 10 * 60_000;

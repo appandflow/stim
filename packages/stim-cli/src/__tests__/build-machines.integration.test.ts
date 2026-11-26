@@ -330,8 +330,8 @@ describe('inspectBuildMachines', () => {
   it.each([
     {
       server: { peer: 1, server: { stim: '1.42.0' } },
-      message: `peer-too-old: mini runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update mini, or on mini run: npm i -g stim@9.9.9 && stim service install`,
-      remedy: /^Run `stim remote update mini` on /,
+      message: `peer-too-old: mini runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update mini --version 9.9.9, or on mini run: npm i -g stim@9.9.9 && stim service install`,
+      remedy: /^Run `stim remote update mini --version 9\.9\.9` on /,
     },
     {
       server: { server: { stim: '1.40.0' } },

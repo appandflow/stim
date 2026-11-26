@@ -163,7 +163,7 @@ export function outdatedServer(
   engine = false,
 ): { title: string; detail: string; fix: string } {
   const update = engine
-    ? `Run \`stim remote update ${entry}\` on ${host}, or on ${entry} run \`stim engine update\``
+    ? `Run \`stim remote update ${entry} --version ${version}\` on ${host}, or on ${entry} run \`stim engine update\``
     : `On ${entry}, run \`npm install --global stim@${version}\` and reinstall its service with \`stim service install\` and the options it uses now`;
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
