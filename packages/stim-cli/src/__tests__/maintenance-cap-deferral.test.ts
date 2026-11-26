@@ -82,7 +82,7 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-test('a worktree caps plan refreshes a saved over-cap Cargo size before trimming', async () => {
+test('a pass that measured no Cargo target plans no trim from its saved over-cap size', async () => {
   vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '1');
   vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
   const now = Date.now();
