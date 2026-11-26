@@ -53,7 +53,7 @@ export async function openWorkspaceLogs(
   } finally {
     await initial.close();
   }
-  await captureWorkspaceCrashes(root, dir, attempts, context.signal, context.env);
+  await captureWorkspaceCrashes(root, dir, attempts, context.signal, context.env, Boolean(options.errorsOnly));
   const view = await openLogDir(dir, { order: follow ? 'name' : 'timeline', signal: context.signal });
   const agentSince = view.firstTs ?? (follow ? Date.now() : undefined);
   const project = loadConfig()?.projects?.[root];

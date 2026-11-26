@@ -477,12 +477,16 @@ export function parseAndroidAnrKill(
   return last && last.pid === startedPid ? last : null;
 }
 
-async function readActivityManagerLog(deviceId: string, signal?: AbortSignal): Promise<string | null> {
+async function readActivityManagerLog(
+  deviceId: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string | null> {
   try {
     return await crashCommand(
       'adb',
       ['-s', deviceId, 'logcat', '-b', 'system', '-d', '-v', 'time,epoch', '-s', 'ActivityManager'],
-      { timeoutMs: 10000, cwd: androidToolCwd() },
+      { timeoutMs, cwd: androidToolCwd() },
       signal,
     );
   } catch {
@@ -496,7 +500,7 @@ export async function readAndroidAnrKill(
   clockOffsetMs: number,
   signal?: AbortSignal,
 ): Promise<AndroidAnrKill | null> {
-  const text = await readActivityManagerLog(target.deviceId, signal);
+  const text = await readActivityManagerLog(target.deviceId, 10000, signal);
   return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;
 }
 
@@ -539,7 +543,7 @@ async function captureAndroidAnrKill(
   logsDir: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const text = await readActivityManagerLog(target.deviceId, signal);
+  const text = await readActivityManagerLog(target.deviceId, 3000, signal);
   for (const kill of text ? parseAndroidAnrKills(text, target, clockOffsetMs).kills : [])
     await recordAndroidAnrKill(kill, target, logsDir, signal);
 }
@@ -653,13 +657,17 @@ export async function printNativeCrashReport(
     emit(line);
 }
 
-/** Captures current launch crashes. Supplying attempts skips the timeline read and returns an empty array. */
+/**
+ * Captures current launch crashes, and Android ANR kills when `anrKills` is set. Supplying attempts skips the timeline
+ * read and returns an empty array.
+ */
 export async function captureWorkspaceCrashes(
   root: string,
   logsDir: string,
   attempts?: NdjsonRecord[],
   signal?: AbortSignal,
   env: NodeJS.ProcessEnv = process.env,
+  anrKills = false,
 ): Promise<NdjsonRecord[]> {
   signal?.throwIfAborted();
   const timeline =
@@ -743,7 +751,8 @@ export async function captureWorkspaceCrashes(
         clockOffsetMs,
       };
       await captureNativeCrashes(target, logsDir, signal, env);
-      if (typeof clockOffsetMs === 'number') await captureAndroidAnrKill(target, clockOffsetMs, logsDir, signal);
+      if (anrKills && typeof clockOffsetMs === 'number')
+        await captureAndroidAnrKill(target, clockOffsetMs, logsDir, signal);
     } catch {}
   }
   signal?.throwIfAborted();

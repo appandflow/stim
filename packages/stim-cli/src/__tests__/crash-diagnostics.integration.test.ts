@@ -24,7 +24,9 @@ import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/works
 import { upsertProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';
 import { writeDiagnosticOnceAsync } from '../diagnostics/diagnostic-store.ts';
-import { queryLogs } from '@stim-cli/core/state';
+import { readWorkspaceLogs } from '../engine/logs.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
+import { testContext } from './_context.ts';
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -729,10 +731,10 @@ test('live native collection requires the current launch and device claim, not a
   }
 });
 
-test('logs --errors records an ActivityManager ANR kill of the current launch once, after the app restarts', async () => {
+test('only logs --errors reads record an ActivityManager ANR kill of the current launch, once, after the app restarts', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-crash-anr-'));
   process.env.STIM_HOME = join(root, 'home');
-  const logs = join(root, 'logs');
+  const logs = workspaceLogsDir(root);
   const since = Date.now() - 60_000;
   const at = Math.floor(since / 1000) + 11;
   const launch = {
@@ -761,8 +763,9 @@ test('logs --errors records an ActivityManager ANR kill of the current launch on
     `         ${at + 20}.100 I/ActivityManager(  537): Start proc 6100:app.test/u0a145 for next-top-activity {app.test/app.test.MainActivity}`,
   ].join('\n');
   let clockReads = 0;
+  let systemReads = 0;
   try {
-    mkdirSync(logs);
+    mkdirSync(logs, { recursive: true });
     writeFileSync(join(logs, 'launch.ndjson'), JSON.stringify(marker) + '\n');
     writeFileSync(
       join(logs, 'device.ndjson'),
@@ -775,13 +778,19 @@ test('logs --errors records an ActivityManager ANR kill of the current launch on
       runFileQuiet: (_file, args) => {
         if (args.includes('date')) return String(Date.now() - 400 - 150 * clockReads++);
         if (args.includes('emu')) return 'stim-own\nOK';
-        return args.includes('system') && args.includes(launch.deviceId) ? system : '';
+        if (!args.includes('system')) return '';
+        systemReads++;
+        return args.includes(launch.deviceId) ? system : '';
       },
     });
-    await captureWorkspaceCrashes(root, logs);
-    await captureWorkspaceCrashes(root, logs);
-    expect(clockReads).toBe(2);
-    const errors = queryLogs({ dir: logs, errorsOnly: true });
+    const context = testContext({ projectRoot: root, cwd: root });
+    const plain = await readWorkspaceLogs(context);
+    expect(systemReads).toBe(0);
+    expect(plain.some((record) => record.event === 'anr_kill')).toBe(false);
+    await readWorkspaceLogs(context, { errorsOnly: true });
+    const errors = await readWorkspaceLogs(context, { errorsOnly: true });
+    expect(systemReads).toBe(2);
+    expect(clockReads).toBe(3);
     expect(errors.map((record) => [record.event, record.pid, record.msg])).toEqual([
       [
         'anr_kill',
