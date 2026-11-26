@@ -60,7 +60,11 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
   );
   expect(removalRemedy(['?? -x'], { worktree: '/tmp/wt' }).join('\n')).toContain('clean -fd -- -x');
   const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
-  expect(many).toMatch(/checkout -- a b c d e \.\.\./);
+  expect(many.split('\n')).toEqual([
+    expect.stringContaining('restore them and retry'),
+    '  git --literal-pathspecs -C /tmp/wt checkout -- a b c d e',
+    '  (1 more not listed; git -C /tmp/wt status -s shows them all)',
+  ]);
   expect(!many.includes('<path>')).toBeTruthy();
 });
 
@@ -2289,6 +2293,32 @@ test.each(PARKING_PRESSURE)(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'real git: a pasted remedy treats file names literally and restores or deletes only what it lists',
+  () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remedy-literal-')));
+    try {
+      const run = (cmd: string) => execSync(cmd, { cwd: base, encoding: 'utf-8', timeout: 15_000 });
+      run('git init -q && git config user.email t@example.com && git config user.name t');
+      writeFileSync(join(base, '*.txt'), 'tracked');
+      writeFileSync(join(base, 'kept.txt'), 'tracked');
+      run('git add -A && git commit -q -m init');
+      writeFileSync(join(base, '*.txt'), 'edited');
+      writeFileSync(join(base, 'kept.txt'), 'edited');
+      writeFileSync(join(base, '*'), '');
+      writeFileSync(join(base, 'other'), '');
+      for (const line of removalRemedy([' M *.txt', '?? *'], { worktree: base }))
+        if (line.startsWith('  git ')) run(line);
+      expect(readFileSync(join(base, '*.txt'), 'utf-8')).toBe('tracked');
+      expect(readFileSync(join(base, 'kept.txt'), 'utf-8')).toBe('edited');
+      expect(existsSync(join(base, '*'))).toBe(false);
+      expect(existsSync(join(base, 'other'))).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+);
+
 test('staged paths get no ineffective checkout remedy', () => {
   const remedy = removalRemedy(['M  staged', 'MM both', ' M unstaged', '?? new']).join('\n');
   expect(remedy).toContain('checkout -- unstaged');
@@ -2300,8 +2330,8 @@ test('staged paths get no ineffective checkout remedy', () => {
 test('intent-to-add paths get no checkout remedy and spaced worktree paths are quoted', () => {
   const remedy = removalRemedy([' A intent', ' M edited', '?? new'], { worktree: '/tmp/my wt' }).join('\n');
   expect(remedy).not.toContain('intent');
-  expect(remedy).toContain(`git -C ${quoted('/tmp/my wt')} checkout -- edited`);
-  expect(remedy.split('\n')).toContain(`  git -C ${quoted('/tmp/my wt')} clean -fd -- new`);
+  expect(remedy).toContain(`git --literal-pathspecs -C ${quoted('/tmp/my wt')} checkout -- edited`);
+  expect(remedy.split('\n')).toContain(`  git --literal-pathspecs -C ${quoted('/tmp/my wt')} clean -fd -- new`);
 });
 
 test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () => {
@@ -2309,10 +2339,10 @@ test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () =>
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
     expect(removalRemedy(['?? "it\'s new"'], { worktree: "C:\\Users\\o'brien\\wt" }).join('\n')).toContain(
-      `git -C "C:\\Users\\o'brien\\wt" clean -fd -- "it's new"`,
+      `git --literal-pathspecs -C "C:\\Users\\o'brien\\wt" clean -fd -- "it's new"`,
     );
     expect(removalRemedy([' M edited'], { worktree: 'C:\\Users\\$o\u2019brien\\wt' }).join('\n')).toContain(
-      "git -C 'C:\\Users\\$o\u2019\u2019brien\\wt' checkout -- edited",
+      "git --literal-pathspecs -C 'C:\\Users\\$o\u2019\u2019brien\\wt' checkout -- edited",
     );
   } finally {
     if (platform) Object.defineProperty(process, 'platform', platform);
