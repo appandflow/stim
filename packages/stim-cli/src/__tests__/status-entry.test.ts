@@ -68,12 +68,19 @@ test('--json prints the snapshot stimd answers for this directory, with its age,
   expect(cli.main).not.toHaveBeenCalled();
 });
 
-test('--json runs the CLI while stimd has no snapshot, and --fresh asks stimd to read the state first', async () => {
-  await stimd({ op: 'status', ageMs: null, booting: true, status: null });
-  await main(['node', 'stim', 'status', '--json', '--fresh']);
+test('--json runs the CLI while stimd has no snapshot for this directory', async () => {
+  await stimd({ op: 'status', ageMs: null, booting: true });
+  await main(['node', 'stim', 'status', '--json']);
   expect(stdout).toEqual([]);
-  expect(cli.main).toHaveBeenCalledWith(['node', 'stim', 'status', '--json', '--fresh'], {});
+  expect(cli.main).toHaveBeenCalledWith(['node', 'stim', 'status', '--json'], {});
+});
+
+test('--fresh asks stimd to read the state first and prints what it read', async () => {
+  await stimd({ op: 'status', ageMs: 0, status: { environments: [] } });
+  await main(['node', 'stim', 'status', '--json', '--fresh']);
+  expect(printed()).toEqual({ environments: [], ageMs: 0 });
   expect(requests[1]).toMatchObject({ op: 'status', params: { cwd: process.cwd(), fresh: true } });
+  expect(cli.main).not.toHaveBeenCalled();
 });
 
 test.each([
