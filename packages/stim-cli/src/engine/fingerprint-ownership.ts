@@ -11,8 +11,7 @@ import { buildClaimRoot } from '../engine-store/claims.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { readManifest } from '../engine-store/store.ts';
 
-const ENGINE_BUSY_REMEDY =
-  'Another Stim command is using or switching the engine for a moment. Run the same command again in a few seconds; if it keeps failing, run stim engine status.';
+const ENGINE_BUSY_REMEDY = 'Wait a few seconds while another Stim command uses or switches the engine';
 
 export async function withFingerprintOwnership<T>(
   context: StimContext,
@@ -32,7 +31,9 @@ export async function withFingerprintOwnership<T>(
       const tree = join(engine.root, engine.build);
       const manifest = readManifest(tree);
       if (!manifest || manifest.build !== engine.build || !existsSync(join(tree, 'dist', 'cli.mjs')))
-        throw new ClaimUnavailableError('the selected engine is unavailable', { remedy: ENGINE_BUSY_REMEDY });
+        throw new ClaimUnavailableError('the selected engine is unavailable', {
+          remedy: 'Run stim engine status to check the selected, previous and staged engine builds',
+        });
       const attempt = tryAcquireClaim({
         root: engineRoot,
         mode: 'shared',
