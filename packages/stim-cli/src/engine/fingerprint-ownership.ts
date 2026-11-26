@@ -23,7 +23,12 @@ export async function withFingerprintOwnership<T>(
   const engineRoot = engine && buildClaimRoot(engine.root, engine.build);
   let engineClaim: ClaimHandle | null = null;
   if (engine && engineRoot && ![...operationState(context).declaring].some((claim) => claim.root === engineRoot)) {
-    const lock = await takeLock(engine.root, '.lock.sock');
+    let lock: Awaited<ReturnType<typeof takeLock>> = null;
+    for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      signal.throwIfAborted();
+      lock = await takeLock(engine.root, '.lock.sock');
+      if (!lock) await new Promise((done) => setTimeout(done, 50));
+    }
     if (!lock) throw new ClaimUnavailableError('the engine store is busy', { remedy: ENGINE_BUSY_REMEDY });
     let admissionFailure: { error: unknown } | null = null;
     try {

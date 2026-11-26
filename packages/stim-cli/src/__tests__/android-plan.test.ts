@@ -209,15 +209,32 @@ describe('planAndroid', () => {
     const lock = await takeLock(store, '.lock.sock');
     try {
       expect(lock).not.toBeNull();
-      const { payload, exitCode } = await plan(
+      let fingerprinting = false;
+      let settled = false;
+      const planned = plan(
         {},
         {
-          fingerprint: async (path) =>
-            withFingerprintOwnership(testContext({ home: join(root, 'home'), projectRoot: path }), path, async () => {
-              throw new Error('fingerprinting must not run while the engine store is locked');
-            }),
+          fingerprint: async (path) => {
+            fingerprinting = true;
+            return withFingerprintOwnership(
+              testContext({ home: join(root, 'home'), projectRoot: path }),
+              path,
+              async () => {
+                throw new Error('fingerprinting must not run while the engine store is locked');
+              },
+            );
+          },
         },
-      );
+      ).finally(() => {
+        settled = true;
+      });
+      await vi.waitFor(() => expect(fingerprinting).toBe(true));
+      for (let attempt = 0; attempt < 240; attempt++) {
+        if (settled) break;
+        await new Promise((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      const { payload, exitCode } = await planned;
       expect(exitCode).toBe(1);
       expect(payload).toMatchObject({
         code: 'STIM_NO_FINGERPRINT',

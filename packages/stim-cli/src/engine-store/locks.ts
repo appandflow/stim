@@ -30,6 +30,7 @@ export async function takeLock(root: string, name: '.lock.sock' | '.flip.sock'):
       server.listen(path, () => resolve(null));
     });
     if (!bound) return { release: () => closeLock(server) };
+    if (bound.code === 'EEXIST') return null;
     if (bound.code !== 'EADDRINUSE') throw Object.assign(bound, { socketPath: path });
     if (process.platform === 'win32') return null;
     const leftover = lstatSync(path, { throwIfNoEntry: false })?.ino;

@@ -99,26 +99,88 @@ test.each([
   }
 });
 
-test('a busy engine store refuses fingerprinting with a retry remedy', async () => {
+test('concurrent fingerprints wait for engine admission and release their claims', async () => {
   const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
   fixture.root = join(area, 'store');
+  const tree = join(fixture.root, '0123456789ab');
+  mkdirSync(join(tree, 'dist'), { recursive: true });
+  writeFileSync(join(tree, 'dist', 'cli.mjs'), '');
+  writeFileSync(join(tree, '.stim-manifest.json'), JSON.stringify({ format: 1, build: '0123456789ab' }));
+  const home = join(area, 'home');
+  let settled = false;
+  const running = Promise.allSettled(
+    Array.from({ length: 8 }, (_, index) => {
+      const root = join(area, `project-${index}`);
+      mkdirSync(root);
+      return withFingerprintOwnership(testContext({ home, projectRoot: root }), root, async () => index);
+    }),
+  ).then((results) => {
+    settled = true;
+    return results;
+  });
+  try {
+    for (let attempt = 0; attempt < 240; attempt++) {
+      if (settled) break;
+      await new Promise((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(settled).toBe(true);
+    expect(await running).toEqual(Array.from({ length: 8 }, (_, index) => ({ status: 'fulfilled', value: index })));
+    expect(readClaimSet(buildClaimRoot(fixture.root, '0123456789ab')).live).toEqual([]);
+  } finally {
+    await running;
+    rmSync(area, { recursive: true, force: true });
+  }
+});
+
+test('engine admission times out after ten seconds while the store lock stays held', async () => {
+  const area = mkdtempSync(join(tmpdir(), 'stim-fingerprint-owner-'));
+  fixture.root = join(area, 'store');
+  const tree = join(fixture.root, '0123456789ab');
+  mkdirSync(join(tree, 'dist'), { recursive: true });
+  writeFileSync(join(tree, 'dist', 'cli.mjs'), '');
+  writeFileSync(join(tree, '.stim-manifest.json'), JSON.stringify({ format: 1, build: '0123456789ab' }));
+  const root = join(area, 'project');
+  mkdirSync(root);
+  const work = vi.fn<() => Promise<string>>(async () => 'done');
   const lock = await takeLock(fixture.root, '.lock.sock');
+  const started = Date.now();
+  let settled = false;
+  const running = withFingerprintOwnership(testContext({ home: join(area, 'home'), projectRoot: root }), root, work)
+    .then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error, elapsed: Date.now() - started }),
+    )
+    .then((result) => {
+      settled = true;
+      return result;
+    });
   try {
     expect(lock).not.toBeNull();
-    const root = join(area, 'project');
-    const context = testContext({ home: join(area, 'home'), projectRoot: root });
-    const work = vi.fn<() => Promise<void>>();
-    const error = await withFingerprintOwnership(context, root, work).catch((failure: unknown) => failure);
-    expect(claimFailure(error, null)?.remedy).toBe(
+    for (let attempt = 0; attempt < 240; attempt++) {
+      if (settled) break;
+      await new Promise((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(settled).toBe(true);
+    const result = await running;
+    expect(result).toMatchObject({
+      error: {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: expect.stringContaining('the engine store is busy'),
+        remedy: 'Wait a few seconds while another Stim command uses or switches the engine',
+      },
+      elapsed: expect.any(Number),
+    });
+    if (!('elapsed' in result)) throw new Error('fingerprint unexpectedly ran');
+    expect(claimFailure(result.error, null)?.remedy).toBe(
       'Wait a few seconds while another Stim command uses or switches the engine, then retry the same Stim command.',
     );
-    expect(error).toMatchObject({
-      code: 'STIM_CLAIM_UNAVAILABLE',
-      remedy: 'Wait a few seconds while another Stim command uses or switches the engine',
-    });
+    expect(result.elapsed).toBeGreaterThanOrEqual(10_000);
     expect(work).not.toHaveBeenCalled();
   } finally {
     await lock?.release();
+    await running;
     rmSync(area, { recursive: true, force: true });
   }
 });
