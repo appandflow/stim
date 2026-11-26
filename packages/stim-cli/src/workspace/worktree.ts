@@ -443,6 +443,52 @@ export async function cloneIgnoredEntries({
   if (!guard.known) throw new Error("Could not list the destination's tracked files.");
   const nested = await nestedWorktreePaths(target, reads);
   const carryable = await listCarryableIgnoredEntries(root, patterns, reads);
+  let destinationIgnored: Set<string> | undefined;
+  if (carryable.length) {
+    try {
+      const paths = await Promise.all(
+        carryable.map(async (rel) => ((await lstat(join(root, rel))).isDirectory() ? `${rel}/` : rel)),
+      );
+      const checkIgnored = async (entries: string[]): Promise<Set<string>> => {
+        let output: string;
+        try {
+          output = await gitAsync(target, ['check-ignore', '--stdin', '-z'], {
+            ...options,
+            input: `${entries.join('\0')}\0`,
+          });
+        } catch (error) {
+          if (error instanceof Error && 'status' in error && error.status === 1) return new Set();
+          throw error;
+        }
+        return new Set(output.split('\0').filter(Boolean));
+      };
+      const ignored = await checkIgnored(paths);
+      const directories = await Promise.all(
+        paths
+          .filter((path) => path.endsWith('/') && !ignored.has(path))
+          .map(async (path) => ({
+            path,
+            children: (await readdir(join(root, path), { withFileTypes: true })).map(
+              (child) => `${path}${child.name}${child.isDirectory() ? '/' : ''}`,
+            ),
+          })),
+      );
+      const children = directories.flatMap((directory) => directory.children);
+      if (children.length) {
+        const ignoredChildren = await checkIgnored(children);
+        for (const directory of directories) {
+          if (directory.children.length && directory.children.every((child) => ignoredChildren.has(child))) {
+            ignored.add(directory.path);
+          }
+        }
+      }
+      destinationIgnored = new Set([...ignored].map((rel) => rel.replace(/\/$/, '')));
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation.signal.throwIfAborted();
+    }
+  }
   const keptReason = (rel: string): string | null =>
     guard.covers(rel)
       ? 'tracked'
@@ -466,7 +512,12 @@ export async function cloneIgnoredEntries({
       } catch {
         copies = true;
       }
-      const check = copies ? withhold(rel) : null;
+      const check =
+        copies && destinationIgnored && !destinationIgnored.has(rel)
+          ? Promise.resolve('the destination branch does not ignore it, so it would be untracked here')
+          : copies
+            ? withhold(rel)
+            : null;
       if (check) {
         void check.catch(() => {});
         checks.set(rel, check);
