@@ -34,6 +34,7 @@
 [*] interface AndroidBuildFacts { @@2 dir: string;
 [*] interface AndroidBuildFacts { @@2 workspace: string;
 [*] interface AndroidFacts {
+[*] interface AndroidFacts { @@1 agent?: {
 [*] interface AndroidFacts { @@1 agentDevice?: {
 [*] interface AndroidFacts { @@1 appPath: string | null;
 [*] interface AndroidFacts { @@1 avdName: string | null;
@@ -69,8 +70,11 @@
 [*] interface AndroidFacts { @@1 variant: string | null;
 [*] interface AndroidFacts { @@1 waitedForBuild: {
 [*] interface AndroidFacts { @@1 } | null;
+[*] interface AndroidFacts { @@2 command: string;
+[*] interface AndroidFacts { @@2 driver: "agent-device";
 [*] interface AndroidFacts { @@2 ms: number;
 [*] interface AndroidFacts { @@2 pid: number | null;
+[*] interface AndroidFacts { @@2 remoteConfig: string;
 [*] interface AndroidFacts { @@2 stateDir: string;
 [*] interface CIBuildOptions extends CIContextOptions {
 [*] interface CIBuildOptions extends CIContextOptions { @@1 build: WithoutKeys<StimBuildOptions, "signal" | "remoteBuild">;
@@ -201,6 +205,7 @@
 [*] interface IosBuildFacts { @@2 dir: string;
 [*] interface IosBuildFacts { @@2 workspace: string;
 [*] interface IosFacts {
+[*] interface IosFacts { @@1 agent?: {
 [*] interface IosFacts { @@1 agentDevice?: {
 [*] interface IosFacts { @@1 appPath?: string | null;
 [*] interface IosFacts { @@1 buildMachine?: string;
@@ -234,8 +239,11 @@
 [*] interface IosFacts { @@1 waitedForBuild: {
 [*] interface IosFacts { @@1 webPreviewUrl?: string | null;
 [*] interface IosFacts { @@1 } | null;
+[*] interface IosFacts { @@2 command: string;
+[*] interface IosFacts { @@2 driver: "agent-device";
 [*] interface IosFacts { @@2 ms: number;
 [*] interface IosFacts { @@2 pid: number | null;
+[*] interface IosFacts { @@2 remoteConfig: string;
 [*] interface IosFacts { @@2 stateDir: string;
 [*] interface LogsInfo {
 [*] interface LogsInfo { @@1 dir?: string;

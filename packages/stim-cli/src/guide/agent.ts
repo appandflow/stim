@@ -281,6 +281,9 @@ placement reason and the reported device. Stop reconciles a recorded host
 before changing named placement.
 DRIVING THE DEVICE
 
+stim agent-device drives the workspace's EAS Simulator session. Each call fetches
+its token from eas-cli and passes it only in agent-device's environment.
+
 Drive this workspace's iOS or Android device through stim agent-device, never
 agent-device directly. Use the exact command Stim prints after launch. For other
 commands, keep its device selector if the slot also has a leased phone.

@@ -927,7 +927,7 @@ export function unverifiedLaunchLines({
       `Check that ${origin} is reachable FROM THE DEVICE's network, not just from this machine. That is the usual cause: a tunnel that stopped, or one this machine can reach and the device cannot.`,
     );
     push(
-      'If an "Open in <app>?" alert or the expo-dev-launcher picker is showing on the remote device, confirm it with your device tool (`agent-device snapshot -i`, then `agent-device press`).',
+      'If an "Open in <app>?" alert or the expo-dev-launcher picker is showing on the remote device, confirm it with your device tool (`stim agent-device snapshot -i`, then `stim agent-device press`).',
     );
     lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
     return lines;
