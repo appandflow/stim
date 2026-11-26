@@ -1925,10 +1925,9 @@ RULES
   priority, off its refresh path. A folder is due 5 minutes after its last
   walk ended (an hour when its environment is idle), or 20 walk durations if
   longer; all watchers' walks are 4 durations apart. Checkout walks skip
-  all environments' node_modules and ios/Pods; worktreeBytes adds their
-  trusted sizes. Trees are walked on reinstall, after 6h if a clone changed,
-  and daily. Failed walks retry after the same
-  5 minutes or hour.
+  node_modules and ios/Pods at the root and each environment; worktreeBytes
+  adds their trusted sizes. Trees are walked on reinstall, after 6h if a
+  clone changed, and daily. A failed walk retries at that interval.
   One-shot status reads $STIM_HOME/disk-usage; fields appear after a walk.
 
   An environment carries agents when coding-agent sessions work in it, most

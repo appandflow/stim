@@ -84,8 +84,10 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
     pullRequestCacheFile(worktree),
     gitMergeCacheFile(worktree),
     ...roots.flatMap(buildEndMarkerFilesOf),
-    diskUsageCacheFile(checkoutKey(worktree, roots)),
-    diskUsageFailureFile(checkoutKey(worktree, roots)),
+    ...[roots, workspaces].flatMap((apps) => [
+      diskUsageCacheFile(checkoutKey(worktree, apps)),
+      diskUsageFailureFile(checkoutKey(worktree, apps)),
+    ]),
     ...roots.flatMap((root) => [
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),
@@ -358,7 +360,7 @@ export interface StatusMeasurer {
  * session discovery at most every 15 seconds, which status ignores once it is over 2 minutes old, one disk walk at a
  * time on the whole machine through `refreshMeasure` (an ownership claim; a failed walk is recorded so other watchers
  * do not repeat it), at low priority, the folder whose last walk or failed walk is oldest first, a checkout without the
- * linked worktrees nested in it, workspace folders and all environments' dependency trees; each other folder again 5 minutes
+ * linked worktrees nested in it, workspace folders and its dependency trees; each folder other than a dependency tree again 5 minutes
  * after its last walk ended while its environment is live and an hour after otherwise, or 20 times as long as that walk
  * took when that is longer (a failed walk is retried after the same 5 minutes or hour), no walk by any status measurer on the machine sooner after the previous one ended than 4 times as long as it
  * took, and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or

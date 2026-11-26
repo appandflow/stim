@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { deleteGcItem } from '../commands/gc/item.ts';
@@ -3702,8 +3702,20 @@ describe('status cache entries of gone workspaces', () => {
     const live = join(projects, 'live');
     mkdirSync(join(live, 'node_modules'), { recursive: true });
     const gone = join(projects, 'gone');
-    const stale = [seedDisk(gone), seedDisk(join(gone, 'node_modules')), seedPullRequest(gone), seedMerge(gone)];
-    const kept = [seedDisk(live), seedPullRequest(live), seedMerge(live), seedDisk(join(live, 'node_modules'))];
+    const stale = [
+      seedDisk(gone),
+      seedDisk(join(gone, 'node_modules')),
+      seedDisk(`${gone}${sep}${sep}.`),
+      seedPullRequest(gone),
+      seedMerge(gone),
+    ];
+    const kept = [
+      seedDisk(live),
+      seedPullRequest(live),
+      seedMerge(live),
+      seedDisk(join(live, 'node_modules')),
+      seedDisk(`${live}${sep}${sep}.,${join('apps', 'mobile')}`),
+    ];
     const unreadable = join(dirname(diskUsageCacheFile(live)), `${'0'.repeat(32)}.json`);
     writeFileSync(unreadable, 'not json');
     const foreign = diskUsageCacheFile(join(projects, 'elsewhere'));

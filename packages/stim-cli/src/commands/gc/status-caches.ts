@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, sep } from 'node:path';
 import chalk from 'chalk';
 import { listStatusCacheEntries, listStatusCacheEntriesAsync, type StatusCacheEntry } from '@stim-cli/core/state';
 import { isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
@@ -25,6 +25,8 @@ const KEPT_REASON: Record<'unreadable' | 'unknown' | 'unmounted', string> = {
 };
 
 function witnessPath(path: string): string {
+  const checkout = path.lastIndexOf(`${sep}${sep}`);
+  if (checkout > 0) return path.slice(0, checkout);
   return basename(path).startsWith('node_modules') ? dirname(path) : path;
 }
 
