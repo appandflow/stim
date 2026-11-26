@@ -5,7 +5,7 @@ import { constants, promises as fs } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
-import { listIosRuntimes } from '../../devices/ios.ts';
+import { listIosRuntimes, pickDefaultIosCreation } from '../../devices/ios.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
@@ -37,7 +37,9 @@ import { lastBuildRecord } from './result.ts';
 import {
   iosProjectPathError,
   resolveConfiguration,
+  resolveDeviceType,
   resolveIosBuildSetup,
+  resolveRuntime,
   resolveSchemeSelection,
   simulatorBuildArch,
 } from './support.ts';
@@ -221,10 +223,18 @@ export async function buildIosOperation(
                   sdk: 'iphonesimulator',
                   arch,
                   keyArch: arch,
-                  offloadRuntime: () =>
-                    listIosRuntimes().toSorted((a, b) =>
-                      b.version.localeCompare(a.version, undefined, { numeric: true }),
-                    )[0]?.identifier ?? null,
+                  offloadRuntime: () => {
+                    const runtimes = listIosRuntimes();
+                    return (
+                      pickDefaultIosCreation([], runtimes, {
+                        deviceType: resolveDeviceType(null, settings) ?? undefined,
+                        runtime: resolveRuntime(null, settings) ?? undefined,
+                      })?.runtimeId ??
+                      runtimes.toSorted((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))[0]
+                        ?.identifier ??
+                      null
+                    );
+                  },
                   ...(arch ? { hostedArchitecture: arch } : {}),
                   offloadRefusal: null,
                 },

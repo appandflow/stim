@@ -39,6 +39,7 @@ let cancelBuild: boolean;
 let copies: string[];
 let projectBundleId: string | null;
 let linkedApp: boolean;
+let offloadRuntime: (() => string | null) | undefined;
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-ios-build-'));
@@ -54,6 +55,7 @@ beforeEach(() => {
   copies = [];
   projectBundleId = 'org.example.native';
   linkedApp = false;
+  offloadRuntime = undefined;
   const runFile = getExecutor().runFileAsync;
   vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async (command, args, options) => {
     if (command === 'plutil') {
@@ -73,6 +75,7 @@ beforeEach(() => {
       throw new Error('Build-only must not create a runtime.');
     },
     artifact({ configuration, target }) {
+      offloadRuntime = target.offloadRuntime;
       const hash = createHash('sha256')
         .update(readFileSync(join(root, 'Main.swift')))
         .digest('hex');
@@ -159,6 +162,37 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(scratch, { recursive: true, force: true });
+});
+
+test.each([
+  ['the ios.runtime setting', { runtime: '26.0' }, 'com.apple.CoreSimulator.SimRuntime.iOS-26-0'],
+  [
+    'no setting, skipping a runtime whose only iPhone is a special model',
+    {},
+    'com.apple.CoreSimulator.SimRuntime.iOS-27-0',
+  ],
+])('build offload uses the runtime stim ios would pick from %s', async (_case, ios, expected) => {
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { releaseBundleSwap: false }, ios }));
+  const runtime = (version: string, iphone: string) => ({
+    identifier: `com.apple.CoreSimulator.SimRuntime.iOS-${version.replace('.', '-')}`,
+    name: `iOS ${version}`,
+    version,
+    platform: 'iOS',
+    isAvailable: true,
+    supportedDeviceTypes: [
+      { identifier: `com.apple.CoreSimulator.SimDeviceType.${iphone.replaceAll(' ', '-')}`, name: iphone },
+    ],
+  });
+  const runFile = getExecutor().runFile;
+  vi.spyOn(getExecutor(), 'runFile').mockImplementation((command, args, options) => {
+    if (command === 'xcrun' && JSON.stringify(args) === JSON.stringify(['simctl', 'list', 'runtimes', '--json']))
+      return JSON.stringify({
+        runtimes: [runtime('26.0', 'iPhone 17'), runtime('27.0', 'iPhone 18 Pro'), runtime('27.1', 'iPhone Duo')],
+      });
+    return runFile(command, args, options);
+  });
+  await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+  expect(offloadRuntime?.()).toBe(expected);
 });
 
 test.each(['failure', 'cancellation'])(
