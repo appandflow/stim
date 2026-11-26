@@ -27,7 +27,7 @@ import * as iosDevices from '../devices/ios.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import * as installedArtifact from '../engine/installed-artifact.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
-import { vi } from 'vitest';
+import { onTestFinished, vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -4374,6 +4374,8 @@ describe('launch verification', () => {
   });
 
   test.each(['default', 'phone'])('a native process exit recommends the same slot (%s)', async (slot) => {
+    setExecutor(makeExecutor({ runFileQuiet: () => null }));
+    onTestFinished(() => resetExecutor());
     const h = harness({
       slot,
       verifyLaunched: async () => ({
@@ -4386,6 +4388,71 @@ describe('launch verification', () => {
     expect(result.ok).toBe(false);
     expect(h.stderr.join('\n')).toContain(`run \`stim android${slot === 'default' ? '' : ` --slot ${slot}`}\` again`);
   });
+
+  test.each([
+    { name: 'an ANR kill of the app', appId: 'com.example.app', atSeconds: 5, anr: true },
+    { name: 'an ANR kill of another app', appId: 'com.example.other', atSeconds: 5, anr: false },
+    { name: 'an ANR kill before the launch', appId: 'com.example.app', atSeconds: -600, anr: false },
+    {
+      name: 'an ANR kill read without a device clock',
+      appId: 'com.example.app',
+      atSeconds: 5,
+      anr: false,
+      clock: false,
+    },
+  ])(
+    'a process exit after $name is reported as an ANR only for this launch',
+    async ({ appId, atSeconds, anr, clock = true }) => {
+      const recordedSystemLog = (now: number) => {
+        const at = Math.floor(now / 1000) + atSeconds;
+        return [
+          '--------- beginning of system',
+          `         ${at - 4}.005 I/ActivityManager(  537): Killing 4542:${appId}/u0a145 (adj 0): stop ${appId} due to from pid 5984`,
+          `         ${at - 4}.177 I/ActivityManager(  537): Start proc 6004:${appId}/u0a145 for next-top-activity {${appId}/${appId}.MainActivity}`,
+          `         ${at}.362 E/ActivityManager(  537): ANR in ${appId}`,
+          `         ${at}.362 E/ActivityManager(  537): PID: 6004`,
+          `         ${at}.362 E/ActivityManager(  537): Reason: Process ProcessRecord{c0daa15 6004:${appId}/u0a145} failed to complete startup`,
+          `         ${at}.362 E/ActivityManager(  537): ErrorId: c0daa159-367a-4d10-bf5f-d20e595e1124`,
+          `         ${at}.362 E/ActivityManager(  537): Load: 0.0 / 0.0 / 0.0`,
+          `         ${at}.363 I/ActivityManager(  537): Killing 6004:${appId}/u0a145 (adj 900): bg anr`,
+        ].join('\n');
+      };
+      setExecutor(
+        makeExecutor({
+          runFileQuiet: (file, args) => {
+            if (file !== 'adb') return null;
+            if (args.includes('date')) return clock ? String(Date.now()) : null;
+            return args.includes('system') ? recordedSystemLog(Date.now()) : '';
+          },
+        }),
+      );
+      try {
+        const h = harness({
+          verifyLaunched: async () => ({
+            fatal: true,
+            processAlive: false,
+            waitedMs: 60000,
+            errors: [
+              { src: 'device', msg: 'Pinning is deprecated since Android Q. Please use trim or other methods.' },
+            ],
+          }),
+        });
+        const result = await h.run();
+        const text = h.stderr.join('\n');
+        expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
+        expect(text.includes('Android killed the app for not responding (ANR)')).toBe(anr);
+        expect(text.includes('ANR reason: Process ProcessRecord{c0daa15 6004:com.example.app/u0a145} failed')).toBe(
+          anr,
+        );
+        expect(/host load [\d.]+ on \d+ cores/.test(text)).toBe(anr && process.platform !== 'win32');
+        expect(text.includes('again once the load drops')).toBe(anr);
+        expect(text.includes('Fix the crash')).toBe(!anr);
+        expect(text.includes('Pinning is deprecated')).toBe(!anr);
+      } finally {
+        resetExecutor();
+      }
+    },
+  );
 
   test.each([
     ['bundle_build_failed', 'Metro could not build the bundle', 'Fix the JavaScript'],
@@ -5053,16 +5120,26 @@ describe('release skips Metro entirely', () => {
     );
   });
 
-  test('a dead app process fails the readiness check with the device-log pointer', async () => {
+  test.each([false, true])('a dead app process fails the readiness check (ANR kill: %s)', async (anr) => {
+    setExecutor(makeExecutor({ runFileQuiet: (_file, args) => (args.includes('date') ? String(Date.now()) : null) }));
+    const read = vi
+      .spyOn(crashDiagnostics, 'readAndroidAnrKill')
+      .mockResolvedValue(anr ? { reason: 'failed to complete startup' } : null);
+    onTestFinished(() => {
+      read.mockRestore();
+      resetExecutor();
+    });
     const h = harness({
       variant: 'productionRelease',
       verifyReleaseLaunched: async () => ({ verified: false, reason: 'exited', waitedMs: 3000, pid: null }),
     });
     const result = await h.run();
+    const text = h.stderr.join('\n');
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
-    expect(h.stderr.join('\n')).toMatch(/FATAL: no com\.example\.app process/);
-    expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
+    expect(/FATAL: no com\.example\.app process/.test(text)).toBe(!anr);
+    expect(text.includes('ANR reason: failed to complete startup')).toBe(anr);
+    expect(text.includes('again once the load drops')).toBe(anr);
   });
 
   test('a failed release process probe stays unverified without claiming an exit', async () => {

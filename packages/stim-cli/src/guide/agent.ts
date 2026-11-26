@@ -181,8 +181,8 @@ RULES DURING THE LOOP
 - A successful stim reload confirms that the request was sent, not that new
   JavaScript loaded or the screen recovered. Verify the expected UI on the
   reported device and inspect stim logs --errors before claiming recovery.
-- If launch says FATAL because the app process exited, fix the crash and run
-  the platform command again; Metro cannot restart it.
+- If launch says FATAL because the app process exited, follow the printed
+  remedy; Metro cannot restart the app.
 - ios and android install the app, launch it, and check readiness. A running
   copy of the app is stopped and launched fresh, so in-app state does not
   survive the run. Trust the exact device, app, Metro, and launch facts in the

@@ -416,6 +416,67 @@ function withRustPanics(reports: NdjsonRecord[], panics: readonly string[]): Ndj
   return [{ ...newest, msg: `${String(newest.msg)}\n${panics.join('\n')}` }, ...older];
 }
 
+/**
+ * Finds ActivityManager killing the target app's most recently started main process for an ANR, with the reason
+ * its ANR report gave. Android logs an ANR kill as `bg anr`, or as a plain kill of the PID its `ANR in` report named.
+ */
+export function parseAndroidAnrKill(
+  text: string,
+  target: Pick<CrashTarget, 'appId' | 'since'>,
+  clockOffsetMs: number,
+): { reason: string | null } | null {
+  let startedPid: string | null = null;
+  let anrPid: string | null = null;
+  let inAppAnr = false;
+  let reason: string | null = null;
+  let found: { reason: string | null } | null = null;
+  for (const line of text.split('\n')) {
+    const record = parseLogcatLine(line, { clockOffsetMs });
+    if (!record || Number(record.ts) < target.since) continue;
+    const msg = record.msg ?? '';
+    const start = /^Start proc (\d+):([^/\s]+)\//.exec(msg);
+    const anr = /^ANR in (\S+)/.exec(msg);
+    const kill = /^Killing (\d+):([^/\s]+)\/\S+ \(adj -?\d+\): (.*)$/.exec(msg);
+    if (start?.[2] === target.appId) {
+      startedPid = start[1] ?? null;
+      anrPid = reason = found = null;
+    } else if (anr) {
+      inAppAnr = anr[1] === target.appId;
+      if (inAppAnr) anrPid = reason = null;
+    } else if (inAppAnr && msg.startsWith('PID: ')) {
+      anrPid = msg.slice('PID: '.length).trim();
+    } else if (inAppAnr && msg.startsWith('Reason: ')) {
+      reason = msg.slice('Reason: '.length).trim() || null;
+    } else if (
+      kill?.[2] === target.appId &&
+      kill[1] === startedPid &&
+      (kill[1] === anrPid || /\banr\b/i.test(kill[3] ?? ''))
+    ) {
+      found = { reason };
+    }
+  }
+  return found;
+}
+
+export async function readAndroidAnrKill(
+  target: Pick<CrashTarget, 'deviceId' | 'appId' | 'since'>,
+  clockOffsetMs: number,
+  signal?: AbortSignal,
+): Promise<{ reason: string | null } | null> {
+  try {
+    const text = await crashCommand(
+      'adb',
+      ['-s', target.deviceId, 'logcat', '-b', 'system', '-d', '-v', 'time,epoch', '-s', 'ActivityManager'],
+      { timeoutMs: 10000, cwd: androidToolCwd() },
+      signal,
+    );
+    return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
 export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
   const before = Date.now();
   const clock = (
