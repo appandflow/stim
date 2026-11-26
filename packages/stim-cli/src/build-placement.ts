@@ -131,7 +131,11 @@ export function requireConfiguredMachine(selected: string, machines: unknown): s
     );
   });
   if (!match)
-    throw new OffloadRefusal(selected, `not listed in remote.machines (configured: ${entries.join(', ') || 'none'})`);
+    throw new OffloadRefusal(
+      selected,
+      `not listed in remote.machines (configured: ${entries.join(', ') || 'none'})`,
+      `Run stim remote add ${selected} to add it to remote.machines and ask it for build and device-host approval, or select a listed machine, --remote-build auto or --remote-build local.`,
+    );
   return match;
 }
 
