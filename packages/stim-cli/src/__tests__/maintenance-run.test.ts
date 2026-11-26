@@ -1,5 +1,6 @@
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,12 +10,14 @@ import {
   readMaintenanceState,
   workspaceLogsDir,
   sharedCompilationCache,
+  type MaintenanceSize,
 } from '@stim-cli/core/state';
 import { runMaintenance, type MaintenanceTick } from '../stimd/passes/run.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import * as preview from '../stimd/passes/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
@@ -497,6 +500,145 @@ test.each(['report', 'on'])(
     expect(readMaintenanceState()).toMatchObject({ lastPass: { blocked: [] }, skipKeys: [], plan: [] });
   },
 );
+
+const staleCaches = [
+  ['build-cache', 'STIM_CACHES_BUILD_CACHE_MAX_GB', () => buildCacheRoot(), 'v1'],
+  ['metro-cache', 'STIM_CACHES_METRO_CACHE_MAX_GB', () => metroCacheRoot(), 'app/v1'],
+  ['compilation-cache', 'STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB', swiftCache, 'v1'],
+] as const;
+
+function swiftCache(): string {
+  const dir = sharedCompilationCache();
+  register({ dir, name: 'Xcode compilation cache', prune: 'atomic', note: 'shared Xcode compilation cache' });
+  return dir;
+}
+
+function fillCache(dir: string, entries: string[]): void {
+  const old = new Date(Date.now() - 30 * 86_400_000);
+  for (const name of entries) {
+    mkdirSync(join(dir, name), { recursive: true });
+    writeFileSync(join(dir, name, 'data'), 'x'.repeat(10_000));
+    utimesSync(join(dir, name, 'data'), old, old);
+    utimesSync(join(dir, name), old, old);
+  }
+}
+
+function capPassSetup(env: string): void {
+  process.env.STIM_DAEMON = 'on';
+  process.env[env] = '1';
+  onTestFinished(() => {
+    delete process.env[env];
+  });
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [{ volume: '/', freeMb: 500 * 1024 }],
+    memory: { level: 'normal', availableBytes: null, pressured: false },
+    warningSince: null,
+  });
+}
+
+const capPasses = [
+  ['the size check is not due', (now: number) => ({ size: now }), () => {}],
+  ['the size check fails', () => ({}), () => vi.spyOn(measurements, 'measureSizes').mockRejectedValue(new Error('du'))],
+] as const;
+
+test.each(
+  staleCaches.flatMap(([category, env, root, parent]) =>
+    capPasses.map(([label, lastAt, arrange]) => [category, label, env, root, parent, lastAt, arrange] as const),
+  ),
+)(
+  'a pass leaves the %s alone on the size an earlier pass saved when %s',
+  async (category, _label, env, root, parent, lastAt, arrange) => {
+    capPassSetup(env);
+    arrange();
+    const dir = root();
+    const entries = ['a', 'b', 'c', 'd'].map((name) => `${parent}/${name}`);
+    fillCache(dir, entries);
+    const now = Date.now();
+    const saved: MaintenanceSize = {
+      name: category,
+      category,
+      dir,
+      bytes: 2 * 1024 ** 3,
+      measuredAt: now - 30 * 60_000,
+    };
+    mkdirSync(maintenanceDir(), { recursive: true });
+    writeFileSync(
+      maintenanceStateFile(),
+      JSON.stringify({
+        version: 1,
+        lastAt: { pressure: now, sweep: now, idle: now, ...lastAt(now) },
+        pressure: null,
+        sizes: [saved],
+        lastPass: null,
+        recent: [],
+        plan: [],
+      }),
+    );
+
+    const planned = vi.spyOn(preview, 'plannedMaintenance');
+
+    await runMaintenance('daemon');
+
+    expect(planned).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ worktrees: true }),
+    );
+    for (const name of entries) expect(existsSync(join(dir, name, 'data'))).toBe(true);
+  },
+);
+
+test.each(staleCaches)(
+  'a pass that measured the %s over its cap still trims it',
+  async (category, env, root, parent) => {
+    capPassSetup(env);
+    const dir = root();
+    const entries = ['a', 'b', 'c', 'd'].map((name) => `${parent}/${name}`);
+    fillCache(dir, entries);
+    const now = Date.now();
+    vi.spyOn(measurements, 'measureSizes').mockResolvedValue([
+      { name: category, category, dir, bytes: 2 * 1024 ** 3, measuredAt: now },
+    ]);
+
+    await runMaintenance('daemon');
+
+    expect(entries.filter((name) => existsSync(join(dir, name, 'data')))).toEqual([]);
+  },
+);
+
+test('a Swift compilation cache emptied behind the pass and refilled under its cap is not emptied on the old size', async () => {
+  capPassSetup('STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB');
+  process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '10';
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const dir = swiftCache();
+  fillCache(dir, ['old']);
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([
+    { name: 'Swift compilation cache', category: 'compilation-cache', dir, bytes: 12 * 1024 ** 3, measuredAt: now },
+  ]);
+  const build = tryAcquireClaim({
+    root: cacheClaimRoot(dir),
+    mode: 'shared',
+    details: { platform: 'ios', projectRoot: '/w/app' },
+  }).acquired;
+  try {
+    await runMaintenance('daemon');
+  } finally {
+    releaseClaim(build);
+  }
+  expect(existsSync(join(dir, 'old', 'data'))).toBe(true);
+  rmSync(dir, { recursive: true, force: true });
+  fillCache(dir, ['new']);
+  now += 30 * 60_000;
+  const state = readMaintenanceState();
+  delete state?.lastAt.worktree;
+  writeFileSync(maintenanceStateFile(), JSON.stringify(state));
+
+  await runMaintenance('daemon');
+
+  expect(readMaintenanceState()?.lastAt.worktree).toBe(now);
+  expect(existsSync(join(dir, 'new', 'data'))).toBe(true);
+});
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
   process.env.STIM_DISK_HARD_FLOOR_GB = '5';

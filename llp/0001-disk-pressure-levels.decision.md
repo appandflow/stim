@@ -920,10 +920,12 @@ next period. The walk is the same one the thread already runs: one at a time,
 under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
 build admission is started by them: the pressure ladder reads them to order its
-Cargo trims, from sizes up to 6 hours old, and the size scan reuses a
+Cargo trims, from the latest recorded size of each target whatever its age
+(a size older than the ladder's last attempt on that target counts as unknown;
+the trims themselves plan from structure), and the size scan reuses a
 `target/` size at or under the cap, which can only hold a trim back (see the
 cap rule below); the
-caps read the maintenance size scan, the
+caps read only the size scan of their own pass, the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
 
@@ -1105,6 +1107,20 @@ caps from the same scan, so it too can leave a cache that grew past its cap
 for up to the 6 hours. The 6 hour and 1 hour maximum
 ages and the under-cap reuse rule were chosen by the implementer of #6389,
 not by the maintainer.
+
+The maintenance pass plans its cap trims (workspace outputs, the build, Metro
+and Swift compilation caches, and Cargo targets) only from a measurement that
+succeeded in that same pass: the size check, or, while host load defers it,
+the Cargo-only cap measurement, which plans only the Cargo caps. A pass whose
+size check did not run or failed plans no cap trim, and leaves the trims that
+the last measuring pass kept in the plan until a pass that measures. The sizes
+saved in the maintenance state from earlier passes never decide a trim: an
+acting `stim gc`, a ladder trim or the idle stage can shrink a cache without
+updating them, and a cache refilled since then would be trimmed or emptied
+whole on the old, larger size. The same-pass rule does not cover a disk pass
+that takes the turn between the measurement and the trim (One task runs every
+gc deletion); the worst case there is evicting more of a regenerable cache.
+Chosen by the implementer of #6497, not by the maintainer.
 
 ## A dependency tree's size holds until its clone group changes
 
