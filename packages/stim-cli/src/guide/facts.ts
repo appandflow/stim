@@ -1302,6 +1302,9 @@ RULES
         "the status payload's lifecycle phase and stage, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
 
+  ageMs       present when the home's stimd answered from its snapshot:
+              how old that snapshot is in ms. --fresh makes stimd read
+              the state first.
   logs        { dir, errorsSinceMarker }, or null without a log directory
   agentDevice { stateDir, installed }: absolute workspace agent-device state
               path on every environment, shared by its slots, and whether

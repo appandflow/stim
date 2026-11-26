@@ -85,9 +85,8 @@ function askStimd(fresh: boolean): Promise<Record<string, unknown> | null> {
 
 /**
  * Runs `stim status` for `argv`, in `process.argv`'s shape. With `--json` (and without `--watch`) it prints the home's
- * stimd's last status snapshot with its `ageMs`, or `{ageMs: null, booting: true}` while stimd has none yet; `--fresh`
- * makes stimd read the state first. Without a stimd of this build, and for every other form, it runs the `status`
- * command of the CLI.
+ * stimd's last status snapshot with its `ageMs`; `--fresh` makes stimd read the state first. Without a snapshot
+ * or a stimd of this build, and for every other form, it runs the `status` command of the CLI.
  */
 export async function main(argv: string[], ctx: MainContext = {}): Promise<void> {
   let values: { json?: boolean; watch?: boolean; fresh?: boolean } = {};
@@ -98,11 +97,9 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     }));
   } catch {}
   const answer = values.json && !values.watch ? await askStimd(values.fresh === true) : null;
-  if (answer) {
-    const { status, ageMs, booting } = answer;
-    process.stdout.write(
-      `${JSON.stringify(booting ? { ageMs: null, booting: true } : { ...(typeof status === 'object' ? status : {}), ageMs })}\n`,
-    );
+  if (answer && !answer.booting) {
+    const { status, ageMs } = answer;
+    process.stdout.write(`${JSON.stringify({ ...(typeof status === 'object' ? status : {}), ageMs })}\n`);
     return;
   }
   Reflect.set(globalThis, Symbol.for('stim.main'), true);

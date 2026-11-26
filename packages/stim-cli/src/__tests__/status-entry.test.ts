@@ -68,10 +68,11 @@ test('--json prints the snapshot stimd answers for this directory, with its age,
   expect(cli.main).not.toHaveBeenCalled();
 });
 
-test('--json says booting while stimd has no snapshot, and --fresh asks stimd to read the state first', async () => {
+test('--json runs the CLI while stimd has no snapshot, and --fresh asks stimd to read the state first', async () => {
   await stimd({ op: 'status', ageMs: null, booting: true, status: null });
   await main(['node', 'stim', 'status', '--json', '--fresh']);
-  expect(printed()).toEqual({ ageMs: null, booting: true });
+  expect(stdout).toEqual([]);
+  expect(cli.main).toHaveBeenCalledWith(['node', 'stim', 'status', '--json', '--fresh'], {});
   expect(requests[1]).toMatchObject({ op: 'status', params: { cwd: process.cwd(), fresh: true } });
 });
 
