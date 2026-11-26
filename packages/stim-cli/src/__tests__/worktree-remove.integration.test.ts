@@ -53,11 +53,12 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
     /checkout -- src\/app\.js/,
   );
   expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toContain(
-    `clean -fd ${quoted('we ird.txt')}`,
+    `clean -fd -- ${quoted('we ird.txt')}`,
   );
   expect(removalRemedy([' M app/(tabs)/index.tsx'], { worktree: '/tmp/wt' }).join('\n')).toContain(
     `checkout -- ${quoted('app/(tabs)/index.tsx')}`,
   );
+  expect(removalRemedy(['?? -x'], { worktree: '/tmp/wt' }).join('\n')).toContain('clean -fd -- -x');
   const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
   expect(many).toMatch(/checkout -- a b c d e \.\.\./);
   expect(!many.includes('<path>')).toBeTruthy();
@@ -1828,7 +1829,7 @@ test('action: in a bare-repository layout, the worktree on the bare HEAD branch 
 });
 
 test('action: in a bare-repository layout with a detached bare HEAD, removal refuses and prints the symbolic-ref command', async () => {
-  const bareRoot = join(tmpHome, 'bare');
+  const bareRoot = join(tmpHome, 'bare repo');
   upsertProject(wtDir, { metroPort: 8083 });
   const exec = makeExecutor({
     worktrees: barePorcelain(bareRoot, [
@@ -1851,7 +1852,7 @@ test('action: in a bare-repository layout with a detached bare HEAD, removal ref
   expect(process.exitCode).toBe(1);
   expect(getProject(wtDir)).not.toBe(null);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
-  expect(errs.join('\n')).toContain(`git -C ${bareRoot} symbolic-ref HEAD refs/heads/<branch>`);
+  expect(errs.join('\n')).toContain(`git -C ${quoted(bareRoot)} symbolic-ref HEAD refs/heads/<branch>`);
 });
 
 test('action: the bare repository directory itself is refused as a removal target', async () => {
@@ -2206,7 +2207,7 @@ test.each(KEPT_EDITS)(
         : /assume-unchanged/.test(message.source)
           ? 'assume-unchanged'
           : null;
-      expect(text).toContain(kind ? `git -C '${wt}' update-index --no-${kind} 'apps/app/App.tsx'` : '');
+      expect(text).toContain(kind ? `git -C ${quoted(wt)} update-index --no-${kind} apps/app/App.tsx` : '');
       expect(text).not.toMatch(/restored/);
       expect(status()).toBe(before);
       expect(readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8')).toBe(lock);
@@ -2300,7 +2301,7 @@ test('intent-to-add paths get no checkout remedy and spaced worktree paths are q
   const remedy = removalRemedy([' A intent', ' M edited', '?? new'], { worktree: '/tmp/my wt' }).join('\n');
   expect(remedy).not.toContain('intent');
   expect(remedy).toContain(`git -C ${quoted('/tmp/my wt')} checkout -- edited`);
-  expect(remedy).toContain(`git -C ${quoted('/tmp/my wt')} clean -fd new`);
+  expect(remedy.split('\n')).toContain(`  git -C ${quoted('/tmp/my wt')} clean -fd -- new`);
 });
 
 test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () => {
@@ -2308,7 +2309,7 @@ test('on Windows the remedy quotes paths for both cmd.exe and PowerShell', () =>
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
     expect(removalRemedy(['?? "it\'s new"'], { worktree: "C:\\Users\\o'brien\\wt" }).join('\n')).toContain(
-      `git -C "C:\\Users\\o'brien\\wt" clean -fd "it's new"`,
+      `git -C "C:\\Users\\o'brien\\wt" clean -fd -- "it's new"`,
     );
     expect(removalRemedy([' M edited'], { worktree: 'C:\\Users\\$o\u2019brien\\wt' }).join('\n')).toContain(
       "git -C 'C:\\Users\\$o\u2019\u2019brien\\wt' checkout -- edited",

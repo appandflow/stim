@@ -22,6 +22,7 @@ import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
+import { shellQuoted } from '../workspace/git.ts';
 import { warmOp } from '../commands/worktree.ts';
 import { runCli } from '../cli/define-op.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
@@ -810,7 +811,7 @@ test('warm refuses a deleted source worktree with the prune and re-add commands 
   const { bare, main, feature } = bareLayout();
   rmSync(main, { recursive: true, force: true });
   await expect(warmWorktreePaths(feature)).rejects.toThrow(
-    `git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${main} main`,
+    `git -C ${shellQuoted(bare)} worktree prune\n  git -C ${shellQuoted(bare)} worktree add ${shellQuoted(main)} main`,
   );
 }, 30_000);
 

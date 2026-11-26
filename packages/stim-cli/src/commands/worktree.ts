@@ -107,6 +107,7 @@ import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
 import { hiddenEditHold } from '../workspace/hidden-edits.ts';
+import { powershellQuoted, shellQuoted } from '../workspace/git.ts';
 import { lightenedPodLocks, podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { recordDependencyInstall } from '../workspace/dependency-edits.ts';
 
@@ -773,19 +774,6 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
     .map((candidate) => candidate.path);
 }
 
-function powershellQuoted(path: string): string {
-  return `'${path.replaceAll(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
-}
-
-function quoteWorktree(path: string): string {
-  if (path === '<worktree>') return path;
-  if (process.platform === 'win32') {
-    if (/^[\w./\\:-]+$/.test(path)) return path;
-    return /[$`"\u201c\u201d\u201e]/.test(path) ? powershellQuoted(path) : `"${path}"`;
-  }
-  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", `'\\''`)}'`;
-}
-
 export function removalRemedy(
   dirtyLines: string[] | null | undefined,
   { worktree = '<worktree>' }: { worktree?: string } = {},
@@ -799,21 +787,21 @@ export function removalRemedy(
   }
 
   const lines: string[] = [];
-  const dir = quoteWorktree(worktree);
+  const dir = shellQuoted(worktree);
   if (tracked.length) {
     lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
     lines.push(`  git -C ${dir} checkout -- ${pathArgs(tracked)}`);
   }
   if (untracked.length) {
     lines.push('If a build or a setup script left these untracked files, delete them and retry:');
-    lines.push(`  git -C ${dir} clean -fd ${pathArgs(untracked)}        # or rm them yourself`);
+    lines.push(`  git -C ${dir} clean -fd -- ${pathArgs(untracked)}`);
   }
   return lines;
 }
 
 function pathArgs(lines: string[] | null | undefined, limit = 5): string {
   const paths = (lines || []).map(porcelainPath).filter((p): p is string => Boolean(p));
-  const shown = paths.slice(0, limit).map(quoteWorktree);
+  const shown = paths.slice(0, limit).map(shellQuoted);
   return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
@@ -1417,7 +1405,7 @@ async function printRemovalRefusal(
   for (const blocker of blockers) output.error(chalk.red(`  - ${blocker}`));
   if (inspection.timedOut) {
     output.error(chalk.dim('Git did not answer in time, so Stim cannot tell whether the worktree holds unsaved work.'));
-    output.error(chalk.dim(`Retry once git responds; check with: git -C ${quoteWorktree(path)} status`));
+    output.error(chalk.dim(`Retry once git responds; check with: git -C ${shellQuoted(path)} status`));
     output.fail();
     return;
   }
@@ -1436,13 +1424,13 @@ async function printRemovalRefusal(
     );
   }
   for (const line of dirtyLines.slice(0, 10)) output.error(chalk.dim(`      ${line}`));
-  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${quoteWorktree(path)} status -s for the full list)`));
+  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${shellQuoted(path)} status -s for the full list)`));
   output.error(chalk.dim('First: commit or push the branch (only commits found nowhere else are counted,'));
   output.error(chalk.dim("so pushing publishes nothing but this worktree's own work)."));
   const status = await branchStatusAsync(path, { env: operation?.env, signal: operation?.signal });
   if (unpushed?.length && status?.branch === null && status.head) {
     output.error(chalk.dim(`HEAD is detached at ${status.head}. Keep its commits before removal:`));
-    output.error(chalk.dim(`  git -C ${quoteWorktree(path)} branch <name> ${status.head}`));
+    output.error(chalk.dim(`  git -C ${shellQuoted(path)} branch <name> ${status.head}`));
   }
   for (const line of removalRemedy(dirtyLines, { worktree: path })) output.error(chalk.dim(line));
   output.error(
@@ -1709,7 +1697,7 @@ async function removeOrRefuse(
         if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
           throw error;
         output.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
-        output.error(chalk.dim(`Retry with: stim worktree remove ${quoteWorktree(path)}`));
+        output.error(chalk.dim(`Retry with: stim worktree remove ${shellQuoted(path)}`));
         output.fail();
       }
       return;
@@ -1810,7 +1798,7 @@ async function removeOrRefuse(
   if (entry.locked) {
     output.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
     output.error(
-      chalk.dim(`Unlock it, then retry: git -C ${quoteWorktree(source.path)} worktree unlock ${quoteWorktree(path)}`),
+      chalk.dim(`Unlock it, then retry: git -C ${shellQuoted(source.path)} worktree unlock ${shellQuoted(path)}`),
     );
     output.fail();
     return;
@@ -2094,7 +2082,7 @@ async function removeOrRefuse(
                     phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
                   ),
                 );
-                output.error(chalk.dim(`  Retry: stim worktree remove ${quoteWorktree(path)}`));
+                output.error(chalk.dim(`  Retry: stim worktree remove ${shellQuoted(path)}`));
                 output.fail();
                 finish();
                 return;
@@ -2105,7 +2093,7 @@ async function removeOrRefuse(
                 );
                 output.error(
                   chalk.dim(
-                    `  Switch that worktree to another branch, then retry: stim worktree remove ${quoteWorktree(path)}`,
+                    `  Switch that worktree to another branch, then retry: stim worktree remove ${shellQuoted(path)}`,
                   ),
                 );
                 output.fail();
@@ -2125,9 +2113,7 @@ async function removeOrRefuse(
                   chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
                 );
                 output.error(
-                  chalk.dim(
-                    `  Retry with: git -C ${quoteWorktree(branchDeleteCwd)} branch -D -- ${quoteWorktree(branch)}`,
-                  ),
+                  chalk.dim(`  Retry with: git -C ${shellQuoted(branchDeleteCwd)} branch -D -- ${shellQuoted(branch)}`),
                 );
                 output.fail();
                 finish();
