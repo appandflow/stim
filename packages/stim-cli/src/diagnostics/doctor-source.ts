@@ -15,6 +15,7 @@ export type NativePlatform = 'ios' | 'android';
 export interface PrebuildRecordProblem {
   platform: NativePlatform;
   status: Exclude<PrebuildRecordStatus, { kind: 'current' }>;
+  held?: { message: string; remedy: string };
 }
 
 export interface SourceCheckoutFacts {
@@ -38,8 +39,15 @@ function nativeDir(platform: NativePlatform): string {
   return `${platform}/`;
 }
 
-export function prebuildRecordFinding({ platform, status }: PrebuildRecordProblem): Finding {
+export function prebuildRecordFinding({ platform, status, held }: PrebuildRecordProblem): Finding {
   const dir = nativeDir(platform);
+  if (held)
+    return {
+      level: 'note',
+      title: `The prebuild record for the source checkout's ${dir} was not checked`,
+      detail: held.message,
+      fix: held.remedy,
+    };
   const why =
     status.kind === 'unfinished'
       ? `Stim's last prebuild of the source checkout's ${dir} did not finish`
@@ -89,9 +97,9 @@ export async function inspectPrebuildRecords({
     if (!existsSync(join(root, each))) continue;
     if ((await gitQuietAsync(root, ['check-ignore', '-q', '--', each])) === null) continue;
     if ((await gitQuietAsync(root, ['ls-files', '--', each]))?.trim() !== '') continue;
-    const { recorded, current } = await readPrebuildRecord(root, each, operation);
+    const { recorded, current, held } = await readPrebuildRecord(root, each, operation);
     const status = prebuildRecordStatus(recorded, current);
-    if (status.kind !== 'current') problems.push({ platform: each, status });
+    if (status.kind !== 'current') problems.push({ platform: each, status, ...(held ? { held } : {}) });
   }
   return problems;
 }

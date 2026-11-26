@@ -113,7 +113,7 @@ async function withWorkspaceOwnership<T>(
     onHeld: (holder) => {
       throw Object.assign(
         new Error(
-          `This workspace's native-run lock is held by ${describeNativeRunHolder(holder, Date.now())}, so Stim cannot fingerprint the project now.`,
+          `The native-run lock for ${root} is held by ${describeNativeRunHolder(holder, Date.now())}, so Stim cannot fingerprint it now.`,
         ),
         { code: 'STIM_LOCK_REFUSED', remedy: 'Run the command again after it finishes.' },
       );

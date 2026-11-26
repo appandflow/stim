@@ -253,7 +253,7 @@ and the prebuild-record check, the fingerprint notes and the parity check are ea
 replaced by a note saying so. A fingerprint does not wait for the workspace
 native-run lock: while another Stim operation holds it, the fingerprint refuses
 at once naming the holder, and the doctor report shows that refusal as a note on
-the fingerprint notes and the parity check. The repair, plan and warm reports
+the prebuild-record check, the fingerprint notes and the parity check. The repair, plan and warm reports
 are actions the person asked for and need the fingerprint, so they still start a
 fingerprint child under load. The kill-and-settle rule above covers them, and a child killed
 before it writes `observing.json` on those paths still leaves a null claim.
