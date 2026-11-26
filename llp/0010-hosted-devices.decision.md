@@ -39,7 +39,10 @@ device; anything unproven takes the stop path, and macOS apps always do. Seriali
 ordinary local producers do not participate, so it is not a machine-wide hard
 capacity guarantee. Reconnect to the recorded attempt/session after a lost
 reply. Unknown creation, journal, owner or shutdown state refuses replacement;
-never identify a device by name or guess an empty inventory. Stop and
+never identify a device by name or guess an empty inventory. The host's
+periodic sweep runs the stop path again for an `unknown` session it owns with
+nothing in flight, up to five times; after that it releases the session claim
+and keeps the device and the `unknown` entry for an explicit stop. Stop and
 revocation touch only that client's recorded owned device.
 The host's person lists and stops sessions through
 `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix

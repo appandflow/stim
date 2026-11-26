@@ -3386,7 +3386,7 @@ test('revocation retires only the revoked client parked records', async () => {
   expect(readHostedSessions().find((record) => record.id === kept.id)?.parked).toBeDefined();
 });
 
-test('a failed Android adoption before rebinding keeps a readable unknown journal and explicit stop retires it', async () => {
+test('a failed Android adoption stays unknown until the sweep retires it', async () => {
   parkingLimits();
   hostEnv.STIM_MAX_DEVICES = '0';
   const parked = seedHosted({ platform: 'android', parked: { at: '2026-10-01T00:00:00.000Z' } });
@@ -3399,9 +3399,69 @@ test('a failed Android adoption before rebinding keeps a readable unknown journa
   const unknown = await state(parked.id, 'unknown');
   expect(unknown).toMatchObject({ consolePort: 5554, device: { serial: 'emulator-5554' } });
   expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live).toHaveLength(1);
-  expect(host.stop('client', { session: parked.id })).toHaveProperty('result.state', 'stopping');
+  host.stop('other', { session: active.result.id });
+  await state(active.result.id, 'stopped');
+  expect(readHostedSessions().find((record) => record.id === parked.id)?.state).toBe('unknown');
+  rmSync(join(deviceHostArea(parked.id), 'home', 'fail-adoption'));
+  host.sweepIdle();
   await state(parked.id, 'stopped');
   expectRetired(parked.id);
+  expect(host.working()).toBe(0);
+  expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live).toEqual([]);
+});
+
+test('unknown stop retries are bounded and a client can stop after the host releases its claim', async () => {
+  const session = await reserve({ deviceType: 'uncertain-stop' });
+  await state(session.id, 'ready');
+  host.stop('client', { session: session.id });
+  await state(session.id, 'unknown');
+  const stops = () => hostedModes(session.id).filter((mode) => mode === 'stop').length;
+  expect(stops()).toBe(1);
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    host.sweepIdle();
+    await vi.waitFor(() => expect(stops()).toBe(attempt + 1));
+    await state(session.id, 'unknown');
+    expect(host.working()).toBe(1);
+  }
+  host.sweepIdle();
+  await vi.waitFor(() => expect(host.working()).toBe(0));
+  expect(busyCounts.at(-1)).toBe(0);
+  expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toEqual([]);
+  expect(await state(session.id, 'unknown')).toHaveProperty('notice', expect.stringContaining('kept it'));
+  host.sweepIdle();
+  expect(stops()).toBe(6);
+  expect(host.stop('client', { session: session.id })).toHaveProperty('result.state', 'stopping');
+  await state(session.id, 'unknown');
+  expect(stops()).toBe(7);
+  expect(host.working()).toBe(1);
+});
+
+test('the sweep keeps an unknown session whose worker group did not settle, without stopping or releasing it', async () => {
+  const session = await reserve({ deviceType: 'held-prepare' });
+  const area = join(deviceHostArea(session.id), 'home');
+  await vi.waitFor(() => expect(existsSync(join(area, 'entered'))).toBe(true));
+  const pid = await readPid(join(area, 'entered'));
+  const kill = process.kill.bind(process);
+  const withheld = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) =>
+      target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
+    );
+  try {
+    host.stop('client', { session: session.id });
+    expect(await state(session.id, 'unknown')).toHaveProperty('notice', expect.stringContaining('unresolved'));
+    for (let sweep = 0; sweep < 7; sweep++) {
+      host.sweepIdle();
+      await vi.waitFor(() => expect(readFileSync(join(area, 'modes'), 'utf8')).toBe('prepare\n'));
+      await state(session.id, 'unknown');
+    }
+    expect(host.working()).toBe(1);
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(1);
+  } finally {
+    withheld.mockRestore();
+    writeFileSync(join(area, 'release-prepare'), '');
+    await groupGone(pid);
+  }
 });
 
 test('revocation during inspection refuses adoption and retires the parked device after releasing its claim', async () => {
