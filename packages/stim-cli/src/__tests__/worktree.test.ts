@@ -245,70 +245,78 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
   }
 });
 
-test.each([false, true])(
-  'cloneIgnoredEntries carries only destination-ignored content (same ignores: %s)',
-  async (sameIgnores) => {
-    const base = mkdtempSync(join(tmpdir(), 'stim-test-destination-ignore-'));
-    const root = join(base, 'repo');
-    const target = join(base, 'wt');
-    try {
-      mkdirSync(root, { recursive: true });
-      const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-      git('git init -q -b main');
-      git('git config user.email test@example.com');
-      git('git config user.name test');
-      writeFileSync(
-        join(root, '.gitignore'),
-        `node_modules/\ndist/\n${sameIgnores ? '/ios/modules/X.xcframework/\n' : ''}`,
-      );
-      mkdirSync(join(root, 'packages'), { recursive: true });
-      writeFileSync(join(root, 'packages/README.md'), 'packages');
-      git('git add .gitignore packages/README.md');
-      git('git commit -q -m base');
-      git('git checkout -q -b feature');
-      if (!sameIgnores) {
-        writeFileSync(join(root, '.gitignore'), 'node_modules/\ndist/\n/ios/modules/X.xcframework/\n');
-        git('git add .gitignore');
-        git('git commit -q -m feature');
-      }
-      mkdirSync(join(root, 'ios/modules/X.xcframework'), { recursive: true });
-      writeFileSync(join(root, 'ios/modules/X.xcframework/binary'), 'framework');
-      mkdirSync(join(root, 'node_modules'), { recursive: true });
-      writeFileSync(join(root, 'node_modules/dependency'), 'dependency');
-      mkdirSync(join(root, 'packages/metro/dist'), { recursive: true });
-      writeFileSync(join(root, 'packages/metro/dist/index.js'), 'output');
-      mkdirSync(join(root, 'packages/metro/node_modules'), { recursive: true });
-      writeFileSync(join(root, 'packages/metro/node_modules/dependency'), 'metro dependency');
-      git(`git worktree add -q "${target}" main`);
-
-      expect(await listGitignoredEntries(root)).toContain('ios');
-
-      const { copied, withheld, failed } = await cloneIgnoredEntries({
-        root,
-        target,
-        patterns: [],
-        operation: copyContext(target),
-      });
-
-      expect(failed).toEqual([]);
-      expect(copied.toSorted()).toEqual(
-        sameIgnores ? ['ios', 'node_modules', 'packages/metro'] : ['node_modules', 'packages/metro'],
-      );
-      expect(readFileSync(join(target, 'packages/metro/dist/index.js'), 'utf-8')).toBe('output');
-      expect(readFileSync(join(target, 'packages/metro/node_modules/dependency'), 'utf-8')).toBe('metro dependency');
-      expect(readFileSync(join(target, 'node_modules/dependency'), 'utf-8')).toBe('dependency');
-      expect(withheld).toEqual(
-        sameIgnores
-          ? []
-          : [{ file: 'ios', reason: 'the destination branch does not ignore it, so it would be untracked here' }],
-      );
-      expect(existsSync(join(target, 'ios/modules/X.xcframework/binary'))).toBe(sameIgnores);
-      expect(execSync('git status --porcelain', { cwd: target, encoding: 'utf-8' })).toBe('');
-    } finally {
-      rmSync(base, { recursive: true, force: true });
+test.each([
+  { name: 'different ignores', sameIgnores: false, husky: false },
+  { name: 'same ignores', sameIgnores: true, husky: false },
+  { name: 'self-ignoring hooks', sameIgnores: false, husky: true },
+])('cloneIgnoredEntries carries only destination-ignored content ($name)', async ({ sameIgnores, husky }) => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-destination-ignore-'));
+  const root = join(base, 'repo');
+  const target = join(base, 'wt');
+  try {
+    mkdirSync(root, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    git('git init -q -b main');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(
+      join(root, '.gitignore'),
+      `node_modules/\ndist/\n${sameIgnores ? '/ios/modules/X.xcframework/\n' : ''}`,
+    );
+    mkdirSync(join(root, 'packages'), { recursive: true });
+    writeFileSync(join(root, 'packages/README.md'), 'packages');
+    git('git add .gitignore packages/README.md');
+    git('git commit -q -m base');
+    git('git checkout -q -b feature');
+    if (!sameIgnores && !husky) {
+      writeFileSync(join(root, '.gitignore'), 'node_modules/\ndist/\n/ios/modules/X.xcframework/\n');
+      git('git add .gitignore');
+      git('git commit -q -m feature');
     }
-  },
-);
+    const entry = husky ? '.husky' : 'ios';
+    const artifact = husky ? '.husky/_/pre-commit' : 'ios/modules/X.xcframework/binary';
+    mkdirSync(join(root, husky ? '.husky/_' : 'ios/modules/X.xcframework'), { recursive: true });
+    writeFileSync(join(root, artifact), 'artifact');
+    if (husky) {
+      writeFileSync(join(root, '.husky/_/.gitignore'), '*');
+      git('git config core.hooksPath .husky/_');
+    }
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'node_modules/dependency'), 'dependency');
+    mkdirSync(join(root, 'packages/metro/dist'), { recursive: true });
+    writeFileSync(join(root, 'packages/metro/dist/index.js'), 'output');
+    mkdirSync(join(root, 'packages/metro/node_modules'), { recursive: true });
+    writeFileSync(join(root, 'packages/metro/node_modules/dependency'), 'metro dependency');
+    git(`git worktree add -q "${target}" main`);
+
+    expect(await listGitignoredEntries(root)).toContain(entry);
+
+    const { copied, withheld, failed } = await cloneIgnoredEntries({
+      root,
+      target,
+      patterns: [],
+      operation: copyContext(target),
+    });
+
+    expect(failed).toEqual([]);
+    expect(copied.toSorted()).toEqual(
+      sameIgnores || husky ? [entry, 'node_modules', 'packages/metro'] : ['node_modules', 'packages/metro'],
+    );
+    expect(readFileSync(join(target, 'packages/metro/dist/index.js'), 'utf-8')).toBe('output');
+    expect(readFileSync(join(target, 'packages/metro/node_modules/dependency'), 'utf-8')).toBe('metro dependency');
+    expect(readFileSync(join(target, 'node_modules/dependency'), 'utf-8')).toBe('dependency');
+    expect(withheld).toEqual(
+      sameIgnores || husky
+        ? []
+        : [{ file: 'ios', reason: 'the destination branch does not ignore it, so it would be untracked here' }],
+    );
+    expect(existsSync(join(target, artifact))).toBe(sameIgnores || husky);
+    expect(existsSync(join(target, entry))).toBe(sameIgnores || husky);
+    expect(execSync('git status --porcelain', { cwd: target, encoding: 'utf-8' })).toBe('');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 test('carry against a real git repo leaves a tracked file under an ignored directory alone', async () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-negation-'));

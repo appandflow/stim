@@ -449,51 +449,6 @@ export async function cloneIgnoredEntries({
       : overlapsNestedWorktree(rel, nested)
         ? 'nested worktree'
         : missingDestinationReason(target, rel);
-  let destinationIgnored: Set<string> | undefined;
-  if (carryable.length) {
-    try {
-      const paths = await Promise.all(
-        carryable
-          .filter((rel) => keptReason(rel) === null)
-          .map(async (rel) => ({ entry: rel, path: (await lstat(join(root, rel))).isDirectory() ? `${rel}/` : rel })),
-      );
-      const checkIgnored = async (entries: string[]): Promise<Set<string>> => {
-        let output: string;
-        try {
-          output = await gitAsync(target, ['check-ignore', '--stdin', '-z'], {
-            ...options,
-            input: `${entries.join('\0')}\0`,
-          });
-        } catch (error) {
-          if (error instanceof Error && 'status' in error && error.status === 1) return new Set();
-          throw error;
-        }
-        return new Set(output.split('\0').filter(Boolean));
-      };
-      const clean = new Set(paths.map(({ entry }) => entry));
-      let pending = paths;
-      for (let depth = 0; pending.length && depth <= 8; depth++) {
-        const ignored = await checkIgnored(pending.map(({ path }) => path));
-        const next: typeof pending = [];
-        for (const { entry, path } of pending) {
-          if (!clean.has(entry) || ignored.has(path)) continue;
-          if (!path.endsWith('/') || depth === 8) {
-            clean.delete(entry);
-            continue;
-          }
-          for (const child of await readdir(join(root, path), { withFileTypes: true })) {
-            next.push({ entry, path: `${path}${child.name}${child.isDirectory() ? '/' : ''}` });
-          }
-        }
-        pending = next.filter(({ entry }) => clean.has(entry));
-      }
-      destinationIgnored = clean;
-    } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-        throw error;
-      operation.signal.throwIfAborted();
-    }
-  }
   const checks = new Map<string, Promise<string | null>>();
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
@@ -511,12 +466,7 @@ export async function cloneIgnoredEntries({
       } catch {
         copies = true;
       }
-      const check =
-        copies && destinationIgnored && !destinationIgnored.has(rel)
-          ? Promise.resolve('the destination branch does not ignore it, so it would be untracked here')
-          : copies
-            ? withhold(rel)
-            : null;
+      const check = copies ? withhold(rel) : null;
       if (check) {
         void check.catch(() => {});
         checks.set(rel, check);
@@ -569,6 +519,34 @@ export async function cloneIgnoredEntries({
         if (copying) await removeTemporaryEntryAsync(to);
         operation.signal.throwIfAborted();
         failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
+      }
+    }
+    if (copied.length) {
+      const status = await gitQuietAsync(
+        target,
+        [
+          'status',
+          '--porcelain=v1',
+          '-z',
+          '--untracked-files=normal',
+          '--',
+          ...copied.map((rel) => `:(literal)${rel}`),
+        ],
+        options,
+      );
+      const untracked = (status ?? '')
+        .split('\0')
+        .filter((entry) => entry.startsWith('?? '))
+        .map((entry) => entry.slice(3).replace(/\/$/, ''));
+      for (const rel of copied.filter((entry) =>
+        untracked.some((path) => path === entry || path.startsWith(`${entry}/`)),
+      )) {
+        await removeTemporaryEntryAsync(join(target, rel));
+        copied.splice(copied.indexOf(rel), 1);
+        withheld.push({
+          file: rel,
+          reason: 'the destination branch does not ignore it, so it would be untracked here',
+        });
       }
     }
     const outcomes = await Promise.allSettled(checks.values());
