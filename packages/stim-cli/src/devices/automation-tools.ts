@@ -90,8 +90,6 @@ export function hostDriverTool(command: string, platform: 'ios' | 'android', id:
 
 /** The tool behind an on-device process's arguments, or null when it is not instrumentation. */
 export function instrumentationTool(args: string): string | null {
-  // agent-device keeps its snapshot helper instrumented for the whole session; its device claim stands for it.
-  if (/\bcom\.callstack\.agentdevice\.snapshothelper\//.test(args)) return null;
   return (
     AUTOMATION_TOOLS.find((entry) => entry.platforms.includes('android') && entry.instrumentation?.test(args))?.tool ??
     null

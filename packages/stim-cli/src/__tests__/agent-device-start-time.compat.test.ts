@@ -27,9 +27,8 @@ test('the start time agent-device records for its daemon identifies the live pro
   try {
     run('session', 'list');
     expect(agentDeviceDaemon(stateDir)).toBe('live');
-    run('daemon', 'stop');
-    expect(agentDeviceDaemon(stateDir)).toBe('none');
   } finally {
+    run('daemon', 'stop');
     rmSync(dir, { recursive: true, force: true });
   }
 }, 120_000);

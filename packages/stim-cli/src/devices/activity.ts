@@ -147,7 +147,7 @@ export function parseAgentDeviceRecord(
 
 export type Liveness = 'live' | 'dead' | 'unknown';
 
-function recordedStartTime(value: string): number {
+export function recordedStartTime(value: string): number {
   if (!value.startsWith('posix:')) return /^[a-z]+:/i.test(value) ? NaN : Date.parse(value);
   const at = /^posix:(0|[1-9]\d*000)$/.test(value) ? Number(value.slice(6)) : NaN;
   return at <= 0xe677d21fd818 ? at : NaN;
@@ -224,13 +224,14 @@ export function parseProcessTable(output: string): HostProcess[] {
   return rows;
 }
 
-function parseAndroidInstrumentation(output: string): { pid: number; tool: string }[] {
-  const found: { pid: number; tool: string }[] = [];
+function parseAndroidInstrumentation(output: string): { pid: number; tool: string; args: string }[] {
+  const found: { pid: number; tool: string; args: string }[] = [];
   for (const line of output.split('\n')) {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
     if (!match) continue;
-    const tool = instrumentationTool(match[2]!);
-    if (tool) found.push({ pid: Number(match[1]), tool });
+    const args = match[2]!;
+    const tool = instrumentationTool(args);
+    if (tool) found.push({ pid: Number(match[1]), tool, args });
   }
   return found;
 }
@@ -668,7 +669,13 @@ export function createActivityReader({
     if (target.platform === 'android') {
       const output = tables.android(target.id);
       if (output === null) evidence.unknown.push('instrumentation');
-      for (const { pid, tool } of parseAndroidInstrumentation(output ?? '')) {
+      const claimed = agentDevice.some(
+        ({ record, liveness }) =>
+          record.kind === 'claim' && record.readable && record.deviceId === target.id && liveness !== 'dead',
+      );
+      for (const { pid, tool, args } of parseAndroidInstrumentation(output ?? '')) {
+        // agent-device keeps its snapshot helper instrumented for a whole session, which its device claim stands for.
+        if (claimed && /\bcom\.callstack\.agentdevice\.snapshothelper\//.test(args)) continue;
         evidence.drivers.push({ basis: 'instrumentation', tool, pid, since: null });
       }
     }

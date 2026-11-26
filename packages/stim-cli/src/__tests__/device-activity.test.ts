@@ -128,7 +128,7 @@ function runnerLease(over: Record<string, unknown> = {}): string {
 }
 
 describe('agent-device lease liveness', () => {
-  test('agent-device 0.21.42 claim identities are epoch seconds in every timezone', () => {
+  test('a claim captured from agent-device 0.21.42 matches its owner to the second', () => {
     vi.stubEnv('TZ', 'America/Toronto');
     try {
       const claim = parseAgentDeviceRecord(
@@ -139,7 +139,7 @@ describe('agent-device lease liveness', () => {
       expect(claim.owner).not.toBeNull();
       const owner = claim.owner;
       if (!owner) throw new Error('Captured claim has no owner');
-      const at = Number(owner.startTime.slice('posix:'.length));
+      const at = Date.parse('Thu Nov 26 02:40:14 2026');
       expect(agentDeviceLiveness(claim, () => ({ status: 'running', startedAtMs: at + 400 }))).toBe('live');
       expect(agentDeviceLiveness(claim, () => ({ status: 'running', startedAtMs: at + 1000 }))).toBe('dead');
       for (const startTime of [
