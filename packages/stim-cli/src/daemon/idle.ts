@@ -363,7 +363,7 @@ async function recordStage(path: string, minutes: number, shutDown: readonly str
  * The idle stage, in one pass under the workspace's native-run and metro-start locks after deciding again: the idle
  * stop (Metro stopped with its port and launch records kept, the owned devices shut down through teardown, their
  * collectors ended), then the workspace's regenerable build outputs, its in-tree build directories and its Metro
- * store deleted.
+ * store deleted, unless its worktree is locked with git worktree lock or git cannot list it.
  */
 async function enterIdleStage(
   path: string,

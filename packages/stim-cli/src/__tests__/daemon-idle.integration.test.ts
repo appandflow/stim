@@ -271,8 +271,9 @@ test.each([
   writeFileSync(join(root, '.gitignore'), '.dd/\n');
   writeDerivedData(join(root, '.dd'));
   const config = loadConfig();
+  if (!config) throw new Error('no config');
   const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
-  expect(await idleOutputBytes(root, config!)).toBe(0);
+  expect(await idleOutputBytes(root, config)).toBe(0);
 
   const decisions = await runIdlePass({
     config,

@@ -21,7 +21,8 @@ cap and the pressure trims below.
 Only the first two are listed as build output. Two steps delete a `target/`
 whole: the idle stage, for an idle workspace whose dev server or devices it
 stops, deletes one of the first two, and the dormant reduction (below) deletes
-any of the three. Before that the idle stage checks that the directory is real, inside its checkout, not a
+any of the three. Before that the idle stage checks that its worktree is not locked
+with `git worktree lock`, and that the directory is real, inside its checkout, not a
 mount point, holds no file git tracks and only files git ignores; and that no
 other process runs from or works in the app. It then removes it through the
 Cargo delete (One remover, below), under the target's Cargo locks, as the
