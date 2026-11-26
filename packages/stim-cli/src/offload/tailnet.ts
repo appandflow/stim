@@ -150,9 +150,8 @@ export const SERVER_OUTDATED = 'server-outdated';
 
 /**
  * The doctor finding for an outdated stim-server on `entry`, shared by the build and device-host checks so doctor
- * prints it once. `command` is the setup command, when this machine has an unexpired ticket for it. `reason` is set
- * for a protocol 2 server on an older peer, which `stim remote update` reaches; without it the server predates
- * protocol 2 and is updated on `entry` itself to `version`.
+ * prints it once. `command` is the setup command, when this machine has an unexpired ticket for it. `version` is the
+ * Stim this machine runs, which `entry` installs: a 1.x worker cannot take `stim remote update`.
  */
 export function outdatedServer(
   entry: string,
@@ -161,9 +160,7 @@ export function outdatedServer(
   host: string = localMachineName(),
   reason?: string,
 ): { title: string; detail: string; fix: string } {
-  const update = reason
-    ? `Run \`stim remote update ${entry}\` on ${host}, or on ${entry} run \`stim engine update\``
-    : `On ${entry}, run \`npm install --global stim@${version}\` and reinstall its service with \`stim service install\` and the options it uses now`;
+  const update = `On ${entry}, run \`npm install --global stim@${version}\` and reinstall its service with \`stim service install\` and the options it uses now`;
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
     detail:

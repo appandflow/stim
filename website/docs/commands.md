@@ -298,10 +298,8 @@ remote machines, doctor reports each one this machine is not approved on: not on
 tailnet, not asked yet, waiting for approval (with the `stim setup`
 command to run there), revoked, lapsed, answering with a different
 stim-server key than the one this machine pinned at approval, or running an
-older stim-server (`outdated`). For a stim-server too old to speak protocol 2,
-such as a stock 1.40 worker, doctor names the Stim to install there and the
-service to reinstall; for one that speaks protocol 2 on an older peer version,
-`stim remote update <machine>` to run here. A listed machine
+older stim-server (`outdated`, naming the Stim to install there and the service
+to reinstall). A listed machine
 that never granted an approval is not used for it. `--fix` makes one setup
 ticket for each named machine without a pairing, covering build and device-host
 access, asks again one that revoked or let the request lapse, and forgets the

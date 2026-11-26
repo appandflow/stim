@@ -447,15 +447,14 @@ reachability in this run and those revoke commands.
 machines. `stim doctor --fix` in an app directory still asks every listed
 machine that has not been asked.
 
-A worker whose stim-server predates protocol 2, such as a stock 1.40 worker,
-cannot authenticate this machine, and `stim remote update` cannot reach it.
-`stim doctor` reports it as `outdated` and names the fix on the worker itself:
-install the Stim this machine runs and reinstall its service, as
+A worker whose stim-server is older than this machine's peer version, such
+as any 1.x worker, cannot authenticate this machine, and `stim remote update`
+cannot update a 1.x worker. `stim doctor` reports it as `outdated` and names
+the fix on the worker itself: install the Stim this machine runs and reinstall
+its service, as
 [Services and remote machines](./migrate-to-2.md#6-services-and-remote-machines)
 describes, then approve this machine as doctor shows, or run
-`stim remote add <machine>` here. A worker that speaks
-protocol 2 on an older peer version is `outdated` too; for it doctor names
-`stim remote update <machine>` to run here.
+`stim remote add <machine>` here.
 
 ### Linux worker
 
