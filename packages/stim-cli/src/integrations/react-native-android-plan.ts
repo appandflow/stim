@@ -353,8 +353,8 @@ export async function planReactNativeAndroid(
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
     operation.signal.throwIfAborted();
-    if (isClaimUnavailable(error) && typeof error.remedy === 'string')
-      return refuse({ code: 'STIM_NO_FINGERPRINT', message: error.message, remedy: error.remedy });
+    if (isClaimUnavailable(error))
+      return refuse({ code: NO_FINGERPRINT, message: error.message, remedy: error.remedy });
     return refuse({
       code: NO_FINGERPRINT,
       message: `Could not fingerprint ${root}: ${String(error)}`,

@@ -111,7 +111,7 @@ test('a busy engine store refuses fingerprinting with a retry remedy', async () 
     await expect(withFingerprintOwnership(context, root, work)).rejects.toMatchObject({
       code: 'STIM_CLAIM_UNAVAILABLE',
       remedy:
-        'Another Stim command holds the engine store for a moment (an engine switch, install or cleanup). Run the same command again in a few seconds.',
+        'Another Stim command is using or switching the engine for a moment. Run the same command again in a few seconds; if it keeps failing, run stim engine status.',
     });
     expect(work).not.toHaveBeenCalled();
   } finally {

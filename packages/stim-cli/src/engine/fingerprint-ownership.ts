@@ -11,6 +11,9 @@ import { buildClaimRoot } from '../engine-store/claims.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { readManifest } from '../engine-store/store.ts';
 
+const ENGINE_BUSY_REMEDY =
+  'Another Stim command is using or switching the engine for a moment. Run the same command again in a few seconds; if it keeps failing, run stim engine status.';
+
 export async function withFingerprintOwnership<T>(
   context: StimContext,
   root: string,
@@ -22,18 +25,14 @@ export async function withFingerprintOwnership<T>(
   let engineClaim: ClaimHandle | null = null;
   if (engine && engineRoot && ![...operationState(context).declaring].some((claim) => claim.root === engineRoot)) {
     const lock = await takeLock(engine.root, '.lock.sock');
-    if (!lock)
-      throw new ClaimUnavailableError('the engine store is busy', {
-        remedy:
-          'Another Stim command holds the engine store for a moment (an engine switch, install or cleanup). Run the same command again in a few seconds.',
-      });
+    if (!lock) throw new ClaimUnavailableError('the engine store is busy', { remedy: ENGINE_BUSY_REMEDY });
     let admissionFailure: { error: unknown } | null = null;
     try {
       signal.throwIfAborted();
       const tree = join(engine.root, engine.build);
       const manifest = readManifest(tree);
       if (!manifest || manifest.build !== engine.build || !existsSync(join(tree, 'dist', 'cli.mjs')))
-        throw new ClaimUnavailableError('the selected engine is unavailable');
+        throw new ClaimUnavailableError('the selected engine is unavailable', { remedy: ENGINE_BUSY_REMEDY });
       const attempt = tryAcquireClaim({
         root: engineRoot,
         mode: 'shared',
@@ -42,7 +41,10 @@ export async function withFingerprintOwnership<T>(
       });
       if (attempt.pending) releaseClaim(attempt.pending);
       if (!attempt.acquired)
-        throw new ClaimUnavailableError('the selected engine claim is busy', { claimPath: engineRoot });
+        throw new ClaimUnavailableError('the selected engine claim is busy', {
+          claimPath: engineRoot,
+          remedy: ENGINE_BUSY_REMEDY,
+        });
       engineClaim = attempt.acquired;
     } catch (error) {
       admissionFailure = { error };

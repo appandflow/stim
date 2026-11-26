@@ -8943,7 +8943,7 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 describe('--plan', () => {
   test('preserves the retry remedy when the engine store is busy during fingerprinting', async () => {
     const remedy =
-      'Another Stim command holds the engine store for a moment (an engine switch, install or cleanup). Run the same command again in a few seconds.';
+      'Another Stim command is using or switching the engine for a moment. Run the same command again in a few seconds; if it keeps failing, run stim engine status.';
     const error = new ClaimUnavailableError('the engine store is busy', { remedy });
     const { logs, exitCode } = await run(
       { plan: true, json: true },

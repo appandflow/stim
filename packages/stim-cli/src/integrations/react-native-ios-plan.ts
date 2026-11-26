@@ -169,7 +169,7 @@ export async function planReactNativeIos(
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
     operation.signal.throwIfAborted();
-    if (isClaimUnavailable(error) && typeof error.remedy === 'string')
+    if (isClaimUnavailable(error))
       return refuse({ code: 'STIM_NO_FINGERPRINT', message: error.message, remedy: error.remedy });
     note(chalk.dim(`Fingerprinting failed: ${(error as Error)?.message || error}`));
   }
