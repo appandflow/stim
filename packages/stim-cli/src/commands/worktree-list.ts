@@ -96,9 +96,13 @@ function dependencies(root: string): string[] {
 function wholeWalk(root: string): boolean {
   // real-size counts a file shared between two measured paths as private in neither, as a store and node_modules are.
   if (existsSync(join(root, '.pnpm-store'))) return true;
-  return [...dependencies(root), join(root, 'ios')].some(
-    (path) => lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
-  );
+  try {
+    return ![join(root, 'ios'), ...dependencies(root)].every(
+      (path) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ?? true,
+    );
+  } catch {
+    return true;
+  }
 }
 
 function restTargets(root: string): string[] {

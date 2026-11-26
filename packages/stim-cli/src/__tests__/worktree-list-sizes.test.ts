@@ -82,6 +82,7 @@ it.each([
       symlinkSync('native-project', join(roots[1], 'ios'));
     },
   },
+  { layout: 'a file named ios', make: () => writeFileSync(join(roots[1], 'ios'), '') },
 ])('walks a worktree with $layout whole', async ({ make }) => {
   make();
   await listing();

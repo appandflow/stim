@@ -2609,7 +2609,7 @@ Neither form deletes anything. A worktree's `node_modules` and `ios/Pods`
 sizes are reused while their install and clone group are unchanged, for up to a
 day; the rest of the worktree is walked again when its measure is over an hour
 old, and a worktree with a project-local `.pnpm-store`, or whose `node_modules`,
-`ios` or `ios/Pods` is a symbolic link, is walked whole. The walks
+`ios` or `ios/Pods` is not a plain directory, is walked whole. The walks
 share a two-minute budget for the whole command; what the
 budget leaves unwalked keeps its older measure, with its date in `measuredAt`, or prints `not measured` when it has none. JSON includes measurement and check dates.
 Real size sums the private bytes of those parts; a file hard-linked between two
