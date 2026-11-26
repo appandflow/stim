@@ -27,6 +27,7 @@ import {
   stimdSocket,
 } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
+import { STIM_VERSION } from '../stim-version.ts';
 import { buildEntries } from '../../build-entries.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -62,6 +63,12 @@ test.each([
     reply: { version: '1.0.0-other' },
     message: '1.0.0-other',
     remedy: 'kill 4242',
+  },
+  {
+    stimd: 'of another build of this version',
+    reply: { version: STIM_VERSION },
+    message: `Stim ${STIM_VERSION} build aaaaaaaaaaaa, not this stim's build `,
+    remedy: 'Run the command with the stim of build aaaaaaaaaaaa, or stop that stimd with `kill 4242`',
   },
   {
     stimd: 'that hands over once the dev servers it stops on exit end',

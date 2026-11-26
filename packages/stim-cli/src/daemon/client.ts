@@ -200,6 +200,7 @@ const currentCrashHold = () =>
   ownStoreEngine() === null ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
 let refusal: {
   version: string;
+  build: string;
   pid: number | null;
   handover: boolean;
   heldBy: 'shares' | 'dev-servers' | null;
@@ -245,6 +246,7 @@ function noteRefusal(message: Record<string, unknown>): void {
   refusedBuild ??= String(message.build);
   refusal = {
     version: String(message.version ?? message.build),
+    build: String(message.build),
     pid: typeof message.pid === 'number' ? message.pid : null,
     handover: message.handover === true || message.build === stimdBuildId(),
     heldBy: message.heldBy === 'shares' || message.heldBy === 'dev-servers' ? message.heldBy : null,
@@ -299,13 +301,14 @@ function engineInstallable(): boolean {
  */
 export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   if (!refusal) return null;
-  const { version, pid, handover, heldBy, workspaces } = refusal;
+  const { version, build, pid, handover, heldBy, workspaces } = refusal;
   const kill =
     process.platform === 'win32'
       ? `run \`npx stim@${version} stop\` in each workspace whose dev server it runs, then stop that stimd${pid === null ? '' : ` with \`taskkill /PID ${pid} /F\``}, which also ends the builds and shares it serves`
       : `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds and shares it serves; its dev servers keep running and the next stimd takes them over`;
   const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
   const waiting = waitingChildren();
+  const sameVersion = version === stimBuild().version;
   const [why, remedy] = refusedByAttached
     ? [
         `${stimd} runs Stim ${version} as the child of another command.`,
@@ -332,8 +335,10 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
                 'Run the command again once those commands end.',
               ]
             : [
-                `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.${engineInstallable() ? ' To stop this recurring, stop stimd as above, then run `stim engine install`.' : ''}`,
+                sameVersion
+                  ? `${stimd} runs Stim ${version} build ${build}, not this stim's build ${stimdBuildId()}, and has not restarted on this build.`
+                  : `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+                `Run the command with ${sameVersion ? `the stim of build ${build}` : `Stim ${version}`}, or ${kill}; the next stim command starts one of this build.${engineInstallable() ? ' To stop this recurring, stop stimd as above, then run `stim engine install`.' : ''}`,
               ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
