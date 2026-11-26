@@ -1,4 +1,14 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { metroCacheRoot } from '@stim-cli/core';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
@@ -79,3 +89,60 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     );
   },
 );
+
+test('cache cap dry runs agree with acting runs for recent and old entries', async () => {
+  vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '0.00002');
+  try {
+    setExecutor({
+      run: () => '',
+      runFile: () => '',
+      runQuiet: () => null,
+      runFileQuiet: () => null,
+      runFileAsync: async (file, args) => (file === 'du' ? `9766\t${args.at(-1)}\n` : ''),
+    });
+    const cache = metroCacheRoot();
+    const dir = join(cache, 'project', 'bucket');
+    mkdirSync(dir, { recursive: true });
+    const entries = Array.from({ length: 5 }, (_, i) => join(dir, `entry-${i}`));
+    for (const entry of entries) writeFileSync(entry, Buffer.alloc(2_000_000));
+    const trim = (payload: {
+      actions: { kind: string; target: string; outcome: string; bytes: number; detail: string }[];
+    }) => payload.actions.find((action) => action.kind === 'trim-cache' && action.target === cache);
+    const recentPayload = await gcJson({ dryRun: true, pressure: 'normal' });
+    const recentDry = trim(recentPayload);
+    expect(recentDry).toMatchObject({ outcome: 'kept', bytes: 0, detail: 'no unprotected entry was old enough' });
+    vi.restoreAllMocks();
+    const recentAct = trim(await gcJson({ pressure: 'normal' }));
+    expect(recentAct).toMatchObject({ outcome: 'kept', bytes: 0, detail: recentDry?.detail });
+    expect(entries.every((entry) => existsSync(entry))).toBe(true);
+    vi.restoreAllMocks();
+    const recentLadder = await gcJson({ dryRun: true, pressure: 'high' });
+    expect(recentLadder.actions).toContainEqual(
+      expect.objectContaining({
+        rung: 3,
+        kind: 'trim-cache',
+        target: cache,
+        outcome: 'kept',
+        bytes: 0,
+        detail: 'no unprotected entry to evict',
+      }),
+    );
+    const old = new Date(Date.now() - 7 * 86_400_000);
+    for (const entry of entries) utimesSync(entry, old, old);
+    vi.restoreAllMocks();
+    const oldDry = trim(await gcJson({ dryRun: true, pressure: 'normal' }));
+    expect(oldDry).toMatchObject({ outcome: 'would', bytes: 10_000_000 });
+    expect(entries.every((entry) => existsSync(entry))).toBe(true);
+    vi.restoreAllMocks();
+    const oldLadder = await gcJson({ dryRun: true, pressure: 'high' });
+    expect(oldLadder.actions).toContainEqual(
+      expect.objectContaining({ rung: 3, kind: 'trim-cache', target: cache, outcome: 'would', bytes: oldDry?.bytes }),
+    );
+    vi.restoreAllMocks();
+    const oldAct = trim(await gcJson({ pressure: 'normal' }));
+    expect(oldAct).toMatchObject({ outcome: 'done', bytes: oldDry?.bytes });
+    expect(entries.every((entry) => !existsSync(entry))).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});

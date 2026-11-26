@@ -561,20 +561,17 @@ async function trim(
   evictBytes: number,
   recentDays: number,
 ): Promise<{ outcome: DaemonLadderAction['outcome']; bytes: number; detail: string }> {
-  if (!context.act)
+  if (!context.act && (!context.measure || !Number.isFinite(evictBytes)))
     return {
       outcome: 'would',
-      bytes: !context.measure
-        ? 0
-        : Number.isFinite(evictBytes)
-          ? evictBytes
-          : ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0),
+      bytes: context.measure ? ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0) : 0,
       detail: wouldDetail(context),
     };
   const protect = await cacheEntryProtectionFor(context.config, context.operation);
   context.stop?.throwIfAborted();
   const result = await pruneCache(cache, {
     olderThanDays: recentDays,
+    dryRun: !context.act,
     byMtime: true,
     protect,
     evictBytes,
@@ -587,7 +584,11 @@ async function trim(
   if (result.failed)
     return { outcome: 'failed', bytes: result.bytes, detail: `${result.failed} entries failed${kept}` };
   return result.removed
-    ? { outcome: 'done', bytes: result.bytes, detail: `${result.removed} entries${kept}` }
+    ? {
+        outcome: context.act ? 'done' : 'would',
+        bytes: result.bytes,
+        detail: context.act ? `${result.removed} entries${kept}` : wouldDetail(context),
+      }
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
