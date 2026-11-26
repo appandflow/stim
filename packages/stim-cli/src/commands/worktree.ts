@@ -773,6 +773,10 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
     .map((candidate) => candidate.path);
 }
 
+function powershellQuoted(path: string): string {
+  return `'${path.replaceAll("'", "''")}'`;
+}
+
 function quoteWorktree(path: string): string {
   return /^[\w@%+=:,./-]+$/.test(path) || path === '<worktree>' ? path : `'${path.replaceAll("'", `'\\''`)}'`;
 }
@@ -1600,6 +1604,35 @@ function recordedSpelling(canonical: string, target: string | undefined, operati
   return !hasRegisteredProjectUnder(canonical) && hasRegisteredProjectUnder(literal) ? literal : canonical;
 }
 
+function refusedLocation(
+  worktrees: readonly WorktreeEntry[],
+  path: string,
+  opts: RemoveOptions,
+  output: RemovalOutput,
+): boolean {
+  const nested = nestedWorktrees(worktrees, path);
+  if (nested.length) {
+    output.error(chalk.red(`Refusing to remove ${path}: it contains the worktree ${nested.join(', ')}.`));
+    output.error(chalk.dim('Remove the nested worktree first, then retry.'));
+    output.fail();
+    return true;
+  }
+  const cwd = opts.operation?.cwd ?? process.cwd();
+  if (process.platform !== 'win32' || !isPathPrefix(nativeCanonicalPath(path), nativeCanonicalPath(cwd))) return false;
+  output.error(
+    chalk.red(
+      `Refusing to remove ${path}: Windows cannot delete a folder that is a working directory, and this command runs inside it.`,
+    ),
+  );
+  output.error(
+    chalk.dim(
+      `Run it from outside the worktree with its path, in PowerShell: cd ${powershellQuoted(dirname(path))}; stim worktree remove ${powershellQuoted(path)}`,
+    ),
+  );
+  output.fail();
+  return true;
+}
+
 async function removeOrRefuse(
   target: string | undefined,
   opts: RemoveOptions,
@@ -1780,13 +1813,7 @@ async function removeOrRefuse(
     output.fail();
     return;
   }
-  const nested = nestedWorktrees(worktrees, entry.path);
-  if (nested.length) {
-    output.error(chalk.red(`Refusing to remove ${path}: it contains the worktree ${nested.join(', ')}.`));
-    output.error(chalk.dim('Remove the nested worktree first, then retry.'));
-    output.fail();
-    return;
-  }
+  if (refusedLocation(worktrees, path, opts, output)) return;
 
   const service = serviceRunningFrom(path, nativeCanonicalPath);
   if (service) {
@@ -1985,7 +2012,7 @@ async function removeOrRefuse(
             if (process.platform === 'win32' && /Permission denied/i.test(message)) {
               output.error(
                 chalk.dim(
-                  'Another process holds a file or directory inside the worktree. An adb server or emulator started from it keeps its working directory open; `adb kill-server` releases the server, and Sysinternals handle.exe lists other holders.',
+                  'Another process holds a file or directory inside the worktree. A shell or other process whose working directory is inside it keeps the folder; so does an adb server or emulator started from it, which `adb kill-server` releases. Sysinternals handle.exe lists other holders.',
                 ),
               );
             }

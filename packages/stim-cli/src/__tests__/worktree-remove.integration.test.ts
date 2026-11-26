@@ -566,6 +566,34 @@ describe('in a linked worktree, from a subfolder', () => {
     expect(getProject(web)).toBe(null);
   });
 
+  test('Windows refuses removal when the caller cwd is inside the worktree', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    upsertProject(wtDir, { worktreeRoot: true });
+    const platform = process.platform;
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(join(mobile, 'src'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await captureAction(removeOp)(wtDir, {});
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.mock.calls.flat().join('\n')).toContain(
+        `Refusing to remove ${wtDir}: Windows cannot delete a folder that is a working directory, and this command runs inside it.`,
+      );
+      expect(errors.mock.calls.flat().join('\n')).toContain(
+        `Run it from outside the worktree with its path, in PowerShell: cd '${dirname(wtDir)}'; stim worktree remove '${wtDir}'`,
+      );
+      expect(removedTree()).toBe(false);
+      expect(getProject(wtDir)?.worktreeRoot).toBe(true);
+      expect(getProject(mobile)?.metroPort).toBe(8085);
+      expect(getProject(web)?.metroPort).toBe(8086);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+      cwd.mockRestore();
+      errors.mockRestore();
+    }
+  });
+
   test('resolves a symlinked path to its real location before deciding', async () => {
     const { mobile, web, removedTree } = linkedWorktree();
     const links = canon(mkdtempSync(join(tmpdir(), 'stim-test-links-')));
