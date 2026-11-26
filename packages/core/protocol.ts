@@ -56,7 +56,8 @@ export const PEER = 3;
 // compat C12 permanent
 export function peerTooOld(machine: string, stim: string, peer: number, version: string): string {
   const sent = peer > 0 ? `peer ${peer}` : 'no peer';
-  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; run stim remote update ${machine}, or on ${machine} run: npm i -g stim@${version} && stim service install`;
+  const install = `on ${machine} run: npm i -g stim@${version} && stim service install`;
+  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; ${peer > 0 ? `run stim remote update ${machine}, or ${install}` : install}`;
 }
 // compat end
 

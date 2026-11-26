@@ -297,9 +297,10 @@ When the [`remote.machines`](./settings.md#machine-settings) setting names
 remote machines, doctor reports each one this machine is not approved on: not on the
 tailnet, not asked yet, waiting for approval (with the `stim setup`
 command to run there), revoked, lapsed, answering with a different
-stim-server key than the one this machine pinned at approval, or running a
-stim-server too old to speak protocol 2 (`outdated`, naming
-`stim remote update <machine>` to run here, or `stim engine update` to run there). A listed machine
+stim-server key than the one this machine pinned at approval, or running an
+older stim-server (`outdated`, naming `stim remote update <machine>` for a 2.x
+worker, and for a 1.x worker the Stim to install there and the service to
+reinstall). A listed machine
 that never granted an approval is not used for it. `--fix` makes one setup
 ticket for each named machine without a pairing, covering build and device-host
 access, asks again one that revoked or let the request lapse, and forgets the

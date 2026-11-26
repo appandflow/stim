@@ -320,29 +320,41 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
       expect(findings).toEqual([
         expect.objectContaining({
-          fix: expect.stringMatching(/stim remote update mini.*stim engine update/),
+          fix: expect.stringMatching(/On mini, run `npm install --global stim@9\.9\.9` and reinstall its service/),
         }),
       ]);
       expect(readBuildMachines()).toEqual(before);
     });
   });
 
-  it('reports a worker on peer 1 outdated with the peer-too-old remedy', async () => {
-    await approvedCredential();
-    const older: HelloReply = {
-      result: { capabilities: ['build'], peer: 1, server: { stim: '1.42.0' }, device: { id: 'ab12', name: 'laptop' } },
-      serverKey: SERVER_KEY,
-    };
-    const { machines } = await inspectBuildMachines({ fix: false, version: '9.9.9' }, fakeIo([older]).io, ['mini']);
-    expect(machines).toEqual([
-      expect.objectContaining({
-        state: 'outdated',
-        diagnosis: expect.objectContaining({
-          message: `peer-too-old: mini runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update mini, or on mini run: npm i -g stim@9.9.9 && stim service install`,
+  it.each([
+    {
+      server: { peer: 1, server: { stim: '1.42.0' } },
+      message: `peer-too-old: mini runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update mini, or on mini run: npm i -g stim@9.9.9 && stim service install`,
+      remedy: /^Run `stim remote update mini` on /,
+    },
+    {
+      server: { server: { stim: '1.40.0' } },
+      message: `peer-too-old: mini runs stim 1.40.0 (no peer), this Mac needs peer ${PEER}; on mini run: npm i -g stim@9.9.9 && stim service install`,
+      remedy: /^On mini, run `npm install --global stim@9\.9\.9`/,
+    },
+  ])(
+    'reports a worker on an older peer outdated with the update it can take: $message',
+    async ({ server, message, remedy }) => {
+      await approvedCredential();
+      const older: HelloReply = {
+        result: { capabilities: ['build'], ...server, device: { id: 'ab12', name: 'laptop' } },
+        serverKey: SERVER_KEY,
+      };
+      const { machines } = await inspectBuildMachines({ fix: false, version: '9.9.9' }, fakeIo([older]).io, ['mini']);
+      expect(machines).toEqual([
+        expect.objectContaining({
+          state: 'outdated',
+          diagnosis: expect.objectContaining({ message, remedy: expect.stringMatching(remedy) }),
         }),
-      }),
-    ]);
-  });
+      ]);
+    },
+  );
 
   describe('naming the layer an unreachable machine stopped at', () => {
     let upstream: Server;

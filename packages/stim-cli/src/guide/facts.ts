@@ -641,9 +641,8 @@ leased until <time>" for each one.`,
                   person confirmed, so nothing pinned it; fingerprint is the
                   key's fingerprint to compare with the one stim setup
                   printed there, and only stim remote add or doctor --fix in a terminal asks.
-                  A local: entry has no dnsName. "outdated" means its
-                  stim-server speaks protocol 1; the finding names the
-                  stim engine update command to run there.
+                  A local: entry has no dnsName. "outdated": its
+                  stim-server is older; the finding names the fix.
   toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
                   source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
                   brew and adb: source "environment" when this process's

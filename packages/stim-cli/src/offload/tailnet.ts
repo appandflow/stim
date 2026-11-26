@@ -149,16 +149,22 @@ const TURNED_AWAY = new Set(['unauthorized', 'forbidden', 'protocol-unsupported'
 export const SERVER_OUTDATED = 'server-outdated';
 
 /**
- * The doctor finding for a protocol 1 stim-server on `entry`, shared by the build and device-host checks so doctor
- * prints it once. `command` is the setup command, when this machine has an unexpired ticket for it.
+ * The doctor finding for an outdated stim-server on `entry`, shared by the build and device-host checks so doctor
+ * prints it once. `command` is the setup command, when this machine has an unexpired ticket for it. `version` is the
+ * Stim this machine runs. `engine` is true for a worker that sent a peer number, whose engine takes `stim remote
+ * update`; any other worker runs 1.x and installs `version` itself.
  */
 export function outdatedServer(
   entry: string,
   command: string | null,
+  version: string,
   host: string = localMachineName(),
   reason?: string,
+  engine = false,
 ): { title: string; detail: string; fix: string } {
-  const update = `Run \`stim remote update ${entry}\` on ${host}, or on ${entry} run \`stim engine update\``;
+  const update = engine
+    ? `Run \`stim remote update ${entry}\` on ${host}, or on ${entry} run \`stim engine update\``
+    : `On ${entry}, run \`npm install --global stim@${version}\` and reinstall its service with \`stim service install\` and the options it uses now`;
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
     detail:
@@ -494,7 +500,7 @@ export type AccessOutcome =
   | { state: 'key-changed'; credential: MachineCredential }
   | { state: 'unconfirmed'; credential: MachineCredential; fingerprint: string }
   | { state: 'not-asked' }
-  | { state: 'outdated'; credential: MachineCredential; command: string | null; reason?: string }
+  | { state: 'outdated'; credential: MachineCredential; command: string | null; reason?: string; engine?: boolean }
   | { state: 'unreachable'; credential?: MachineCredential; reason: string; transport?: Transport; code?: string };
 
 export interface AccessInput {
@@ -610,7 +616,8 @@ function approved(
   const { peer, server } = reply.result;
   const stim = String(server?.stim ?? 'an older stim');
   const reason = peerTooOld(input.machine, stim, Number(peer ?? 0), input.serverVersion);
-  if (typeof peer !== 'number' || peer < PEER) return { state: 'outdated', credential, command: null, reason };
+  if (typeof peer !== 'number' || peer < PEER)
+    return { state: 'outdated', credential, command: null, reason, engine: typeof peer === 'number' };
   // compat end
   return { state: 'approved', credential, result: reply.result };
 }

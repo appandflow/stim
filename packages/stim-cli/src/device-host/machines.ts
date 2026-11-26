@@ -426,7 +426,7 @@ export async function inspectDeviceHostMachines(
         continue;
       }
       if (outcome.state === 'outdated') {
-        const outdated = outdatedServer(machine, outcome.command, localName, outcome.reason);
+        const outdated = outdatedServer(machine, outcome.command, version, localName, outcome.reason, outcome.engine);
         inspected.machines.push({
           ...known,
           state: 'outdated',

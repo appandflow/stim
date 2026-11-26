@@ -1256,7 +1256,7 @@ The worker runs this machine's exact Stim build for the job, so the two can run
 different releases: it installs a published release from npm the first time,
 and takes a build from a checkout or stim engine use <path> only while its
 server.acceptClientBuilds is true. A worker on an older peer is refused with
-peer-too-old and stim remote update <mac>.
+peer-too-old, whose message names the update.
 
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
