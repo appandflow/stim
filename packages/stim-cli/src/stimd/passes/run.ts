@@ -343,12 +343,43 @@ async function measureCapOnly(
 ): Promise<boolean> {
   if (!capDue(state, now)) return false;
   state.capAt = now;
+  await refreshCargoSizes(state, now, operation, between);
+  return true;
+}
+
+async function refreshCargoSizes(
+  state: MaintenanceState,
+  now: number,
+  operation: StimContext | undefined,
+  between: (() => Promise<void>) | undefined,
+): Promise<void> {
   const cargo = await measureCargoTargets(now, operation, state.sizes, {
     lowPriority: true,
     ...(between ? { between } : {}),
   });
   state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
-  return true;
+}
+
+async function refreshOverCapCargoSizes(
+  state: MaintenanceState,
+  settings: MaintenanceSettings,
+  operation: StimContext | undefined,
+  record: Parameters<typeof deferIfLoaded>[3],
+  between: (() => Promise<void>) | undefined,
+): Promise<void> {
+  const cap = Math.floor(settings.cargoTargetMaxGb * 1024 ** 3);
+  if (cap === 0 || !state.sizes.some((size) => size.name === 'Cargo target' && size.bytes > cap)) return;
+  try {
+    await refreshCargoSizes(state, Date.now(), operation, between);
+  } catch (error) {
+    throwUnverifiedCleanup(error);
+    operation?.signal.throwIfAborted();
+    const message = error instanceof Error ? error.message : String(error);
+    record('maintenance_failure', 'error', `The Cargo target cap could not measure: ${message}`, {
+      target: 'cargo target cap',
+      error: message,
+    });
+  }
 }
 
 async function measureAllSizes(
@@ -535,6 +566,8 @@ export async function runMaintenance(
       writeState(state);
       return;
     }
+    if (caps && !measuredSizes && !cap.ran)
+      await refreshOverCapCargoSizes(state, settings, tick?.operation, record, between);
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
