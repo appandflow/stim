@@ -99,10 +99,10 @@ loaded: a bundle request to this workspace's Metro, or a live process for a
 Release or native app. The summary can say the bundle is still building, or
 that the launch is unverified; the agent follows the printed remedy before
 claiming success. When Android killed the app for not responding (an ANR),
-the run says so with the reason and, on an emulator, the host load. The run
-makes no ANR report for a device hosted on another Mac. Bundle errors, red screens, native
-crashes and Android ANR kills of the launched app show up in
-`stim logs --errors`. None of this proves the screen looks right.
+the run says so with the reason and, on an emulator, the host load. Bundle
+errors, red screens, native crashes and, on a local device, Android ANR kills
+of the launched app show up in `stim logs --errors`. A device on another Mac or
+an EAS remote device gets no ANR report. None of this proves the screen looks right.
 
 You can make the check stricter by having the app log when it is really ready.
 No package is needed: the app logs `[stim:readiness] pending` at startup and
