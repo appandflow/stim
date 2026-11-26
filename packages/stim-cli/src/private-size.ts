@@ -24,7 +24,7 @@ export interface TreeSize {
   bytes: number;
   /** What deleting the tree would free, measured by real-size; null when unavailable. */
   privateBytes: number | null;
-  /** The walk exited with status 1: the bytes are those of what it could read, a lower bound. Absent otherwise. */
+  /** The walk skipped entries: the bytes are those of what it could read, a lower bound. Absent otherwise. */
   partial?: true;
   /** Why `privateBytes` is null when the walk tried to count them: the volume cannot tell, or the counting walk failed. */
   privateUnknown?: 'volume' | 'walk';
@@ -121,7 +121,23 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
     } catch (error) {
       const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
-      if (status === UNSUPPORTED_STATUS) privateUnknown = 'volume';
+      if (status === UNSUPPORTED_STATUS) {
+        privateUnknown = 'volume';
+        if (options.targets) {
+          try {
+            const rootDev = lstatSync(path).dev;
+            const localDirs = dirs.filter((dir) => lstatSync(dir).dev === rootDev);
+            if (localDirs.length < dirs.length) {
+              if (!localDirs.length) return { bytes: fileBytes, privateBytes: filePrivate, partial: true };
+              const { total }: RealSizeResult = JSON.parse(await walk(binary, ['--json', '--', ...localDirs]));
+              if (total)
+                return { bytes: total.allocated + fileBytes, privateBytes: total.private + filePrivate, partial: true };
+            }
+          } catch (retryError) {
+            failed(retryError);
+          }
+        }
+      }
       if (status === 1 && typeof stdout === 'string') {
         try {
           const { total, paths }: RealSizeResult = JSON.parse(stdout);
