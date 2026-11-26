@@ -1022,8 +1022,8 @@ includes prereleases for this request without changing the worker's channel.
 one, or --version with --channel, is STIM_BAD_ARG. The worker refuses a pin, a
 downgrade, or a target at or below its newest build marked bad after a crash
 loop. Run \`stim engine update\` on a pinned worker to resume updates. If the
-worker's peer is too old, pass --version with this machine's version. The command prints the version and the worker's staged, switched
-or refused answer.
+worker's peer is too old, pass --version with this machine's version. The
+command prints the version and the worker's staged, switched or refused answer.
 
 The order of \`remote.machines\` is the priority order for every workload: the
 build, simulator, emulator and macOS app each go to the first listed machine that
