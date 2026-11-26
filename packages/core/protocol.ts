@@ -2043,7 +2043,7 @@ export type BuildRefusalReason = 'capacity' | 'draining' | 'access' | 'attached'
 export interface ProtocolError {
   code: ErrorCode;
   message: string;
-  reason?: BuildRefusalReason;
+  reason?: string;
 }
 
 export type ServerResponse =

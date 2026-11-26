@@ -71,7 +71,11 @@ export function busyBuildMachineRemedy(
   refusalReason?: BuildRefusalReason,
 ): string | undefined {
   const candidate = candidates.find((each) => each.machine === machine);
-  const reason = refusalReason ?? candidate?.refusalReason;
+  const received = refusalReason ?? candidate?.refusalReason;
+  const reason =
+    received === 'capacity' || received === 'draining' || received === 'access' || received === 'attached'
+      ? received
+      : undefined;
   if (reason === 'access')
     return `Run stim remote add ${machine} to request a new build approval. A person on the worker must approve it, or rerun with --remote-build auto or local.`;
   if (reason === 'attached')
