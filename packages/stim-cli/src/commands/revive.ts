@@ -451,6 +451,10 @@ function writeNote(line: string): void {
   console.error(line);
 }
 
+export const reviveOutput: StimContext['output'] = (stream, text) => {
+  if (stream === 'stderr') process.stderr.write(text);
+};
+
 function findWorkspace(cwd: string): Promise<string | null> {
   return findCommandWorkspaceAsync(cwd, repoRootAsync, writeNote);
 }
@@ -566,11 +570,7 @@ export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
               ? failure(claim.code, claim.message, claim.remedy)
               : failure('STIM_CANCELLED', 'The revive was cancelled.', null);
           }),
-        {
-          output: (stream, text) => {
-            if (stream === 'stderr') process.stderr.write(text);
-          },
-        },
+        { output: reviveOutput },
       );
       if (!result.ok) {
         if (json) console.log(JSON.stringify(result.error));
