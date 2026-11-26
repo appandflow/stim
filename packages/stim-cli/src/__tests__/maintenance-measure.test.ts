@@ -168,7 +168,7 @@ test.each([
   const walk = vi.spyOn(privateSize, 'measureTree').mockResolvedValue({ bytes: 50, privateBytes: null });
   const sizes = await measureSizes(Date.now(), () => {}, undefined, []);
   expect(
-    sizes.filter((size) => dirs.includes(size.dir)).map(({ bytes: count, measuredAt: at }) => [count, at]),
+    sizes.filter((size) => dirs.includes(size.dir)).map(({ bytes: count, measuredAt: time }) => [count, time]),
   ).toEqual(dirs.map(() => [walked ? 50 : bytes, walked ? Date.now() : measuredAt]));
   expect(walk.mock.calls.filter(([dir]) => dirs.includes(dir))).toHaveLength(walked ? 2 : 0);
 });
