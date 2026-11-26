@@ -22,7 +22,15 @@ function warnFailed(reports: ReverseDeviceReport[]): void {
 async function inProject(json: boolean, action: (root: string) => Promise<void>): Promise<void> {
   try {
     const root = findCommandWorkspace(process.cwd());
-    if (!root) return refuseNoProject({ json });
+    if (!root)
+      return refuseNoProject(
+        { json },
+        {
+          code: 'STIM_NO_PROJECT',
+          message: 'No package.json was found from this directory.',
+          remedy: 'Run stim ports from the workspace that owns the server.',
+        },
+      );
     await action(root);
   } catch (error) {
     console.error((error as Error).message);

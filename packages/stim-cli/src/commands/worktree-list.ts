@@ -9,7 +9,12 @@ import { freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { daemonMode } from '../daemon/mode.ts';
 import { formatLongDuration, plural } from '../command-output.ts';
 import { formatBytes } from '../fs-util.ts';
-import { listWorktreesAsync, resolveSourceCheckoutAsync, type WorktreeEntry } from '../workspace/worktree.ts';
+import {
+  insideGitCheckout,
+  listWorktreesAsync,
+  resolveSourceCheckoutAsync,
+  type WorktreeEntry,
+} from '../workspace/worktree.ts';
 import { canonicalPath } from './gc/paths.ts';
 import { eachLimited, sizeConcurrency } from './gc/limited.ts';
 import { phase } from './gc/progress.ts';
@@ -309,10 +314,17 @@ export const listOp: Op = defineOp({
       });
       if (!options.all && 'refusal' in source) {
         const noRepository = !source.entries.length;
-        const message = noRepository ? 'No git repository was found from this directory.' : source.refusal;
-        const remedy = noRepository
-          ? 'Run stim worktree list inside a git repository, or pass --all.'
-          : 'Run the commands in the message, then run it again.';
+        const gitFailed = noRepository && insideGitCheckout(operation.cwd);
+        const message = gitFailed
+          ? `git could not list the worktrees of the repository at ${operation.cwd}.`
+          : noRepository
+            ? 'No git repository was found from this directory.'
+            : source.refusal;
+        const remedy = gitFailed
+          ? 'Run git worktree list here to see why, fix it, then run stim worktree list again.'
+          : noRepository
+            ? 'Run stim worktree list inside a git repository, or pass --all.'
+            : 'Run the commands in the message, then run it again.';
         console.error(noRepository ? `${message} ${remedy}` : message);
         if (options.json) console.log(JSON.stringify({ code: 'STIM_BAD_ARG', message, remedy }));
         return 1;

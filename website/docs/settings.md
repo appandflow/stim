@@ -724,7 +724,7 @@ installed before the engine keeps running the build it names until you run
 
 ```bash
 stim engine update          # the newest release on the engine's channel
-stim engine use 1.14.0      # an exact release from npm, pinned until stim engine update
+stim engine use 2.0.0       # an exact release from npm, pinned until stim engine update
 stim engine rollback        # back to the previous build, pinned until stim engine update
 ```
 
