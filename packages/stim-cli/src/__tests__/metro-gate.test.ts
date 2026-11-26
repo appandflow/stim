@@ -126,8 +126,9 @@ test('keeps the manual tunnel remedy by default', async () => {
 });
 
 test('a retry the deadline cuts off keeps the last answered status', async () => {
+  let calls = 0;
   const probe = vi.fn<(url: string, signal: AbortSignal) => Promise<number | null>>(async (_url, signal) =>
-    probe.mock.calls.length === 1
+    ++calls === 1
       ? 530
       : new Promise<null>((resolve) => signal.addEventListener('abort', () => resolve(null), { once: true })),
   );
