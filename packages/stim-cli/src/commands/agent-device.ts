@@ -33,7 +33,6 @@ import {
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { migrateWorkspaceAgentDeviceDir } from '../workspace/noindex-folders.ts';
-import { runProcessOperation } from '../cli-operation.ts';
 import { hostedAgentSessionName } from '../hosted-names.ts';
 import { resolveOwnedAvdSerialAsync } from '../devices/android.ts';
 import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
@@ -574,11 +573,11 @@ function versionAtLeast(version: string | null): boolean {
   return Number(patch) >= wantPatch;
 }
 
-function refuse(found: AgentDeviceRefusal, json: boolean): void {
+function refuse(found: AgentDeviceRefusal, json: boolean, exitCode = 1): void {
   if (json) console.log(JSON.stringify(found));
   console.error(chalk.red(phaseLine('error', `${found.code}: ${found.message}`)));
   console.error(phaseLine('remedy', found.remedy));
-  process.exitCode = 1;
+  process.exitCode = exitCode;
 }
 
 function publish(params: PresencePublishParams): Promise<void> {
@@ -626,7 +625,7 @@ async function runAgentDevice(argv: string[]): Promise<void> {
   if ('refusal' in plan) return refuse(plan.refusal, json);
   if (needsRevive(project, state, plan.device)) {
     const failed = await revive(root, plan.device);
-    if (failed) return refuse(failed, json);
+    if (failed) return refuse(failed.refusal, json, failed.exitCode);
     project = getProject(root);
     state = readWorkspaceState(root);
     plan = planAgentDevice(await resolveDevices(root, project, state), argv);
@@ -637,33 +636,40 @@ async function runAgentDevice(argv: string[]): Promise<void> {
   await execute(invocation, argv, { plan, ...built }, root);
 }
 
-async function revive(root: string, device: WorkspaceDevice): Promise<AgentDeviceRefusal | null> {
+async function revive(
+  root: string,
+  device: WorkspaceDevice,
+): Promise<{ refusal: AgentDeviceRefusal; exitCode: number } | null> {
   console.error(
     `stim agent-device: reviving this workspace's ${device.platform === 'ios' ? 'simulator' : 'emulator'} after its idle stop.`,
   );
   try {
     const { runOperation } = await import('../run-operation.ts');
     const entered = await runOperation({ caller: 'cli', command: 'revive', plan: false, cwd: root, env: process.env });
-    if ('refusal' in entered) return entered.refusal;
+    if ('refusal' in entered) return { refusal: entered.refusal, exitCode: 1 };
   } catch {}
-  const { runRevive, reviveDeps, reviveLines, reviveOutput } = await import('./revive.ts');
-  const { value: result, interrupted } = await runProcessOperation(
-    root,
-    (context) =>
-      runRevive({
-        root,
-        note: (line) => console.error(line),
-        requestedDevice: device.platform === 'ios' ? device.id : (device.avdName ?? null),
-        deps: reviveDeps(context),
-      }),
-    { output: reviveOutput },
-  );
-  if (interrupted !== null) process.exit(interrupted);
+  const { reviveInProcess, reviveLines } = await import('./revive.ts');
+  const { result, interrupted } = await reviveInProcess(root, {
+    note: (line) => console.error(line),
+    requestedDevice: device.platform === 'ios' ? device.id : (device.avdName ?? null),
+  });
   if (!result.ok)
     return {
-      code: result.error.code,
-      message: result.error.message,
-      remedy: result.error.remedy ?? 'Run `stim revive` and follow its remedy.',
+      refusal: {
+        code: result.error.code,
+        message: result.error.message,
+        remedy: result.error.remedy ?? 'Run `stim revive` and follow its remedy.',
+      },
+      exitCode: interrupted ?? 1,
+    };
+  if (interrupted !== null)
+    return {
+      refusal: {
+        code: 'STIM_CANCELLED',
+        message: 'stim agent-device was interrupted after the revive, so agent-device did not run.',
+        remedy: 'Run the stim agent-device command again.',
+      },
+      exitCode: interrupted,
     };
   for (const line of reviveLines(result.facts, Date.now())) console.error(line);
   return null;

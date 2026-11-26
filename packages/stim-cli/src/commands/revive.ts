@@ -536,6 +536,38 @@ export function reviveDeps(context: StimContext): ReviveDeps {
   };
 }
 
+export async function reviveInProcess(
+  root: string,
+  {
+    note,
+    requestedDevice,
+    overrides = {},
+  }: {
+    note: (line: string) => void;
+    requestedDevice: string | null;
+    overrides?: Partial<ReviveDeps>;
+  },
+): Promise<{ result: ReviveResult; interrupted: number | null }> {
+  const { value: result, interrupted } = await runProcessOperation(
+    root,
+    (context) =>
+      runRevive({
+        root,
+        note,
+        requestedDevice,
+        deps: { ...reviveDeps(context), ...overrides },
+      }).catch((error: unknown) => {
+        if (!context.signal.aborted) throw error;
+        const claim = claimFailure(error, 'stim revive');
+        return claim
+          ? failure(claim.code, claim.message, claim.remedy)
+          : failure('STIM_CANCELLED', 'The revive was cancelled.', null);
+      }),
+    { output: reviveOutput },
+  );
+  return { result, interrupted };
+}
+
 export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
   return defineOp({
     name: 'revive',
@@ -555,23 +587,11 @@ export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
         return;
       }
       await recordWorkspaceUseAsync(root);
-      const { value: result, interrupted } = await runProcessOperation(
-        root,
-        (context) =>
-          runRevive({
-            root,
-            note: writeNote,
-            requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
-            deps: { ...reviveDeps(context), ...overrides },
-          }).catch((error: unknown) => {
-            if (!context.signal.aborted) throw error;
-            const claim = claimFailure(error, 'stim revive');
-            return claim
-              ? failure(claim.code, claim.message, claim.remedy)
-              : failure('STIM_CANCELLED', 'The revive was cancelled.', null);
-          }),
-        { output: reviveOutput },
-      );
+      const { result, interrupted } = await reviveInProcess(root, {
+        note: writeNote,
+        requestedDevice: process.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
+        overrides,
+      });
       if (!result.ok) {
         if (json) console.log(JSON.stringify(result.error));
         console.error(chalk.red(phaseLine('error', `${result.error.code}: ${result.error.message}`)));
