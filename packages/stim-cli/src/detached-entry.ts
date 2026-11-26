@@ -16,8 +16,9 @@ const LAUNCH_SCRIPT = [
   '$si = [Runtime.InteropServices.Marshal]::AllocHGlobal($reserved2 + 5 * $p)',
   '[Runtime.InteropServices.Marshal]::Copy([byte[]]::new($reserved2 + 5 * $p), 0, $si, $reserved2 + 5 * $p)',
   "$size, $flags, $startFlags, $inherit = ($reserved2 + 4 * $p), $(if ($console -eq 'none') { 0x8 } else { 0x10 }), $(if ($console -eq 'hidden') { 0x1 } else { 0 }), $false",
-  'if ($log) {',
-  "  $stream = [IO.File]::Open($log, 'Create', 'Write', 'ReadWrite, Delete')",
+  '$stream = $null',
+  "if ($log) { try { $stream = [IO.File]::Open($log, 'Create', 'Write', 'ReadWrite, Delete') } catch {} }",
+  'if ($stream) {',
   '  $handle = $stream.SafeFileHandle.DangerousGetHandle()',
   '  $listSize = [IntPtr]::Zero',
   '  [void]$k::InitializeProcThreadAttributeList([IntPtr]::Zero, 1, 0, [ref]$listSize)',
@@ -45,7 +46,7 @@ const LAUNCH_SCRIPT = [
  * CreateProcessW with CREATE_BREAKAWAY_FROM_JOB, and again without it when that fails. libuv also spawns with
  * bInheritHandles=TRUE (libuv/libuv#1490, fixed by libuv/libuv#5100 but not in a released Node.js), so a child keeps
  * open the pipe a `stim start | Out-File x` pipeline gave this process; the process inherits only `logFile`, through
- * PROC_THREAD_ATTRIBUTE_HANDLE_LIST, as stdout and stderr. `console` is a new hidden console, a new console, or none.
+ * PROC_THREAD_ATTRIBUTE_HANDLE_LIST, as stdout and stderr. A `logFile` that cannot be opened is left out. `console` is a new hidden console, a new console, or none.
  * The script calls no cmdlet: stimd's launch environment has no PSModulePath, and Windows PowerShell 5.1 then searches
  * for the first cmdlet's module for tens of seconds.
  * The STARTUPINFOEXW offsets follow

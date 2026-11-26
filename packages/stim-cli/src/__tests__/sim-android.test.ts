@@ -737,6 +737,25 @@ test('bootAndroidEmulator still boots when the log file cannot be opened', async
   expect(spawned[0]?.stdio).toBe('ignore');
 });
 
+test('bootAndroidEmulator on Windows boots without a log when the log directory cannot be created', async () => {
+  const launches: Array<Record<string, string> | undefined> = [];
+  setExecutor({
+    runFile: (_file: string, _args: string[], opts: { env?: Record<string, string> }) => {
+      if (!opts.env?.STIM_WINDOWS_LAUNCH_ARGS) return '';
+      launches.push(opts.env);
+      return '42';
+    },
+    runFileQuiet: () => null,
+  });
+  const blocker = join(tmpHome, 'blocker');
+  writeFileSync(blocker, '');
+  expect(
+    await bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'logs', 'emulator.log'), platform: 'win32' }),
+  ).toBe(42);
+  expect(launches).toHaveLength(1);
+  expect(launches[0]?.STIM_WINDOWS_LAUNCH_LOG).toBe('');
+});
+
 test('resolvePhysicalDevice refuses an ambiguous choice and names every candidate', () => {
   const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n0123456789ABCDEF\tdevice\n`);
   const result = resolvePhysicalDevice(null, adb, () => false);

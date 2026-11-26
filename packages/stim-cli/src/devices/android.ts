@@ -1287,16 +1287,15 @@ export async function bootAndroidEmulator(
     ...suppressEmulatorCrashConsent({ platform }),
   ];
   if (platform === 'win32') {
-    if (logFile) mkdirSync(dirname(logFile), { recursive: true });
+    const log = logFile && emulatorLogDirectory(logFile) ? { logFile } : {};
     const home = homedir();
-    const launcher = windowsDetachedLaunchArgs({
-      file,
-      args,
-      cwd: home,
-      console: 'none',
-      ...(logFile ? { logFile } : {}),
-    });
-    const pid = Number(exec.runFile(launcher.file, launcher.args, { cwd: home, env: launcher.env, timeoutMs: 30_000 }));
+    const launcher = windowsDetachedLaunchArgs({ file, args, cwd: home, console: 'none', ...log });
+    let pid: number;
+    try {
+      pid = Number(exec.runFile(launcher.file, launcher.args, { cwd: home, env: launcher.env, timeoutMs: 30_000 }));
+    } catch (error) {
+      throw new Error(`Could not start the Android emulator for ${avdName}.`, { cause: error });
+    }
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   }
   const child = exec.spawn(file, args, {
@@ -1310,6 +1309,15 @@ export async function bootAndroidEmulator(
     await openEmulatorInStimDesktop(`emulator-${consolePort}`);
   }
   return pid;
+}
+
+function emulatorLogDirectory(logFile: string): boolean {
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function emulatorStdio(logFile?: string | null): 'ignore' | (number | 'ignore')[] {
