@@ -182,6 +182,10 @@ stim gc --pressure critical # free everything; the next builds are cold`}
 removes finished worktrees. [How cleanup works](./maintenance.md) lists what it
 and the daemon delete, when, and the exceptions. Use plain `stim gc` for routine cleanup.
 
+The next Stim command in a worktree whose dependencies were cleaned restores
+them with `stim worktree warm`, or refuses with `STIM_DEPS_FAILED` and asks
+for an install.
+
 To put the shared caches on another volume, set `STIM_BUILD_CACHE` and
 `STIM_METRO_CACHE`, or `caches.buildCache` and `caches.metroCache` in the
 machine config, to absolute paths.

@@ -113,6 +113,8 @@ like its own, and removes a finished worktree only when it is clean, idle, and
 holds no ignored file the main checkout lacks. `maintenance.autoDiscover`
 (off by default) reaches further. [Which checkouts it
 maintains](./maintenance.md#which-checkouts-it-maintains) has the rules.
+`stim doctor` reports how much build output such checkouts hold and the command
+that adds their folder.
 
 <PromptBox title="Find reclaimable checkouts">
 {`Add my Developer folder to maintenance.discoverRoots, run stim gc --dry-run, and tell me which discovered checkouts hold the most regenerable space and why each is kept or cleared.`}
