@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { windowsLauncherArgs, windowsDetachedLaunchArgs } from '../detached-entry.ts';
-import { getExecutor } from '../exec.ts';
+import { windowsLauncherArgs } from '../detached-entry.ts';
+import { getExecutor, windowsDetachedLaunchArgs } from '../exec.ts';
 
 let dir: string;
 beforeEach(() => {
@@ -82,6 +82,24 @@ test.skipIf(process.platform !== 'win32')(
     );
     expect(pid).toBeGreaterThan(0);
     expect(() => process.kill(pid)).not.toThrow();
+  },
+  75_000,
+);
+
+test.skipIf(process.platform !== 'win32')(
+  'the Windows launcher runs a .cmd shim with its arguments',
+  async () => {
+    const shim = join(dir, 'tool space.cmd');
+    const marker = join(dir, 'args.txt');
+    writeFileSync(shim, `@echo %1 %2> "${marker}.tmp"\r\n@move /y "${marker}.tmp" "${marker}" > nul\r\n`);
+    const launcher = windowsDetachedLaunchArgs({ file: shim, args: ['dev', 'a&b'], cwd: tmpdir(), console: 'none' });
+    const pid = Number(
+      getExecutor().runFile(launcher.file, launcher.args, { cwd: dir, env: launcher.env, timeoutMs: 60_000 }),
+    );
+    expect(pid).toBeGreaterThan(0);
+    for (let attempt = 0; attempt < 200 && !existsSync(marker); attempt += 1)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(readFileSync(marker, 'utf8').trim()).toBe('"dev" "a&b"');
   },
   75_000,
 );

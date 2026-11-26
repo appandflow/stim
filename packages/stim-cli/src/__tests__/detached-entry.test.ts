@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnOptions } from 'node:child_process';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { relaunchWithLogFile, windowsLauncherArgs, windowsDetachedLaunchArgs } from '../detached-entry.ts';
+import { relaunchWithLogFile, windowsLauncherArgs } from '../detached-entry.ts';
+import { windowsDetachedLaunchArgs } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
 let dir: string;

@@ -59,6 +59,7 @@ import {
   requestDaemonTick,
   serveThroughStimd,
   stimdBuildId,
+  waitForStimdHello,
 } from '../daemon/client.ts';
 import { holdCIStimd } from '../stimd/attached.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
@@ -2348,7 +2349,7 @@ test('on win32 a command starts stimd through the hidden launcher, which passes 
     expect.objectContaining({
       windowsHide: true,
       detached: false,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'ignore'],
       env: expect.objectContaining({ Path: 'C:\\tools' }),
     }),
   );
@@ -2356,3 +2357,22 @@ test('on win32 a command starts stimd through the hidden launcher, which passes 
     /"__stimd" "--mode" "on" "--log-file" ".*stimd\.log"$/,
   );
 }, 20_000);
+
+test('on win32 a command waits past the attach delay for the stimd its launcher started instead of hosting one', async () => {
+  let run: Promise<unknown> | undefined;
+  const spawn = vi.fn<ReturnType<typeof getExecutor>['spawn']>(() => {
+    setTimeout(() => (run = runStimd({ tickMs: 60_000, mode: 'on' })), 2500);
+    return spawnChild(process.execPath, ['-e', 'process.stdout.write("4242")']);
+  });
+  setExecutor({ ...getExecutor(), spawn });
+  onTestFinished(() => resetExecutor());
+  const cli = Symbol.for('stim.cli');
+  Reflect.set(globalThis, cli, true);
+  onTestFinished(() => void Reflect.deleteProperty(globalThis, cli));
+
+  expect(await ensureStimd({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' }, 'win32')).toBe(true);
+
+  expect(await waitForStimdHello()).toBe('held');
+  await stopStimd();
+  await run;
+}, 30_000);
