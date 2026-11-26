@@ -900,7 +900,7 @@ async function runStimdInner(
   const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
   const details = {
     socket: path,
-    mode: startMode,
+    mode: effectiveMode(),
     build,
     version: identity.version,
     bootAt,

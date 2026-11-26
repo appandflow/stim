@@ -158,7 +158,7 @@ test('a leftover maintenance.mode caps status at report and explains the cap', (
   );
 });
 
-test('a running daemon claim without a tick respects the leftover maintenance cap', () => {
+test('before its first tick a capped stimd reads as held at report by the leftover, under the env status read', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
   vi.stubEnv('STIM_HOME', home);
   vi.stubEnv('STIM_DAEMON', 'on');
@@ -166,7 +166,7 @@ test('a running daemon claim without a tick respects the leftover maintenance ca
     root: daemonClaimRoot(),
     mode: 'shared',
     label: 'stimd',
-    details: { mode: 'on' },
+    details: { mode: 'report' },
   }).acquired;
   onTestFinished(() => {
     if (claim) releaseClaim(claim);

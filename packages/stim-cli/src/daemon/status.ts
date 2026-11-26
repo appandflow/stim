@@ -56,10 +56,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   const snapshot = holder && read?.pid !== holder.owner.pid ? null : read;
   const waiting = listWaiting();
   const testWaiting = listTestWaiting();
-  const claimMode = holder ? parseDaemonMode(holder.details.mode) : null;
-  const runningMode = holder
-    ? (parseDaemonMode(snapshot?.mode) ?? (claimMode && leftover ? stricterDaemonMode(claimMode, leftover) : claimMode))
-    : null;
+  const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
   const mode = runningMode ?? setting;
   const unverified = parseUnverifiedCleanups(holder?.details.unverified);
   const unverifiedConsoles = parseUnverifiedConsoles(holder?.details.unverifiedConsoles);
