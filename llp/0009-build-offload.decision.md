@@ -361,7 +361,7 @@ that published release. Doctor and the `peer-too-old` refusal name
 `--version` with the client's own version for a worker whose peer is too old:
 the npm listing carries no peer per version, so a channel pick can land on a
 release older than the worker, which refuses a downgrade, while the client's
-own version always carries the client's peer. An unpublished version, or
+own version, when published, always carries the client's peer; a client on an unpublished build gets a remedy naming a version npm does not list. An unpublished version, or
 `--version` with `--channel`, refuses with `STIM_BAD_ARG` before the worker is
 asked. Maintainer decision: "yes do it for 2.0", 2026-11-26
 ([#6508](https://github.com/appandflow/stim/issues/6508)).
