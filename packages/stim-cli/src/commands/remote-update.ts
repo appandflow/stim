@@ -77,7 +77,7 @@ export async function updateRemoteMachine(
         throw new Error(
           selected === 'next'
             ? `${machine} follows next; nothing carries peer ${PEER}; build locally`
-            : `${machine} follows ${selected}; peer ${PEER} exists only on next; run stim remote update ${machine} --version ${callerVersion}, or build locally`,
+            : `${machine} follows ${selected}; peer ${PEER} exists only on next; run stim remote update ${machine} --to ${callerVersion}, or build locally`,
         );
       version = picked;
     }

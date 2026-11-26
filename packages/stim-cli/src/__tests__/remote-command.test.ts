@@ -148,7 +148,7 @@ test('update resolves an approved worker, selects its channel and prints its sta
   expect(process.exitCode).toBeUndefined();
 });
 
-test('update --version sends that exact release even when the channel would pick another', async () => {
+test('update --to sends that exact release even when the channel would pick another', async () => {
   await approveMini();
   updating.open.mockResolvedValue(undefined);
   updating.request
@@ -160,15 +160,15 @@ test('update --version sends that exact release even when the channel would pick
       'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' },
     }),
   );
-  const out = await remote(fakeIo([]), 'update', 'mini', '--version', '9.9.0');
+  const out = await remote(fakeIo([]), 'update', 'mini', '--to', '9.9.0');
   expect(updating.request).toHaveBeenCalledWith('engine.update', { version: '9.9.0' });
   expect(out).toContain('mini: stim 9.9.0. Staged.');
   expect(process.exitCode).toBeUndefined();
 });
 
 test.each([
-  { args: ['--version', '9.12.0'], refusal: 'STIM_BAD_ARG: stim 9.12.0 is not published on npm.' },
-  { args: ['--version', '9.9.0', '--channel', 'next'], refusal: 'STIM_BAD_ARG: --version names one release' },
+  { args: ['--to', '9.12.0'], refusal: 'STIM_BAD_ARG: stim 9.12.0 is not published on npm.' },
+  { args: ['--to', '9.9.0', '--channel', 'next'], refusal: 'STIM_BAD_ARG: --to names one release' },
 ])('update $args refuses before asking the worker to update', async ({ args, refusal }) => {
   await approveMini();
   updating.open.mockResolvedValue(undefined);

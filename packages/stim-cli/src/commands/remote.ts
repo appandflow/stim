@@ -213,10 +213,10 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
     name: 'update',
     arguments: '<machine>',
     description:
-      'Update an approved remote machine to the newest compatible Stim release on its channel, or to the release --version names.',
+      'Update an approved remote machine to the newest compatible Stim release on its channel, or to the release --to names.',
     options: {
       channel: { flags: '--channel <channel>', description: 'select versions from latest or next for this update' },
-      version: { flags: '--version <version>', description: 'update to exactly this published Stim release' },
+      to: { flags: '--to <version>', description: 'update to exactly this published Stim release' },
     },
     run: ({ args: [machine], options: opts, version }) =>
       run(false, async () => {
@@ -224,11 +224,11 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
         const channel = opts.channel === 'latest' || opts.channel === 'next' ? opts.channel : undefined;
         if (opts.channel && !channel)
           throw refusal('STIM_BAD_ARG', `--channel ${opts.channel} is unknown.`, 'Use latest or next.');
-        if (opts.channel && opts.version)
+        if (opts.channel && opts.to)
           throw refusal(
             'STIM_BAD_ARG',
-            '--version names one release, so --channel cannot also choose one.',
-            `Run \`stim remote update ${machine} --version ${opts.version}\` or \`stim remote update ${machine} --channel ${opts.channel}\`.`,
+            '--to names one release, so --channel cannot also choose one.',
+            `Run \`stim remote update ${machine} --to ${opts.to}\` or \`stim remote update ${machine} --channel ${opts.channel}\`.`,
           );
         const { updateRemoteMachine } = await import('./remote-update.ts');
         try {
@@ -237,7 +237,7 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
               processContext(process.cwd()),
               machine,
               version,
-              opts.version ? { version: opts.version } : { channel },
+              opts.to ? { version: opts.to } : { channel },
               io,
             ),
           );
@@ -342,8 +342,6 @@ export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
     name: 'remote',
     description:
       'Manage remote.machines, the remote machines this machine builds on and hosts devices on. Works from any directory.',
-    version: true,
-    positionalOptions: true,
     commands: [addCommand, updateCommand, listCommand, removeCommand],
   });
 }

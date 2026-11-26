@@ -356,15 +356,18 @@ packages are taken only while `server.acceptClientBuilds` is `true`, its
 default being `false`.
 
 `stim remote update <machine>` picks the newest release on the worker's channel
-whose peer is at least the client's, or, with `--version <version>`, exactly
+whose peer is at least the client's, or, with `--to <version>`, exactly
 that published release. Doctor and the `peer-too-old` refusal name
-`--version` with the client's own version for a worker whose peer is too old:
+`--to` with the client's own version for a worker whose peer is too old:
 the npm listing carries no peer per version, so a channel pick can land on a
 release older than the worker, which refuses a downgrade, while the client's
 own version, when published, always carries the client's peer; a client on an unpublished build gets a remedy naming a version npm does not list. An unpublished version, or
-`--version` with `--channel`, refuses with `STIM_BAD_ARG` before the worker is
-asked. Maintainer decision: "yes do it for 2.0", 2026-11-26
-([#6508](https://github.com/appandflow/stim/issues/6508)).
+`--to` with `--channel`, refuses with `STIM_BAD_ARG` before the worker is
+asked. The flag is `--to`, not `--version`, because `--version` anywhere
+after a `remote` subcommand prints Stim's version. Maintainer decision: "yes do
+it for 2.0", 2026-11-26 ([#6508](https://github.com/appandflow/stim/issues/6508));
+the maintainer chose the name `--to` in the coordinating session on 2026-11-26,
+which the issue does not record.
 
 A service installed before the engine existed keeps running the build its unit names: neither the server nor stimd rewrites or reloads a unit at boot. `stim setup`, `stim service status` and `stim doctor` report a managed unit that does not run what `stim service install` writes now and print `stim service install` as the remedy, the only path onto the shim: a LaunchAgent whose plist `ProgramArguments` or `ProcessType`, or the arguments launchd loaded, differ (Maintainer decision for LaunchAgents: "do the small fix for 2.0", 2026-11-19, [#5859](https://github.com/appandflow/stim/issues/5859#issuecomment-7024979961)), and a systemd unit that names node while the engine store has the shim, or sets no `KillMode=process`. `stim setup` still reinstalls a unit whose script or options differ, as install does. Chosen by the lane for #6027, not by the maintainer: the boot rewrite this replaces could drop a key a user added to the plist and leave a staged file, and the stale finding already names the fix. A Windows task runs the build it was installed with, since the engine writes no Windows `stimd` entry (#5602).
 

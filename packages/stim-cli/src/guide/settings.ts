@@ -1000,7 +1000,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim remote add janics-mac-mini
   stim remote list
   stim remote remove janics-mac-mini
-  stim remote update janics-mac-mini [--channel next | --version <version>]
+  stim remote update janics-mac-mini [--channel next | --to <version>]
 
 \`stim remote add\` appends the machine to the machine-scope list, keeping the
 entries already there, asks it for build and device-host approval and prints
@@ -1018,11 +1018,11 @@ a person on that machine runs to withdraw its approvals.
 \`stim remote update <machine>\` updates an approved machine to the newest
 release on its channel whose peer is at least this caller's. --channel next
 includes prereleases for this request without changing the worker's channel.
---version <version> asks for exactly that published release; an unpublished
-one, or --version with --channel, is STIM_BAD_ARG. The worker refuses a pin, a
+--to <version> asks for exactly that published release; an unpublished
+one, or --to with --channel, is STIM_BAD_ARG. The worker refuses a pin, a
 downgrade, or a target at or below its newest build marked bad after a crash
 loop. Run \`stim engine update\` on a pinned worker to resume updates. If the
-worker's peer is too old, pass --version with this machine's version. The
+worker's peer is too old, pass --to with this machine's version. The
 command prints the version and the worker's staged, switched or refused answer.
 
 The order of \`remote.machines\` is the priority order for every workload: the
