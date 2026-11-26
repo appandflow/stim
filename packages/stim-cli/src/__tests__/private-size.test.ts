@@ -100,3 +100,18 @@ test('targets count private bytes from the real-size total of their directories 
   ).toEqual({ bytes: 300 + fileBytes + linkedBytes, privateBytes: 90 + fileBytes });
   expect(runFileAsync.mock.calls[0]?.[1].slice(-3)).toEqual(['--json', '--', join(root, 'a')]);
 });
+
+test('file-only targets count their singly linked files without a real-size run', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  const root = mkdtempSync(join(tmpdir(), 'stim-private-targets-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'file'), 'x'.repeat(10_000));
+  const bytes = lstatSync(join(root, 'file')).blocks * 512;
+  const runFileAsync = vi.fn<ReturnType<typeof getExecutor>['runFileAsync']>();
+  setExecutor({ ...getExecutor(), runFileAsync });
+  expect(await measureTree(root, { timeoutMs: 1000, targets: [join(root, 'file')] })).toEqual({
+    bytes,
+    privateBytes: bytes,
+  });
+  expect(runFileAsync).not.toHaveBeenCalled();
+});

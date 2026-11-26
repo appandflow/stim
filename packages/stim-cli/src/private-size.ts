@@ -110,11 +110,11 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
       if (info.nlink === 1) filePrivate += info.blocks * 512;
     }
   }
-  const walked = binary && (!options.targets || dirs.length) ? binary : null;
-  if (walked) {
+  if (binary && options.targets && !dirs.length) return { bytes: fileBytes, privateBytes: filePrivate };
+  if (binary) {
     try {
       const { total, paths }: RealSizeResult = JSON.parse(
-        await walk(walked, ['--json', '--', ...(options.targets ? dirs : [path])]),
+        await walk(binary, ['--json', '--', ...(options.targets ? dirs : [path])]),
       );
       const size = options.targets ? total : paths[0];
       if (size) return { bytes: size.allocated + fileBytes, privateBytes: size.private + filePrivate };

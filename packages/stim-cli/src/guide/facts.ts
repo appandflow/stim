@@ -189,7 +189,7 @@ leased until <time>" for each one.`,
     Repository checkedAt/oldestCheckedAt are the newest/oldest observation times
     (--all), or now (current check); null when never checked. --all uses saved
     observations; unchecked worktrees have willRemove null.
-    Real size sums node_modules, Pods and the rest's private bytes (APFS, ext4, btrfs or XFS),
+    Real size sums node_modules, Pods and the rest's private bytes, or one whole walk's (APFS, ext4, btrfs or XFS),
     unknown when unavailable; apparent size is allocated bytes. Neither includes
     Stim workspace data outside the checkout.
     measuredAt is when its oldest measured part was walked.
