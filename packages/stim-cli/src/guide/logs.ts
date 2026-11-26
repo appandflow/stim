@@ -120,7 +120,7 @@ serve bounded log queries.
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, plus device records with
   event native_crash (app/device/time-correlated OS reports or fatal app console output)
-  and device records with platform web (the owned page's failed requests and
+  or anr_kill (Android killed the launched app for an ANR), and device records with platform web (the owned page's failed requests and
   browser errors, from stim web), timestamped after the
   marker that closes their window. Three rules, and a field test
   caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
@@ -666,8 +666,7 @@ WHAT WRITES WHAT
                        Native iOS simulator reports match app ID, simulator ID
                        and launch time. atos resolves app addresses only after
                        the local binary UUID matches the report. Android reads
-                       the crash buffer even when the app PID has exited, and
-                       records an ActivityManager ANR kill of the launch. Java
+                       the crash buffer even when the app PID has exited. Java
                        traces remain readable; C/C++ resolution uses NDK tools
                        and matching local ELF build IDs. General OS noise remains
                        excluded from --errors. Full native evidence is in

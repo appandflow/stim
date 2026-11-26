@@ -424,19 +424,20 @@ interface AndroidAnrKill {
 }
 
 /**
- * Finds ActivityManager killing the target app's most recently started main process for an ANR, with the reason
- * its ANR report gave. Android logs an ANR kill as `bg anr`, or as a plain kill of the PID its `ANR in` report named.
+ * Finds ActivityManager killing the target app's main process for an ANR, with the reason its ANR report gave, and the
+ * pid the app was last started with. Android logs an ANR kill as `bg anr`, or as a plain kill of the PID its `ANR in`
+ * report named.
  */
-export function parseAndroidAnrKill(
+export function parseAndroidAnrKills(
   text: string,
   target: Pick<CrashTarget, 'appId' | 'since'>,
   clockOffsetMs: number,
-): AndroidAnrKill | null {
+): { kills: AndroidAnrKill[]; startedPid: number | null } {
   let startedPid: string | null = null;
   let anrPid: string | null = null;
   let inAppAnr = false;
   let reason: string | null = null;
-  let found: AndroidAnrKill | null = null;
+  const kills: AndroidAnrKill[] = [];
   for (const line of text.split('\n')) {
     const record = parseLogcatLine(line, { clockOffsetMs });
     if (!record || Number(record.ts) < target.since) continue;
@@ -446,7 +447,7 @@ export function parseAndroidAnrKill(
     const kill = /^Killing (\d+):([^/\s]+)\/\S+ \(adj -?\d+\): (.*)$/.exec(msg);
     if (start?.[2] === target.appId) {
       startedPid = start[1] ?? null;
-      anrPid = reason = found = null;
+      anrPid = reason = null;
     } else if (anr) {
       inAppAnr = anr[1] === target.appId;
       if (inAppAnr) anrPid = reason = null;
@@ -459,10 +460,35 @@ export function parseAndroidAnrKill(
       kill[1] === startedPid &&
       (kill[1] === anrPid || /\banr\b/i.test(kill[3] ?? ''))
     ) {
-      found = { reason, pid: Number(kill[1]), ts: Number(record.ts), deviceTs: Number(record.deviceTs) };
+      kills.push({ reason, pid: Number(kill[1]), ts: Number(record.ts), deviceTs: Number(record.deviceTs) });
     }
   }
-  return found;
+  return { kills, startedPid: startedPid === null ? null : Number(startedPid) };
+}
+
+/** Finds an ANR kill of the target app's most recently started main process. */
+export function parseAndroidAnrKill(
+  text: string,
+  target: Pick<CrashTarget, 'appId' | 'since'>,
+  clockOffsetMs: number,
+): AndroidAnrKill | null {
+  const { kills, startedPid } = parseAndroidAnrKills(text, target, clockOffsetMs);
+  const last = kills.at(-1);
+  return last && last.pid === startedPid ? last : null;
+}
+
+async function readActivityManagerLog(deviceId: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    return await crashCommand(
+      'adb',
+      ['-s', deviceId, 'logcat', '-b', 'system', '-d', '-v', 'time,epoch', '-s', 'ActivityManager'],
+      { timeoutMs: 10000, cwd: androidToolCwd() },
+      signal,
+    );
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
 }
 
 export async function readAndroidAnrKill(
@@ -470,18 +496,8 @@ export async function readAndroidAnrKill(
   clockOffsetMs: number,
   signal?: AbortSignal,
 ): Promise<AndroidAnrKill | null> {
-  try {
-    const text = await crashCommand(
-      'adb',
-      ['-s', target.deviceId, 'logcat', '-b', 'system', '-d', '-v', 'time,epoch', '-s', 'ActivityManager'],
-      { timeoutMs: 10000, cwd: androidToolCwd() },
-      signal,
-    );
-    return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;
-  } catch {
-    signal?.throwIfAborted();
-    return null;
-  }
+  const text = await readActivityManagerLog(target.deviceId, signal);
+  return text ? parseAndroidAnrKill(text, target, clockOffsetMs) : null;
 }
 
 async function captureAndroidAnrKill(
@@ -490,31 +506,32 @@ async function captureAndroidAnrKill(
   logsDir: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const kill = await readAndroidAnrKill(target, clockOffsetMs, signal);
-  if (!kill) return;
-  const record: NdjsonRecord = {
-    ts: kill.ts,
-    deviceTs: kill.deviceTs,
-    pid: kill.pid,
-    src: 'device',
-    platform: 'android',
-    level: 'fatal',
-    event: 'anr_kill',
-    appId: target.appId,
-    deviceId: target.deviceId,
-    ...(target.slot && target.slot !== 'default' ? { slot: target.slot } : {}),
-    msg: `Android killed ${target.appId} for not responding (ANR)${kill.reason ? `\nReason: ${kill.reason}` : ''}`,
-  };
-  const key = createHash('sha256')
-    .update(JSON.stringify(['anr', record.slot, target.deviceId, kill.deviceTs, kill.pid]))
-    .digest('hex');
-  try {
-    await writeDiagnosticOnceAsync(
-      join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`),
-      `${JSON.stringify(record)}\n`,
-      signal,
-    );
-  } catch {}
+  const text = await readActivityManagerLog(target.deviceId, signal);
+  for (const kill of text ? parseAndroidAnrKills(text, target, clockOffsetMs).kills : []) {
+    const record: NdjsonRecord = {
+      ts: kill.ts,
+      deviceTs: kill.deviceTs,
+      pid: kill.pid,
+      src: 'device',
+      platform: 'android',
+      level: 'fatal',
+      event: 'anr_kill',
+      appId: target.appId,
+      deviceId: target.deviceId,
+      ...(target.slot && target.slot !== 'default' ? { slot: target.slot } : {}),
+      msg: `Android killed ${target.appId} for not responding (ANR)${kill.reason ? `\nReason: ${kill.reason}` : ''}`,
+    };
+    const key = createHash('sha256')
+      .update(JSON.stringify(['anr', record.slot, target.deviceId, kill.deviceTs, kill.pid]))
+      .digest('hex');
+    try {
+      await writeDiagnosticOnceAsync(
+        join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`),
+        `${JSON.stringify(record)}\n`,
+        signal,
+      );
+    } catch {}
+  }
 }
 
 export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {

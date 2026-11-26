@@ -100,7 +100,7 @@ Release or native app. The summary can say the bundle is still building, or
 that the launch is unverified; the agent follows the printed remedy before
 claiming success. When Android killed the app for not responding (an ANR),
 the run says so with the reason and, on an emulator, the host load. Bundle
-errors, red screens and native crashes show up in `stim logs --errors`. None of this proves the screen looks right.
+errors, red screens, native crashes and Android ANR kills of the launched app show up in `stim logs --errors`. None of this proves the screen looks right.
 
 You can make the check stricter by having the app log when it is really ready.
 No package is needed: the app logs `[stim:readiness] pending` at startup and

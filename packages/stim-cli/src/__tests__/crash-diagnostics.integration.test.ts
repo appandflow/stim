@@ -729,7 +729,7 @@ test('live native collection requires the current launch and device claim, not a
   }
 });
 
-test('logs --errors records an ActivityManager ANR kill of the current launch once', async () => {
+test('logs --errors records an ActivityManager ANR kill of the current launch once, after the app restarts', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-crash-anr-'));
   process.env.STIM_HOME = join(root, 'home');
   const logs = join(root, 'logs');
@@ -756,7 +756,9 @@ test('logs --errors records an ActivityManager ANR kill of the current launch on
     `         ${at}.362 E/ActivityManager(  537): PID: 6004`,
     `         ${at}.362 E/ActivityManager(  537): Reason: Process ProcessRecord{c0daa15 6004:app.test/u0a145} failed to complete startup`,
     `         ${at}.363 I/ActivityManager(  537): Killing 6004:app.test/u0a145 (adj 900): bg anr`,
+    `         ${at + 20}.100 I/ActivityManager(  537): Start proc 6100:app.test/u0a145 for next-top-activity {app.test/app.test.MainActivity}`,
   ].join('\n');
+  let clockReads = 0;
   try {
     mkdirSync(logs);
     writeFileSync(join(logs, 'launch.ndjson'), JSON.stringify(marker) + '\n');
@@ -769,13 +771,14 @@ test('logs --errors records an ActivityManager ANR kill of the current launch on
     upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-own' } } });
     setExecutor({
       runFileQuiet: (_file, args) => {
-        if (args.includes('date')) return String(Date.now());
+        if (args.includes('date')) return String(Date.now() - 400 - 150 * clockReads++);
         if (args.includes('emu')) return 'stim-own\nOK';
-        return args.includes('system') ? system : '';
+        return args.includes('system') && args.includes(launch.deviceId) ? system : '';
       },
     });
     await captureWorkspaceCrashes(root, logs);
     await captureWorkspaceCrashes(root, logs);
+    expect(clockReads).toBe(2);
     const errors = queryLogs({ dir: logs, errorsOnly: true });
     expect(errors.map((record) => [record.event, record.pid, record.msg])).toEqual([
       [
