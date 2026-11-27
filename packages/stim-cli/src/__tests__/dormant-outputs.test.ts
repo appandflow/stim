@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type DaemonLadderAction } from '@stim-cli/core/state';
 import * as idleModule from '../daemon/idle.ts';
 import * as marksModule from '../daemon/marks.ts';
@@ -259,6 +259,42 @@ describe.skipIf(process.platform === 'win32')(
       );
       expect(existsSync(join(linked, BUILD))).toBe(false);
       expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([main]);
+    });
+
+    test("the daemon's hourly step asks git a repository's worktree list once while nothing acts", async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } });
+      const main = register(repo('main'));
+      const linked = ['a', 'b'].map((name) => {
+        const path = join(main, '.worktrees', name);
+        git(main, 'worktree', 'add', '-q', '-b', name, path);
+        mkdirSync(join(path, BUILD), { recursive: true });
+        writeFileSync(join(path, BUILD, 'app.apk'), 'artifact');
+        return register(path);
+      });
+      idleFor(3, ...linked);
+      recordWorkspaceUse(main, new Date());
+      const asked: string[] = [];
+      const executor = getExecutor();
+      setExecutor({
+        ...executor,
+        runFileAsync: (file, args, opts) => {
+          if (file === 'git')
+            asked.push(
+              args
+                .filter((arg: string, at: number) => !arg.startsWith('-') && args[at - 1] !== '-c' && !isAbsolute(arg))
+                .join(' '),
+            );
+          return executor.runFileAsync(file, args, opts);
+        },
+      });
+
+      await hourlyStep(false);
+
+      const count = (command: string) => asked.filter((entry) => entry === command).length;
+      expect({ worktreeLists: count('worktree list'), lastCommits: count('log HEAD') }).toEqual({
+        worktreeLists: 1,
+        lastCommits: linked.length,
+      });
     });
 
     test('an empty normal candidate list reads no consumer marks', async () => {

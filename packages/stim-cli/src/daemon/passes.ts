@@ -573,17 +573,22 @@ export function createMaintenanceLane(
         };
         let dependenciesMs: number;
         try {
-          taken.push(
-            ...(await runDormantDependencies({
-              config,
-              act,
-              log,
-              ...reading,
-              cadence: dependencyCadence,
-              between: turn.boundary,
-              marks: true,
-            })),
-          );
+          const closeGitReads = openGitReads(operation);
+          try {
+            taken.push(
+              ...(await runDormantDependencies({
+                config,
+                act,
+                log,
+                ...reading,
+                cadence: dependencyCadence,
+                between: turn.boundary,
+                marks: true,
+              })),
+            );
+          } finally {
+            closeGitReads();
+          }
           dependenciesMs = lap();
           const maintain = (onAction?: (action: LevelRunAction) => void) =>
             runMaintenance('daemon', {
