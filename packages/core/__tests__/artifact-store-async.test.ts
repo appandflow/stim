@@ -79,3 +79,19 @@ test('cancelling a copy stops its child, preserves the old entry and removes onl
   expect(await value(previous)).toBe('old app');
   expect((await readdir(root)).toSorted()).toEqual(['cache', 'source']);
 });
+
+test('an entry published during the copy that the store may not reuse is replaced, not returned', async () => {
+  const source = await app('source', 'trusted app');
+  const dest = join(root, 'cache');
+  const store = (reusable: (dest: string) => boolean) =>
+    storeArtifactAsync(dest, source, {
+      reusable,
+      runFile: async (file, args) => {
+        await app('cache', 'raced app');
+        await runFile(file, args);
+      },
+    });
+  expect(await value(await store(() => false))).toBe('trusted app');
+  await rm(dest, { recursive: true, force: true });
+  expect(await value(await store(() => true))).toBe('raced app');
+});

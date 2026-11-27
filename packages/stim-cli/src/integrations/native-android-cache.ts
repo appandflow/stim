@@ -120,7 +120,8 @@ export function nativeAndroidCache(
       });
       return storeArtifactAsync(entryDir('android', key), sourcePath, {
         signal,
-        overwrite: overwrite || !trustedEntry(entryDir('android', key)),
+        overwrite,
+        reusable: trustedEntry,
         runFile: (file, args) =>
           getExecutor().runFileAsync(file, args, { timeoutMs: 120_000, signal, declareFor: operation }),
         async writeMetadata(staging) {

@@ -8784,6 +8784,7 @@ describe('strict remote machine selection', () => {
       agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
     };
     const deliveries: unknown[] = [];
+    const storedWith: unknown[] = [];
     const h = harness({
       remoteDevice: 'mini',
       buildMachine: 'mini',
@@ -8793,7 +8794,10 @@ describe('strict remote machine selection', () => {
         choice: device,
         session: null,
       }),
-      storeCached: (_platform: string, _key: string, path: string) => path,
+      storeCached: (_platform: string, _key: string, path: string, options: unknown) => {
+        storedWith.push(options);
+        return path;
+      },
       build: never('local build'),
       placeHostedAndroid: async (
         _target: unknown,
@@ -8806,6 +8810,7 @@ describe('strict remote machine selection', () => {
     });
     expect((await h.run()).ok).toBe(true);
     expect(deliveries).toEqual([handoff]);
+    expect(storedWith).toEqual([expect.objectContaining({ origin: { machine: 'mini', serverKey: 'w'.repeat(43) } })]);
     expect(h.calls.build).toEqual([]);
   });
 });

@@ -134,7 +134,8 @@ export async function storeBuild(
             onSpawn: killOnAbort(signal),
             declareFor: options.context,
           }),
-        overwrite: Boolean(options.overwrite) || !trustedEntry(entryDir(platform, key, root)),
+        overwrite: Boolean(options.overwrite),
+        reusable: trustedEntry,
         writeMetadata: async (staging) => {
           if (options.origin) await writeOrigin(staging, options.origin);
           if (platform === 'android' && buildPath.endsWith('.apk')) {

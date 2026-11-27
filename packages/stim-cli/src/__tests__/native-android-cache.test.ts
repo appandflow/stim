@@ -427,6 +427,21 @@ test.each(['bytes', 'package', 'abi', 'signature'] as const)(
   },
 );
 
+test('an APK from a build machine no longer paired here is rebuilt and the entry replaced', async () => {
+  const first = await build();
+  assert(first.cacheKey);
+  const stored = cache.cachedBuild('android', first.cacheKey);
+  assert(stored);
+  const origin = join(dirname(stored), 'built-on.json');
+  write(origin, JSON.stringify({ machine: 'mini', serverKey: 'W'.repeat(43) }));
+  expect(cache.cachedBuild('android', first.cacheKey)).toBeNull();
+  const second = await build();
+  expect(second.cacheHit).toBe(false);
+  expect(generations).toBe(2);
+  expect(existsSync(origin)).toBe(false);
+  expect((await build()).cacheHit).toBe('local');
+});
+
 test('cancelled input reads are not accepted as an uncached build identity', async () => {
   const controller = new AbortController();
   controller.abort();

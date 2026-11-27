@@ -8,17 +8,20 @@ export interface AsyncStoreArtifactOptions extends Omit<StoreArtifactOptions, 'r
   /** Resolves after the copy and its owned child work have ended. */
   runFile: (file: string, args: string[]) => Promise<unknown>;
   signal?: AbortSignal;
+  /** Whether an entry already at `dest` may stand in for this store when `overwrite` is false; false replaces it. */
+  reusable?: (dest: string) => boolean;
 }
 
 /** Awaits copying before atomic publication; cancellation before publication preserves the previous entry. */
 export async function storeArtifactAsync(
   dest: string,
   buildPath: string,
-  { runFile, overwrite = false, writeMetadata, onRenameError, signal }: AsyncStoreArtifactOptions,
+  { runFile, overwrite = false, writeMetadata, onRenameError, signal, reusable }: AsyncStoreArtifactOptions,
 ): Promise<string | null> {
   signal?.throwIfAborted();
+  const keep = (entry: string | null): entry is string => entry !== null && !overwrite && (reusable?.(dest) ?? true);
   const existing = artifactIn(dest);
-  if (existing && !overwrite) return existing;
+  if (keep(existing)) return existing;
 
   const token = randomUUID();
   const staging = `${dest}.staging-${token}`;
@@ -40,7 +43,7 @@ export async function storeArtifactAsync(
     signal?.throwIfAborted();
 
     const published = artifactIn(dest);
-    if (published && !overwrite) return published;
+    if (keep(published)) return published;
     mkdirSync(dirname(dest), { recursive: true });
     if (existsSync(dest)) renameSync(dest, replaced);
     try {
