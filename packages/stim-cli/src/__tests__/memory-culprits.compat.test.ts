@@ -18,7 +18,7 @@ test('the real top accepts the argv and every row it prints parses', async () =>
   const rows = parseTopMemory(output ?? '');
   expect(rows).toHaveLength(20);
   for (const row of rows) {
-    expect(row.pid).toBeGreaterThan(0);
+    expect(row.pid).toBeGreaterThanOrEqual(row.name === 'kernel_task' ? 0 : 1);
     expect(row.bytes).toBeGreaterThan(0);
     expect(row.name.length).toBeGreaterThan(0);
   }
