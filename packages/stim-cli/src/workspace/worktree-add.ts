@@ -4,6 +4,7 @@ import { isPathPrefix } from '@stim-cli/core/state';
 import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { clonefileHelper } from '../clonefile.ts';
+import { cloneAsCheckout } from './clone-as-checkout.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
@@ -53,6 +54,11 @@ export async function cloneSource(
     return { reason: 'the new worktree is on another volume than the source checkout' };
   const helper = await clonefileHelper(operation);
   if (!helper) return { reason: 'the clone helper needs the Xcode Command Line Tools' };
+  // git 2.41 release notes: --attr-source, which reads .gitattributes from a commit, is new in that version.
+  const [major = 0, minor = 0] = ((await gitAsync(root, ['version'], gitOptions(operation))).match(/\d+/g) ?? []).map(
+    Number,
+  );
+  if (major < 2 || (major === 2 && minor < 41)) return { reason: 'cloning a checkout needs git 2.41 or later' };
   const gitDir = (await gitAsync(root, ['rev-parse', '--absolute-git-dir'], gitOptions(operation))).trim();
   // gitformat-index(5): a split index keeps most entries in a sharedindex.<hash> file beside the index.
   if ((await readdir(gitDir)).some((name) => name.startsWith('sharedindex.')))
@@ -116,8 +122,14 @@ export async function cloneCheckout({
       cwd: target,
     });
   // @ref LLP 0029#the-index-is-refreshed-before-the-reset -- reset rewrites every file whose stat data it cannot trust
-  await gitAsync(target, ['update-index', '-q', '--unmerged', '--refresh'], write);
-  await gitAsync(target, ['-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
+  await cloneAsCheckout(target, operation);
+  // git(1): --attr-source reads .gitattributes from that commit instead of the working tree, where the clone put the
+  // source checkout's files, untracked ones included. git-config(1): under core.checkStat=minimal a clone matches
+  // its source's entry by size and whole-second time, and git-update-index(1): the copied index's fsmonitor bitmap
+  // marks files git then never reads.
+  const asACheckout = ['--attr-source=HEAD', '-c', 'core.checkStat=default', '-c', 'core.fsmonitor=false'];
+  await gitAsync(target, [...asACheckout, 'update-index', '-q', '--unmerged', '--refresh'], write);
+  await gitAsync(target, [...asACheckout, '-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
   for (const record of (await gitAsync(target, ['ls-files', '--stage', '-z'], read)).split('\0')) {
     if (!record.startsWith('160000 ')) continue;
     const path = record.slice(record.indexOf('\t') + 1);

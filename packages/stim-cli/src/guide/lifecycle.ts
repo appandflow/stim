@@ -2938,8 +2938,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   the warm, and prints which way it created the worktree. Where it can, it
   clones the source checkout instead of checking files out: on macOS, with
   the new path on the source checkout's APFS volume, the Xcode Command Line
-  Tools installed, and no file there marked assume-unchanged or
-  skip-worktree. Git registers the worktree without a checkout, one clone
+  Tools installed, no file there marked assume-unchanged or
+  skip-worktree, and no core.autocrlf=true, core.eol=crlf,
+  core.symlinks=false or attr.tree.
+  Git registers the worktree without a checkout, one clone
   pass brings the tracked and the ignored files, and git rewrites only the
   tracked files that differ from the commit, so the worktree shares its disk
   blocks with the source checkout until a file changes. The source checkout's
@@ -2948,7 +2950,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   last; a failing hook exits 1 and leaves the worktree.
   Anywhere else, or when cloning fails, git creates the worktree and the warm
   copies into it; a failed clone first removes the worktree and the branch it
-  made. Either way the files are the same. The worktree's ignored files are
+  made. Either way the tracked files are what git writes, in bytes, modes,
+  names and extended attributes; a file git converts is written by git. The
+  worktree's ignored files are
   the ones a warm carries, so the warm rules below apply. An interrupt during
   the clone removes the half-made worktree.
 
