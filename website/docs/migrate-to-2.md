@@ -130,8 +130,9 @@ stim gc --dry-run --json`}
   then rerun the install.
 - If `stim service uninstall` reports its daemon is still listening, let it
   finish, stop it, and rerun `stim service uninstall --label <label>`.
-- Upgrades with paired clients and mixed app and engine versions are still
-  being verified.
+- A phone app from before the 2.0 protocol is refused with a prompt to update
+  Stim Mobile, and the current phone app shows an update card for a machine
+  that still runs 1.40. Update Stim Desktop together with `stim`.
 
 ## Legacy settings
 
@@ -196,7 +197,9 @@ with one scoped `unset` per layer that holds the key.
 | `gc()`                    | `previewGarbage()` to preview, `collectGarbage()` to apply. Both take `{ pressure }`. |
 
 The old spellings refuse with `STIM_BAD_ARG` and name the replacement.
-`collectGarbage()` always deletes: without options it no longer previews, and
+`collectGarbage()` always deletes: without options it was a dry run in 1.40 and
+now deletes, so call `previewGarbage()` to preview. It takes only `pressure`
+and `signal`, and
 its 1.40 options `delete`, `cache`, `olderThan` and `worktrees` refuse with
 `STIM_BAD_ARG`.
 `collectGarbage()` returns `{ report, exitCode }`. `StimLogsOptions.sources`
@@ -304,7 +307,7 @@ Do this after steps 1 to 3: `stim start` refuses while a refusing setting or exp
 
 | In 1.40                                                                        | In 2.0                                                                                                                                                                                                        |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stim gc`, `stim gc --json` (they only previewed)                              | `stim gc --dry-run`, `stim gc --dry-run --json`. Plain `stim gc` now deletes.                                                                                                                                 |
+| `stim gc`, `stim gc --json` (they only previewed)                              | `stim gc --dry-run`, `stim gc --dry-run --json`. Plain `stim gc` now deletes. The `--json` payload is the level run: `level`, `actions`, `blocked`, `results`.                                                |
 | `stim gc --delete`                                                             | `stim gc`, after reviewing `stim gc --dry-run`.                                                                                                                                                               |
 | `stim gc --cache`, `--older-than`, `--worktrees`                               | No replacement with the same scope: `--pressure normal`, `high` or `critical` runs a whole cleanup pass. Change the script to `stim gc --dry-run`, and **ask first** before any `stim gc` that deletes.       |
 | `stim-server`                                                                  | `stim serve`, `stim pair`, `stim pairings`.                                                                                                                                                                   |
