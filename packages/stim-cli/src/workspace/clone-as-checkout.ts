@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
-import { chmodSync, lchmodSync, lstatSync, readdirSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isPathPrefix } from '@stim-cli/core/state';
 import { dirname, isAbsolute, join } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
@@ -53,7 +54,8 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
 export async function cloneAsCheckout(target: string, operation: StimContext): Promise<void> {
   await refuseCheckoutConfig(target, operation);
   await asCheckout(target, operation).catch(async (error: unknown) => {
-    if (!(error instanceof Error && 'code' in error && error.code === 'EPERM')) throw error;
+    if (process.platform !== 'darwin' || !(error instanceof Error && 'code' in error && error.code === 'EPERM'))
+      throw error;
     // chflags(1): a file with the uchg flag, which clonefile(2) copies, cannot be changed or removed until the flag
     // is cleared. -R does not follow links.
     await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['-R', 'nouchg', target], {
@@ -108,6 +110,22 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
   // git entry.c create_file and create_directories: a checkout creates a file with mode 0666, or 0777 for an
   // executable one, and a directory with 0777, each less the umask.
   const umask = process.umask();
+  if (process.platform !== 'darwin') {
+    // mkdir(2) on Linux: a directory made in a set-group-ID one inherits the bit. acl(5): a default ACL replaces the
+    // umask. Then the umask does not tell what a checkout writes here.
+    const made = join(target, `.stim-modes-${randomUUID()}`);
+    try {
+      mkdirSync(made, { mode: 0o777 });
+      writeFileSync(join(made, 'file'), '', { mode: 0o666 });
+      if (
+        (lstatSync(made).mode & 0o7777) !== (0o777 & ~umask) ||
+        (lstatSync(join(made, 'file')).mode & 0o7777) !== (0o666 & ~umask)
+      )
+        throw new Error('new files here get permission bits the umask does not give');
+    } finally {
+      rmSync(made, { recursive: true, force: true });
+    }
+  }
   const listings = new Map<string, Set<string>>();
   const present = (path: string): boolean => {
     const parent = dirname(path) === '.' ? '' : dirname(path);
@@ -143,8 +161,10 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
       return unlinkSync(file);
     }
     if (mode === '120000' ? !found.isSymbolicLink() : !found.isFile()) return;
-    // symlink(2): a link is created with mode 0777 less the umask.
-    if (mode === '120000' && (found.mode & 0o7777) !== (0o777 & ~umask)) lchmodSync(file, 0o777 & ~umask);
+    // symlink(2): macOS creates a link with mode 0777 less the umask. Linux: a link's mode is always 0777, and
+    // Node has lchmod on macOS only.
+    if (process.platform === 'darwin' && mode === '120000' && (found.mode & 0o7777) !== (0o777 & ~umask))
+      lchmodSync(file, 0o777 & ~umask);
     if (mode !== '120000') {
       const [eol, ...others] = CONVERSION_ATTRIBUTES.map(
         (_, attribute) => attributes[(n * CONVERSION_ATTRIBUTES.length + attribute) * 3 + 2],
@@ -163,6 +183,8 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
   // xattr(1): -c removes every extended attribute and -s acts on a link instead of the file it names. clonefile(2)
   // copies extended attributes, which a file a checkout creates does not have. chflags(1): a file with the uchg
   // flag, which clonefile(2) copies too, refuses the change until the flag is cleared; -h acts on a link itself.
+  // cow-clone on Linux copies no extended attribute, and xattr(1) and chflags(1) are macOS tools.
+  if (process.platform !== 'darwin') return;
   const batches: string[][] = [];
   for (let at = 0; at < kept.length; at += XATTR_PATHS_PER_CALL)
     batches.push(kept.slice(at, at + XATTR_PATHS_PER_CALL).map((path) => `./${path}`));

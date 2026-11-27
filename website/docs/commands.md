@@ -328,7 +328,8 @@ Creates a linked worktree and warms it. It takes three arguments of
 `-b <branch>` to create, and the commit to start at. Stim runs `git worktree add` with them from the current
 directory, so the result is an ordinary Git worktree.
 
-On macOS, when the new path is on the same APFS volume as the source checkout,
+On macOS and Linux, when the new path is on the source checkout's volume and
+its file system clones (APFS, btrfs or XFS),
 Stim clones the source checkout instead of checking files out, tracked and
 ignored files together, and Git then rewrites only the tracked files that
 differ from the commit. The worktree shares its disk blocks with the source
@@ -336,7 +337,10 @@ checkout until a file changes. Uncommitted edits, staged changes and untracked
 files in the source checkout do not come along. Anywhere else, or when the
 clone fails, Git creates the worktree and Stim warms it as `worktree warm`
 does. The files are the same either way, and the command prints which way it
-took and why. See [worktrees](./worktrees.md).
+took and why: `unsupported` for a file system that cannot clone, such as
+ext4, `cross-device` for another volume, or `failed` with the error. On
+Windows Git always creates the worktree, and the warm clones the ignored
+folders on ReFS or a Dev Drive ([#6554](https://github.com/appandflow/stim/issues/6554)). See [worktrees](./worktrees.md).
 
 ### `worktree warm`
 

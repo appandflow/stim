@@ -30,8 +30,9 @@ cd ../feature-x`}
 />
 
 `stim worktree add` takes the path, `-b <branch>` and commit of `git worktree add` and creates an
-ordinary Git worktree that is already warm. On macOS, with the new path on the
-source checkout's APFS volume, it clones the source checkout, so the new
+ordinary Git worktree that is already warm. On macOS and Linux, with the new
+path on the source checkout's volume and a file system that clones (APFS,
+btrfs or XFS), it clones the source checkout, so the new
 worktree takes almost no disk space until its files change. It always starts
 clean at the commit you name: uncommitted edits, staged changes and untracked
 files stay in the source checkout. Submodule folders start empty, as Git

@@ -42,6 +42,7 @@ import {
   podsPlan,
 } from '../workspace/worktree-refresh.ts';
 import { goneClaimOwner, makeChildProcess, makeExitingChild, plantClaim } from './_factories.ts';
+import { binaryPath } from 'cow-clone';
 
 let base: string;
 let root: string;
@@ -1625,12 +1626,12 @@ test('a current refresh retains both copy claims when child cleanup is unresolve
   setExecutor({
     ...real,
     async runFileAsync(file, args, options) {
-      if (file !== 'cp') return real.runFileAsync(file, args, options);
+      if (file !== binaryPath()) return real.runFileAsync(file, args, options);
       copies++;
       assert(options.declareFor);
       claims = [...operationState(options.declareFor).declaring];
       for (const claim of claims) markClaimChildPending(claim);
-      const destination = args[2];
+      const destination = options.input?.split('\0')[1];
       assert(destination);
       writeFileSync(destination, 'partial');
       throw new WorkspaceProcessCleanupError(claims, 'copy child identity is unknown', 'Verify the copy stopped.');

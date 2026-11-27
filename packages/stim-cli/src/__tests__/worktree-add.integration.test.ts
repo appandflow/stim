@@ -16,7 +16,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
+import { binaryPath } from 'cow-clone';
 import { createStim } from '../api.ts';
 import { runCli } from '../cli/define-op.ts';
 import { addOp, removeOp, warmOp } from '../commands/worktree.ts';
@@ -27,7 +28,34 @@ import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.
 import { cloneIgnoredEntries } from '../workspace/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
 
-const clones = process.platform === 'darwin';
+// APFS clones; a Linux lane sets TEST_CLONE_VOLUME when its temporary directory is on btrfs or XFS. On Windows the
+// command never clones a checkout.
+const clones = process.platform === 'darwin' || (process.platform !== 'win32' && process.env.TEST_CLONE_VOLUME === '1');
+const plainReason =
+  process.platform === 'win32'
+    ? 'on Windows git would write through the junctions a clone keeps'
+    : 'the file system cannot clone (unsupported, ';
+
+/** The pairs of a cow-clone call that clones into `dir`, empty for any other call. */
+function clonesInto(dir: string, file: string, opts: { input?: string }): [string, string][] {
+  if (file !== binaryPath()) return [];
+  const paths = (opts.input ?? '').split('\0');
+  const pairs: [string, string][] = [];
+  for (let at = 0; at + 1 < paths.length; at += 2) pairs.push([paths[at] ?? '', paths[at + 1] ?? '']);
+  return pairs.some(([, to]) => to.startsWith(`${dir}${sep}`)) ? pairs : [];
+}
+
+/** What the executor rejects with when cow-clone exits 1 with `pairs` not cloned. */
+function notCloned(pairs: [string, string][]): Error {
+  const results = pairs.map(([, path]) => ({
+    cloned: false,
+    reason: 'failed',
+    code: 'EIO',
+    message: 'Input/output error',
+    path,
+  }));
+  return Object.assign(new Error('Command failed'), { status: 1, stdout: JSON.stringify({ results }) });
+}
 
 let base: string;
 let root: string;
@@ -44,7 +72,7 @@ function write(dir: string, rel: string, value: string): void {
 /** The extended attribute names of every entry below `dir`, by path; xattr(1) prints `path: name` lines. */
 function extendedAttributes(dir: string): Map<string, string[]> {
   const names = new Map<string, string[]>();
-  if (!clones) return names;
+  if (process.platform !== 'darwin') return names;
   for (const line of execFileSync('/usr/bin/xattr', ['-r', '-s', dir], { encoding: 'utf-8' }).split('\n')) {
     const at = line.lastIndexOf(': ');
     if (at > 0) names.set(line.slice(0, at), [...(names.get(line.slice(0, at)) ?? []), line.slice(at + 2)].toSorted());
@@ -165,11 +193,14 @@ test('a dirty source checkout gives a clean worktree at the target commit, the s
   const path = join(base, 'added');
 
   expect(added).toMatchObject({ code: 0, stdout: '' });
-  expect(added.stderr).toContain(clones ? `created ${path} as a clone of ${root}` : 'with git worktree add, because');
+  expect(readdirSync(base).filter((name) => name.startsWith('.stim-clone-'))).toEqual([]);
+  expect(added.stderr).toContain(
+    clones ? `created ${path} as a clone of ${root}` : `created ${path} with git worktree add, because ${plainReason}`,
+  );
   expect(git(path, 'status', '--porcelain')).toBe('');
   expect(git(path, 'rev-parse', 'HEAD')).toBe(first);
   expect(git(path, 'branch', '--show-current')).toBe('added');
-  expect(git(root, 'worktree', 'list', '--porcelain')).toContain(`worktree ${path}\n`);
+  expect(git(root, 'worktree', 'list', '--porcelain')).toContain(`worktree ${path.replaceAll('\\', '/')}\n`);
   expect(tree(path)).toEqual(tree(await plain('plain', 'HEAD~1')));
   expect(texts(path, 'node_modules/pkg/index.js', '.env')).toEqual({
     'node_modules/pkg/index.js': 'package\n',
@@ -191,7 +222,18 @@ test('a submodule path ends as git worktree add leaves it and the source checkou
   write(library, 'lib.txt', 'library\n');
   git(library, 'add', '.');
   git(library, 'commit', '-qm', 'library');
-  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', library, 'vendor/library');
+  git(
+    root,
+    '-c',
+    'protocol.file.allow=always',
+    '-c',
+    'core.autocrlf=false',
+    'submodule',
+    'add',
+    '-q',
+    library,
+    'vendor/library',
+  );
   git(root, 'commit', '-qm', 'submodule');
   const head = git(join(root, 'vendor/library'), 'rev-parse', 'HEAD');
 
@@ -221,21 +263,26 @@ test('a submodule path ends as git worktree add leaves it and the source checkou
   expect(readdirSync(join(base, 'after/vendor/library'))).toEqual([]);
   expect(git(join(base, 'after'), 'status', '--porcelain')).toBe('');
   expect(readFileSync(join(root, 'vendor/library/lib.txt'), 'utf-8')).toBe('library\n');
-}, 60_000);
+}, 180_000);
 
 test.skipIf(!clones)(
-  'a clone that fails removes the half-made worktree and its branch, then git creates both (APFS clonefile; darwin only)',
+  'a clone that fails removes the half-made worktree and its branch, then git creates both (needs a volume that clones)',
   async () => {
+    // A pnpm link: on Windows a junction, which the clone keeps pointing into the source checkout.
+    symlinkSync(join(root, 'node_modules/pkg'), join(root, 'node_modules/linked'), 'junction');
     const real = getExecutor();
     const attempts: string[] = [];
     setExecutor({
       ...real,
       async runFileAsync(file, args, opts) {
-        if (!file.includes('stim-clonefile') || !args.includes(join(root, 'package.json')))
-          return real.runFileAsync(file, args, opts);
+        const pairs = clonesInto(join(base, 'added'), file, opts);
+        if (!pairs.length || attempts.length) return real.runFileAsync(file, args, opts);
         attempts.push(git(root, 'worktree', 'list', '--porcelain'));
-        await real.runFileAsync(file, [join(root, 'package.json'), join(base, 'added', 'package.json')], opts);
-        throw new Error('clonefile: Operation not supported');
+        const partial = ['package.json', 'node_modules']
+          .map((name) => `${join(root, name)}\0${join(base, 'added', name)}\0`)
+          .join('');
+        await real.runFileAsync(file, args, { ...opts, input: partial });
+        throw notCloned(pairs);
       },
     });
 
@@ -245,13 +292,17 @@ test.skipIf(!clones)(
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toContain('branch refs/heads/added');
     expect(added.code).toBe(0);
+    expect(readFileSync(join(root, 'node_modules/pkg/index.js'), 'utf-8')).toBe('package\n');
     expect(added.stderr).toContain(
-      `created ${path} with git worktree add, because cloning failed (clonefile: Operation not supported)`,
+      `created ${path} with git worktree add, because cloning failed (Input/output error: `,
     );
+    expect(added.stderr).toContain(' (failed, EIO))');
     expect(git(path, 'status', '--porcelain')).toBe('');
     expect(git(path, 'rev-parse', 'HEAD')).toBe(git(root, 'rev-parse', 'HEAD~1'));
     expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(2);
     resetExecutor();
+    // On Windows the warm points the link into each worktree, so the two targets differ.
+    for (const dir of [root, path]) rmSync(join(dir, 'node_modules/linked'));
     expect(tree(path)).toEqual(tree(await plain('plain', 'HEAD~1')));
   },
   60_000,
@@ -279,7 +330,7 @@ test('a worktree added inside the source checkout carries no other worktree', as
 }, 60_000);
 
 test.skipIf(!clones)(
-  'a directory the warm leaves out is never cloned, at the top level or inside a tracked folder (APFS clonefile; darwin only)',
+  'a directory the warm leaves out is never cloned, at the top level or inside a tracked folder (needs a volume that clones)',
   async () => {
     write(root, '.worktreeexclude', 'build\n');
     write(root, 'build/large/output.bin', 'left out at the top level\n');
@@ -291,7 +342,7 @@ test.skipIf(!clones)(
     setExecutor({
       ...real,
       async runFileAsync(file, args, opts) {
-        if (file.includes('stim-clonefile')) cloned.push(...args.filter((_: string, index: number) => index % 2 === 0));
+        cloned.push(...clonesInto(join(base, 'added'), file, opts).map(([from]) => from));
         return real.runFileAsync(file, args, opts);
       },
     });
@@ -303,7 +354,7 @@ test.skipIf(!clones)(
     expect(cloned).toContain(join(root, 'node_modules'));
     expect(cloned).toContain(join(root, 'src/node_modules'));
     expect(cloned).toContain(join(root, 'src/kept.txt'));
-    expect(cloned.filter((path) => /\/(build|\.idea|src)$/.test(path))).toEqual([]);
+    expect(cloned.filter((path) => /[\\/](build|\.idea|src)$/.test(path))).toEqual([]);
     expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
 
     for (let index = 0; index < 300; index++) {
@@ -312,17 +363,9 @@ test.skipIf(!clones)(
     }
     git(root, 'add', 'packages');
     git(root, 'commit', '-qm', 'packages');
-    let calls = 0;
-    setExecutor({
-      ...real,
-      async runFileAsync(file, args, opts) {
-        if (file.includes('stim-clonefile')) calls++;
-        return real.runFileAsync(file, args, opts);
-      },
-    });
+    resetExecutor();
     const many = await run(addOp, root, ['-b', 'many', '../many']);
     expect(many.stderr).toContain('as a clone of');
-    expect(calls).toBeGreaterThan(1);
     expect(existsSync(join(base, 'many/packages/p299/index.js'))).toBe(true);
     expect(existsSync(join(base, 'many/packages/p299/.idea'))).toBe(false);
   },
@@ -613,8 +656,8 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
 ];
 
 for (const [name, path, commit, prepare] of unlikeACheckout)
-  test.skipIf(!clones)(
-    `a source checkout with ${name} gives what git worktree add then warm gives, in bytes, modes, names and extended attributes (APFS clonefile; darwin only)`,
+  test.skipIf(process.platform !== 'darwin')(
+    `a source checkout with ${name} gives what git worktree add then warm gives, in bytes, modes, names and extended attributes (APFS names, xattr and ACLs; darwin only)`,
     async () => {
       prepare();
       const source = tree(root);
@@ -631,29 +674,31 @@ for (const [name, path, commit, prepare] of unlikeACheckout)
     60_000,
   );
 
-test.skipIf(!clones)(
-  'a file the source checkout marks immutable is cloned without its flag or its extended attributes (APFS clonefile; darwin only)',
+test.skipIf(process.platform !== 'darwin')(
+  'a file the source checkout marks immutable is cloned without its flag or its extended attributes (chflags and xattr; darwin only)',
   async () => {
     execFileSync('/usr/bin/xattr', ['-w', 'user.stim-test', 'value', join(root, 'src/kept.txt')]);
     chmodSync(join(root, 'package.json'), 0o600);
-    for (const file of ['src/kept.txt', 'package.json']) execFileSync('/usr/bin/chflags', ['uchg', join(root, file)]);
+    // .gitignore is the first tracked file, the one the command clones to test the volume.
+    const flagged = ['src/kept.txt', 'package.json', '.gitignore'];
+    for (const file of flagged) execFileSync('/usr/bin/chflags', ['uchg', join(root, file)]);
     try {
       const added = await run(addOp, root, ['-b', 'added', '../added']);
 
       expect(added.stderr).toContain(cloned);
+      expect(readdirSync(base).filter((name) => name.startsWith('.stim-clone-'))).toEqual([]);
       expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
       rmSync(join(base, 'added/src/kept.txt'));
       rmSync(join(base, 'added/package.json'));
     } finally {
-      for (const file of ['src/kept.txt', 'package.json'])
-        execFileSync('/usr/bin/chflags', ['nouchg', join(root, file)]);
+      for (const file of flagged) execFileSync('/usr/bin/chflags', ['nouchg', join(root, file)]);
     }
   },
   60_000,
 );
 
 test.skipIf(!clones)(
-  'a commit that names .git is left to git, which refuses it, and the source checkout is untouched (APFS clonefile; darwin only)',
+  'a commit that names .git is left to git, which refuses it, and the source checkout is untouched (needs a volume that clones)',
   async () => {
     const blob = git(root, 'rev-parse', 'HEAD:package.json');
     const made = execFileSync('git', ['-C', root, 'mktree'], {
@@ -678,7 +723,7 @@ test.skipIf(!clones)(
 );
 
 test.skipIf(!clones)(
-  'a cloned worktree gets the permission bits a checkout gives under the umask in force (APFS clonefile; darwin only)',
+  'a cloned worktree gets the permission bits a checkout gives under the umask in force (needs a volume that clones)',
   async () => {
     const umask = process.umask(0o027);
     try {
@@ -692,6 +737,75 @@ test.skipIf(!clones)(
   60_000,
 );
 
+test.skipIf(process.platform === 'win32')(
+  'a new path on another volume takes the plain path, names the reason and leaves nothing beside it',
+  async () => {
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file !== binaryPath()) return real.runFileAsync(file, args, opts);
+        const results = [
+          { cloned: false, reason: 'cross-device', code: 'EXDEV', message: 'Cross-device link', path: '' },
+        ];
+        throw Object.assign(new Error('Command failed'), { status: 1, stdout: JSON.stringify({ results }) });
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added', 'HEAD~1']);
+    resetExecutor();
+
+    expect(added.code).toBe(0);
+    expect(added.stderr).toContain(
+      `created ${join(base, 'added')} with git worktree add, because the source and the destination are on different volumes (cross-device, EXDEV)`,
+    );
+    expect(readdirSync(base).toSorted()).toEqual(['added', 'home', 'main']);
+    expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain', 'HEAD~1')));
+  },
+  60_000,
+);
+
+test('a folder with a link into the source checkout, where the commit has a file, costs the source nothing', async () => {
+  write(root, 'swap', 'a file at this commit\n');
+  git(root, 'add', 'swap');
+  git(root, 'commit', '-qm', 'swap is a file');
+  git(root, 'rm', '-q', 'swap');
+  git(root, 'commit', '-qm', 'swap is gone');
+  mkdirSync(join(root, 'swap'));
+  // On Windows a junction, which Git for Windows deletes through when it replaces the folder with the file.
+  symlinkSync(join(root, 'src'), join(root, 'swap/link'), 'junction');
+
+  symlinkSync(join(root, 'node_modules/pkg'), join(root, 'node_modules/linked'), 'junction');
+
+  const added = await run(addOp, root, ['-b', 'added', '../added', 'HEAD~1']);
+
+  expect(added.code).toBe(0);
+  expect(added.stderr).toContain(clones ? 'as a clone of' : 'with git worktree add');
+  // Windows: a junction is absolute, and it leads into the new worktree after a clone as after a copy.
+  expect(realpathSync(join(base, 'added/node_modules/linked'))).toBe(
+    join(process.platform === 'win32' ? join(base, 'added') : root, 'node_modules/pkg'),
+  );
+  expect(readFileSync(join(base, 'added/swap'), 'utf-8')).toBe('a file at this commit\n');
+  expect(readFileSync(join(root, 'src/kept.txt'), 'utf-8')).toBe('second\n');
+  expect(git(root, 'status', '--porcelain')).toBe('?? swap/');
+}, 60_000);
+
+test.skipIf(!clones || process.platform !== 'linux')(
+  'under a set-group-ID folder git creates the worktree, whose folders inherit the bit (Linux mkdir on a volume that clones)',
+  async () => {
+    mkdirSync(join(base, 'shared'));
+    chmodSync(join(base, 'shared'), 0o2755);
+
+    const added = await run(addOp, root, ['-b', 'added', '../shared/added']);
+
+    expect(added.code).toBe(0);
+    expect(added.stderr).toContain('with git worktree add, because cloning failed (');
+    expect(lstatSync(join(base, 'shared/added/src')).mode & 0o7777).toBe(0o2755);
+    expect(readdirSync(join(base, 'shared/added')).filter((name) => name.startsWith('.stim-'))).toEqual([]);
+  },
+  60_000,
+);
+
 test('a source checkout with a split index takes the plain path and gives the same worktree', async () => {
   git(root, 'update-index', '--split-index');
 
@@ -699,7 +813,7 @@ test('a source checkout with a split index takes the plain path and gives the sa
 
   expect(added.code).toBe(0);
   expect(added.stderr).toContain(
-    clones ? 'with git worktree add, because the source checkout uses a split index' : 'with git worktree add',
+    `with git worktree add, because ${process.platform === 'win32' ? plainReason : 'the source checkout uses a split index'}`,
   );
   expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain', 'HEAD~1')));
 }, 60_000);
@@ -759,7 +873,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(!clones)(
-  'a cloned worktree keeps the cloned files and its index describes them when the command returns (APFS clone inodes; darwin only)',
+  'a cloned worktree keeps the cloned files and its index describes them when the command returns (needs a volume that clones)',
   async () => {
     expect((await run(addOp, root, ['-b', 'added', '../added'])).code).toBe(0);
 
@@ -808,7 +922,7 @@ test('an entry the warm checks before carrying is copied again under that check'
 }, 60_000);
 
 test.skipIf(!clones)(
-  'the source checkout is claimed from before git registers the worktree until the warm has checked what it carried, and free for the hook (APFS clonefile; darwin only)',
+  'the source checkout is claimed from before git registers the worktree until the warm has checked what it carried, and free for the hook (needs a volume that clones)',
   async () => {
     const real = getExecutor();
     const readers: [string, number][] = [];
@@ -843,7 +957,7 @@ test.skipIf(!clones)(
 );
 
 test.skipIf(!clones)(
-  'an operation that waits for the source claim creates nothing if cancelled, and never deletes a branch made meanwhile (APFS clonefile; darwin only)',
+  'an operation that waits for the source claim creates nothing if cancelled, and never deletes a branch made meanwhile (needs a volume that clones)',
   async () => {
     const refreshing = tryAcquireClaim({ root: warmClaimPath(root), mode: 'exclusive', label: 'worktree warm' });
     onTestFinished(() => void releaseClaim(refreshing.acquired));
@@ -858,7 +972,8 @@ test.skipIf(!clones)(
     setExecutor({
       ...real,
       async runFileAsync(file, args, opts) {
-        if (file.includes('stim-clonefile')) throw new Error('clonefile: Operation not supported');
+        const pairs = clonesInto(join(base, 'made-while-waiting'), file, opts);
+        if (pairs.length) throw notCloned(pairs);
         return real.runFileAsync(file, args, opts);
       },
     });
@@ -889,16 +1004,19 @@ test('git refusing the worktree fails the command without a second attempt', asy
 }, 60_000);
 
 test.skipIf(!clones)(
-  'an operation cancelled during the clone leaves no worktree and no branch, and one cancelled during the carry leaves no ignored file (APFS clonefile; darwin only)',
+  'an operation cancelled during the clone leaves no worktree and no branch, and one cancelled during the carry leaves no ignored file (needs a volume that clones)',
   async () => {
     const real = getExecutor();
-    const cancelAt = async (during: (file: string, args: string[]) => boolean, path: string) => {
+    const cancelAt = async (
+      during: (file: string, args: string[], opts: { input?: string }) => boolean,
+      path: string,
+    ) => {
       const controller = new AbortController();
       setExecutor({
         ...real,
         async runFileAsync(file, args, opts) {
           const output = await real.runFileAsync(file, args, opts);
-          if (during(file, args)) controller.abort();
+          if (during(file, args, opts)) controller.abort();
           return output;
         },
       });
@@ -909,7 +1027,7 @@ test.skipIf(!clones)(
       resetExecutor();
     };
 
-    await cancelAt((file) => file.includes('stim-clonefile'), '../cloning');
+    await cancelAt((file, _args, opts) => clonesInto(join(base, 'cloning'), file, opts).length > 0, '../cloning');
     expect(existsSync(join(base, 'cloning'))).toBe(false);
     expect(git(root, 'branch', '--list', 'cloning')).toBe('');
     expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);

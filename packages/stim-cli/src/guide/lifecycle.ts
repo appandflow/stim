@@ -2936,9 +2936,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   \`stim worktree add [-b <branch>] <path> [<commit-ish>]\` runs
   \`git worktree add\` with those arguments from the current directory, then
   the warm, and prints which way it created the worktree. Where it can, it
-  clones the source checkout instead of checking files out: on macOS, with
-  the new path on the source checkout's APFS volume, the Xcode Command Line
-  Tools installed, no file there marked assume-unchanged or
+  clones the source checkout instead of checking files out: with the new
+  path on the source checkout's volume, a file system that clones (APFS on
+  macOS, btrfs or XFS on Linux), no file there marked assume-unchanged or
   skip-worktree, and no core.autocrlf=true, core.eol=crlf,
   core.symlinks=false or attr.tree.
   Git registers the worktree without a checkout, one clone
@@ -2949,7 +2949,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   submodule folders are empty as git leaves them, and \`post-checkout\` runs
   last; a failing hook exits 1 and leaves the worktree.
   Anywhere else, or when cloning fails, git creates the worktree and the warm
-  copies into it; a failed clone first removes the worktree and the branch it
+  copies into it, and the line that says so gives the reason: unsupported
+  (ext4 and other file systems that cannot clone), cross-device (another
+  volume), or failed with the errno name. On Windows git always creates the
+  worktree, because git would write through the junctions a clone keeps, and
+  the warm clones the ignored folders on ReFS or a Dev Drive; a failed clone
+  first removes the worktree and the branch it
   made. Either way the tracked files are what git writes, in bytes, modes,
   names and extended attributes; a file git converts is written by git. The
   worktree's ignored files are
@@ -3130,10 +3135,14 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   Warm copies directly into the destination, without intermediate staging.
   Keep the source checkout and the linked worktree on the same volume to
-  retain copy-on-write cloning where supported. On macOS with the Command Line
-  Tools, an ignored directory on the same APFS volume, such as node_modules or
-  ios/Pods, is cloned in one step, so a large one takes seconds; elsewhere
-  warm clones or copies file by file. Cross-volume copies require
+  retain copy-on-write cloning where supported. Warm clones each entry with
+  the prebuilt cow-clone binary, which needs no compiler: on APFS an ignored
+  directory such as node_modules or ios/Pods is one clonefile call, so a large
+  one takes seconds; on btrfs, XFS, ReFS and a Dev Drive it is cloned file by
+  file. On any other file system, or across volumes, warm copies, with cp -R
+  or, on Windows, Node's copy. On Windows a link that pointed into the source
+  checkout points into the worktree after a clone or a copy. Cross-volume
+  copies require
   full file data; doctor reports that cost. STIM_TMPDIR and machine tempDir do
   not affect warming.
 

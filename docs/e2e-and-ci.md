@@ -276,7 +276,9 @@ PATH).
   `Full suite` passes it; so does a dispatch, which defaults to it) the
   workflow also runs a Windows lane,
   `test (windows)`, which repeats install, build, typecheck and a Windows smoke
-  on `windows-latest`, `native process inspection` on macOS and Windows, and a macOS lane, `test (macos)`, which runs on `macos-15` the unit
+  on `windows-latest`, `native process inspection` on macOS and Windows, five `clone (<fs>)` jobs that run the
+  `worktree add` and `worktree warm` tests with the temporary directory on a btrfs or XFS loopback mount, a ReFS
+  virtual disk, and the runners' own ext4 and NTFS, where Stim copies (on Windows `worktree add` never clones the checkout, and on ReFS its warm does), and a macOS lane, `test (macos)`, which runs on `macos-15` the unit
   test files that skip or branch on darwin, which the Linux and Windows lanes
   cannot run. `scripts/ci-darwin-unit-test-files.mjs` derives the list from
   the test sources (`process.platform` compared with `'darwin'`, plus the

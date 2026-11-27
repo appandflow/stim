@@ -13,6 +13,7 @@ import {
   realpath,
   stat as statAsync,
   symlink,
+  unlink,
   utimes,
 } from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
@@ -23,7 +24,7 @@ import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { warmTrash } from './worktree-trash.ts';
 import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { clonefileHelper } from '../clonefile.ts';
+import { clonePairs } from '../clone.ts';
 import { gitReadsOpen, sharedRead } from './git-reads.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
@@ -476,8 +477,6 @@ export async function cloneIgnoredEntries({
   const failed: FailedEntry[] = [];
   const withheld: SkippedEntry[] = [];
   let cloned = true;
-  let helper: Promise<string | null> | undefined;
-  const clonefile = () => (helper ??= clonefileHelper(operation));
   const trash = warmTrash(target, { signal: operation.signal });
   try {
     for (const rel of carryable) {
@@ -512,58 +511,32 @@ export async function cloneIgnoredEntries({
           continue;
         }
         const reused = present(reason) && !checks.has(rel);
+        let clone = reused;
         if (present(reason) && !reused) await removeTemporaryEntryAsync(to, operation.signal);
         if (!reused) {
           await mkdir(dirname(to), { recursive: true });
           copying = true;
-          const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
-            try {
-              await getExecutor().runFileAsync(file, args, options);
-              return true;
-            } catch (cause) {
-              if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-                throw cause;
-              operation.signal.throwIfAborted();
-              await removeTemporaryEntryAsync(to);
-              return false;
-            }
-          };
-          if (process.platform === 'win32') {
-            await cp(from, to, {
-              recursive: true,
-              errorOnExist: true,
-              force: false,
-              filter: async (source, destination) => {
-                operation.signal.throwIfAborted();
-                if (!(await lstat(source)).isSymbolicLink()) return true;
-                let link = await readlink(source);
-                const inSource = isAbsolute(link) ? relative(root, link) : '..';
-                if (!inSource.startsWith('..') && !isAbsolute(inSource)) link = join(target, inSource);
-                const file = await statAsync(source).then(
-                  (stat) => !stat.isDirectory(),
-                  () => false,
-                );
-                // Windows: symbolic links need the create-symlink privilege; without it a junction stands in for a directory.
-                // Git for Windows leaves junctions behind on worktree remove: git-for-windows/git#6543.
-                await symlink(link, destination, file ? 'file' : 'dir').catch(async (error: NodeJS.ErrnoException) => {
-                  if (error.code !== 'EPERM') throw error;
-                  await (file ? copyFile(source, destination) : symlink(link, destination, 'junction'));
-                });
-                return false;
-              },
-            });
+          clone = !(await clonePairs(operation, [[from, to]]))[0];
+          if (!clone) {
             cloned = false;
-          } else {
-            const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
-            if (
-              !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
-              !(await copiedWith('cp', ['-Rc', from, to]))
-            ) {
-              await getExecutor().runFileAsync('cp', ['-R', from, to], options);
-              cloned = false;
-            }
+            await removeTemporaryEntryAsync(to);
+            if (process.platform === 'win32')
+              await cp(from, to, {
+                recursive: true,
+                errorOnExist: true,
+                force: false,
+                filter: async (source, destination) => {
+                  operation.signal.throwIfAborted();
+                  if (!(await lstat(source)).isSymbolicLink()) return true;
+                  await carryLink(source, destination, root, target);
+                  return false;
+                },
+              });
+            else await getExecutor().runFileAsync('cp', ['-R', from, to], options);
           }
         }
+        // cow-clone copies a Windows link's reparse data as it is, and a junction's target is always absolute.
+        if (process.platform === 'win32' && clone && !reused) await retargetLinks(to, root, target, operation.signal);
         if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal, trash);
         copied.push(rel);
       } catch (cause) {
@@ -622,6 +595,47 @@ export async function cloneIgnoredEntries({
   }
   await trash.dispose(operation);
   return { copied, skipped, failed, withheld, cloned };
+}
+
+/**
+ * Windows: makes the link `source` again at `destination`, pointing into `target` where it pointed into `root`, so a
+ * carried pnpm `node_modules` resolves inside the new worktree.
+ */
+async function carryLink(source: string, destination: string, root: string, target: string): Promise<void> {
+  let link = await readlink(source);
+  const inSource = isAbsolute(link) ? relative(root, link) : '..';
+  if (!inSource.startsWith('..') && !isAbsolute(inSource)) link = join(target, inSource);
+  else if (source === destination) return;
+  const file = await statAsync(source).then(
+    (stat) => !stat.isDirectory(),
+    () => false,
+  );
+  if (source === destination) await unlink(destination);
+  // Windows: symbolic links need the create-symlink privilege; without it a junction stands in for a directory.
+  // Git for Windows leaves junctions behind on worktree remove: git-for-windows/git#6543.
+  await symlink(link, destination, file ? 'file' : 'dir').catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EPERM') throw error;
+    await (file ? copyFile(source, destination) : symlink(link, destination, 'junction'));
+  });
+}
+
+/** Windows: points every link at or below the cloned `path` that leads into `root` at `target`, as a copy's links do. */
+async function retargetLinks(
+  path: string,
+  root: string,
+  target: string,
+  signal: AbortSignal,
+  listedAsLink = false,
+): Promise<void> {
+  signal.throwIfAborted();
+  const found = await lstat(path);
+  if (found.isSymbolicLink()) return carryLink(path, path, root, target);
+  // libuv: readdir lists every junction as a link, but lstat follows one whose target is not a drive path, such as a
+  // volume mount point (src/win/fs.c fs__readlink_handle). The walk stays out of what that leads to.
+  if (listedAsLink || !found.isDirectory()) return;
+  for (const entry of await readdir(path, { withFileTypes: true }))
+    if (entry.isSymbolicLink() || entry.isDirectory())
+      await retargetLinks(join(path, entry.name), root, target, signal, entry.isSymbolicLink());
 }
 
 export function podsOutOfSync(

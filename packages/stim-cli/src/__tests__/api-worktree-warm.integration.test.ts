@@ -11,6 +11,7 @@ import { upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { warmClaimPath } from '../engine/warm-claim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { binaryPath } from 'cow-clone';
 
 let scratch: string;
 beforeEach(() => {
@@ -54,7 +55,7 @@ async function fixture(name: string) {
   return { root, linked, home, env, carried, output };
 }
 
-const isCarriedCopy = (file: string) => file === 'cp' || file.includes('stim-clonefile-');
+const isCarriedCopy = (file: string) => file === 'cp' || file === binaryPath();
 
 test('a failed warm keeps cleanup proof after its retained claims are removed', async () => {
   const item = await fixture('cleanup-proof');
@@ -277,7 +278,7 @@ test('cancelling an active copy drains its child, removes partial output and rel
     const script =
       'const fs = require("node:fs"); fs.mkdirSync(process.argv[1], {recursive:true}); ' +
       'fs.writeFileSync(process.argv[1] + "/partial", "partial"); console.log("ready"); setInterval(() => {}, 1000);';
-    const destination = args.at(-1);
+    const destination = file === 'cp' ? args.at(-1) : options.input?.split('\0')[1];
     assert(destination);
     return runFile(process.execPath, ['-e', script, destination], {
       ...options,

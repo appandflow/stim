@@ -100,6 +100,7 @@
   "dependencies": {
     "@xmldom/xmldom": "0.9.12",
     "chalk": "^6.0.0",
+    "cow-clone": "0.1.1",
     "cross-spawn": "^7.0.6",
     "real-size": "0.3.0",
     "unique-pid": "0.1.1",
