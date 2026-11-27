@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { clonePairs, describeCloneFailure } from '../clone.ts';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { getExecutor } from '../exec.ts';
 import { cloneAsCheckout } from './clone-as-checkout.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
@@ -79,7 +81,12 @@ export async function cloneSource(root: string, target: string, operation: StimC
     const [failure] = await clonePairs(operation, [[sample, probe]]);
     return failure ? describeCloneFailure(failure) : null;
   } finally {
-    await rm(probe, { force: true });
+    await rm(probe, { force: true }).catch(async (error: NodeJS.ErrnoException) => {
+      if (process.platform !== 'darwin' || error.code !== 'EPERM') throw error;
+      // chflags(1): clonefile(2) copies the uchg flag, and a file that has it cannot be removed until it is cleared.
+      await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['nouchg', probe], { timeoutMs: 10_000 });
+      await rm(probe, { force: true });
+    });
   }
 }
 

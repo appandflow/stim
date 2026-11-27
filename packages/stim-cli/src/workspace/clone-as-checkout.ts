@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
-import { chmodSync, lchmodSync, lstatSync, readdirSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isPathPrefix } from '@stim-cli/core/state';
 import { dirname, isAbsolute, join } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
@@ -109,6 +110,22 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
   // git entry.c create_file and create_directories: a checkout creates a file with mode 0666, or 0777 for an
   // executable one, and a directory with 0777, each less the umask.
   const umask = process.umask();
+  if (process.platform !== 'darwin') {
+    // mkdir(2) on Linux: a directory made in a set-group-ID one inherits the bit. acl(5): a default ACL replaces the
+    // umask. Then the umask does not tell what a checkout writes here.
+    const made = join(target, `.stim-modes-${randomUUID()}`);
+    try {
+      mkdirSync(made, { mode: 0o777 });
+      writeFileSync(join(made, 'file'), '', { mode: 0o666 });
+      if (
+        (lstatSync(made).mode & 0o7777) !== (0o777 & ~umask) ||
+        (lstatSync(join(made, 'file')).mode & 0o7777) !== (0o666 & ~umask)
+      )
+        throw new Error('new files here get permission bits the umask does not give');
+    } finally {
+      rmSync(made, { recursive: true, force: true });
+    }
+  }
   const listings = new Map<string, Set<string>>();
   const present = (path: string): boolean => {
     const parent = dirname(path) === '.' ? '' : dirname(path);

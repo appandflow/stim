@@ -249,7 +249,12 @@ differ only in case a case-insensitive volume holds one. A path that names
 On Linux the extended attributes and the link modes are left alone:
 `cow-clone` copies no extended attribute there, and a Linux link's mode is
 always 0777, which no call changes. The file and folder modes are set as on
-macOS, since a clone there keeps the source's permission bits too.
+macOS, since a clone there keeps the source's permission bits too. Those
+modes come from the umask, so the command first makes a folder and a file in
+the new worktree and takes the plain path when their modes are not the
+umask's: under a set-group-ID folder or a default ACL a checkout writes other
+bits, and a clone set to the umask's could be readable where the ACL denies
+it.
 
 Extended attributes are cleared with `xattr -c -s`, 1,000 paths to a call and
 four calls at a time. On a checkout of 19,021 tracked files the step adds about

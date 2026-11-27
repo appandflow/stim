@@ -679,17 +679,19 @@ test.skipIf(process.platform !== 'darwin')(
   async () => {
     execFileSync('/usr/bin/xattr', ['-w', 'user.stim-test', 'value', join(root, 'src/kept.txt')]);
     chmodSync(join(root, 'package.json'), 0o600);
-    for (const file of ['src/kept.txt', 'package.json']) execFileSync('/usr/bin/chflags', ['uchg', join(root, file)]);
+    // .gitignore is the first tracked file, the one the command clones to test the volume.
+    const flagged = ['src/kept.txt', 'package.json', '.gitignore'];
+    for (const file of flagged) execFileSync('/usr/bin/chflags', ['uchg', join(root, file)]);
     try {
       const added = await run(addOp, root, ['-b', 'added', '../added']);
 
       expect(added.stderr).toContain(cloned);
+      expect(readdirSync(base).filter((name) => name.startsWith('.stim-clone-'))).toEqual([]);
       expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
       rmSync(join(base, 'added/src/kept.txt'));
       rmSync(join(base, 'added/package.json'));
     } finally {
-      for (const file of ['src/kept.txt', 'package.json'])
-        execFileSync('/usr/bin/chflags', ['nouchg', join(root, file)]);
+      for (const file of flagged) execFileSync('/usr/bin/chflags', ['nouchg', join(root, file)]);
     }
   },
   60_000,
@@ -787,6 +789,22 @@ test('a folder with a link into the source checkout, where the commit has a file
   expect(readFileSync(join(root, 'src/kept.txt'), 'utf-8')).toBe('second\n');
   expect(git(root, 'status', '--porcelain')).toBe('?? swap/');
 }, 60_000);
+
+test.skipIf(!clones || process.platform !== 'linux')(
+  'under a set-group-ID folder git creates the worktree, whose folders inherit the bit (Linux mkdir on a volume that clones)',
+  async () => {
+    mkdirSync(join(base, 'shared'));
+    chmodSync(join(base, 'shared'), 0o2755);
+
+    const added = await run(addOp, root, ['-b', 'added', '../shared/added']);
+
+    expect(added.code).toBe(0);
+    expect(added.stderr).toContain('with git worktree add, because cloning failed (');
+    expect(lstatSync(join(base, 'shared/added/src')).mode & 0o7777).toBe(0o2755);
+    expect(readdirSync(join(base, 'shared/added')).filter((name) => name.startsWith('.stim-'))).toEqual([]);
+  },
+  60_000,
+);
 
 test('a source checkout with a split index takes the plain path and gives the same worktree', async () => {
   git(root, 'update-index', '--split-index');
