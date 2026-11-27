@@ -27,6 +27,15 @@ async function fenced<T>(operation: StimContext, work: () => Promise<T>): Promis
   }
 }
 
+/** Every result of `promises` once all have settled, so no child starts after a fence closes, or the first failure. */
+async function settled<T>(promises: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  return results.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+}
+
 /** Whether opening `path` passes through the folder `target` at any step: a folder, a link or a link's target. */
 async function reaches(target: string, path: string): Promise<boolean> {
   // APFS: firmlinks, case and Unicode form give one folder several spellings, so a step is compared by identity.
@@ -72,7 +81,7 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
       })
     ).trim();
   const [autocrlf, eol, symlinks, tree, attributesFile] = await fenced(operation, () =>
-    Promise.all([
+    settled([
       get('core.autocrlf', 'bool-or-str', 'false').then((value) => value.toLowerCase()),
       get('core.eol', 'path', 'lf').then((value) => value.toLowerCase()),
       get('core.symlinks', 'bool', 'true'),
@@ -241,8 +250,8 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
     batches.push(kept.slice(at, at + XATTR_PATHS_PER_CALL).map((path) => `./${path}`));
   const run = (file: string, args: string[]) =>
     runOperationFile(operation, getExecutor(), file, args, { timeoutMs: 'unbounded', cwd: target });
-  await fenced(operation, async () => {
-    const workers = await Promise.allSettled(
+  await fenced(operation, () =>
+    settled(
       Array.from({ length: XATTR_CALLS_AT_ONCE }, async () => {
         for (let batch = batches.pop(); batch; batch = batches.pop()) {
           const paths = batch;
@@ -258,8 +267,6 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
             });
         }
       }),
-    );
-    const failed = workers.find((worker) => worker.status === 'rejected');
-    if (failed) throw failed.reason;
-  });
+    ),
+  );
 }
