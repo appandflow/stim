@@ -186,11 +186,15 @@ machine, against a full refresh before the reset and against
 
 | Source checkout                                                 | Target     | git + warm | Full refresh | Stat data written |
 | --------------------------------------------------------------- | ---------- | ---------- | ------------ | ----------------- |
-| expo, 19,021 tracked files, no dependencies                     | `HEAD`     | 2.86 s     | 5.94 s       | 1.95 s            |
-| expo                                                            | `HEAD~200` | 3.68 s     | 6.99 s       | 3.05 s            |
+| expo, 19,021 tracked files, no dependencies                     | `HEAD`     | 2.92 s     | 5.94 s       | 2.05 s            |
+| expo                                                            | `HEAD~200` | 3.98 s     | 6.99 s       | 3.56 s            |
 | this repository, 3,811 tracked files, 18 `node_modules` folders | `HEAD~50`  | 6.78 s     | 7.70 s       | 6.47 s            |
 
-The pass over the index takes about 0.1 s for 19,000 entries. What is left on
+The full refresh column comes from an earlier run of the same script. The
+pass over the index takes about 0.2 s for 19,000 entries. Right after a
+`git clone` the files written in the second the index was written are racy,
+2,939 of them on the expo checkout, and git reads those until a `git status`
+in the source checkout records them again. What is left on
 a checkout with dependency folders is their `clonefile`, which both paths pay.
 Git work started beside that call waits for it, so the two do not overlap. The
 disk result does not change: on this repository a worktree 50 commits behind
