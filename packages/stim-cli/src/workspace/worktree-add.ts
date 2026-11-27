@@ -53,6 +53,10 @@ export async function cloneSource(
     return { reason: 'the new worktree is on another volume than the source checkout' };
   const helper = await clonefileHelper(operation);
   if (!helper) return { reason: 'the clone helper needs the Xcode Command Line Tools' };
+  const gitDir = (await gitAsync(root, ['rev-parse', '--absolute-git-dir'], gitOptions(operation))).trim();
+  // gitformat-index(5): a split index keeps most entries in a sharedindex.<hash> file beside the index.
+  if ((await readdir(gitDir)).some((name) => name.startsWith('sharedindex.')))
+    return { reason: 'the source checkout uses a split index' };
   const records = (await gitAsync(root, ['ls-files', '-v', '-z'], gitOptions(operation))).split('\0');
   // git-ls-files(1): -v prints a lowercase tag for assume-unchanged and S for skip-worktree. git reset --hard keeps
   // both bits, so a copied index would leave the source's hidden edits and sparse checkout in the new worktree.
@@ -63,9 +67,10 @@ export async function cloneSource(
 
 /**
  * Fills `target`, a worktree made with `git worktree add --no-checkout`, from the source checkout `root`: one
- * clonefile(2) call per top-level entry, or per child where the entry holds a skipped directory, and one for the index, then git writes only the tracked files that differ
- * from the target commit and removes what is neither tracked nor ignored there. Submodule paths end empty, as
- * `git worktree add` leaves them.
+ * clonefile(2) call per top-level entry, or per child where the entry holds a skipped directory, and one for the
+ * index. Git then reads every tracked file to refresh that index, writes only the ones that differ from the target
+ * commit and removes what is neither tracked nor ignored there. Submodule paths end empty, as `git worktree add`
+ * leaves them.
  */
 export async function cloneCheckout({
   root,
@@ -110,15 +115,9 @@ export async function cloneCheckout({
       timeoutMs: 'unbounded',
       cwd: target,
     });
-  // git-config(1): core.checkStat=minimal compares only size and whole-second mtime, which a clone keeps; the inode
-  // and ctime it changes would otherwise make reset rewrite every tracked file. The cloned index keeps its own mtime,
-  // so git still rereads a file changed in the second the source index was written. `restoreTracked` covers the edit
-  // that kept a file's size and mtime.
-  await gitAsync(
-    target,
-    ['-c', 'core.checkStat=minimal', '-c', 'submodule.recurse=false', 'reset', '-q', '--hard'],
-    write,
-  );
+  // @ref LLP 0029#the-index-is-refreshed-before-the-reset -- reset rewrites every file whose stat data it cannot trust
+  await gitAsync(target, ['update-index', '-q', '--unmerged', '--refresh'], write);
+  await gitAsync(target, ['-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
   for (const record of (await gitAsync(target, ['ls-files', '--stage', '-z'], read)).split('\0')) {
     if (!record.startsWith('160000 ')) continue;
     const path = record.slice(record.indexOf('\t') + 1);
@@ -127,19 +126,6 @@ export async function cloneCheckout({
   }
   // git-clean(1): only a second -f removes an untracked directory that holds a git repository.
   await gitAsync(target, ['clean', '-q', '-ffd'], write);
-}
-
-/**
- * Records the cloned files' stat data in the index of `target`, then restores any tracked file whose content the
- * refresh found changed: an edit in the source checkout that kept the file's size and mtime.
- */
-export async function restoreTracked(target: string, operation: StimContext): Promise<void> {
-  const write = gitOptions(operation, true);
-  // git-update-index(1): --refresh exits 1 when a file needs an update, which is the case the reset is for.
-  await gitAsync(target, ['update-index', '-q', '--refresh'], write).catch((error: unknown) => {
-    if (endsOperation(error, operation)) throw error;
-  });
-  await gitAsync(target, ['-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
 }
 
 /** Passes what a git child prints on to the operation's stderr as it comes, as git shows a hook's output. */

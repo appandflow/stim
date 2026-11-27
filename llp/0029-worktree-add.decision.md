@@ -34,18 +34,17 @@ helper available, the command does not check files out:
    that is or holds another worktree, and every ignored directory the warm
    leaves out or checks before carrying. An entry that holds such a directory
    is cloned child by child around it, 256 clones to a helper call. One more call clones the source's index.
-3. `git -c core.checkStat=minimal reset --hard` rewrites only the tracked files
-   that differ from the target commit, which restores files the source had
-   edited or deleted.
+3. `git update-index --refresh` reads every tracked file and records the
+   clones' stat data in the copied index. `git reset --hard` then rewrites only
+   the tracked files that differ from the target commit, which restores files
+   the source had edited or deleted.
 4. Every submodule path of the target commit is emptied, as `git worktree add`
    leaves it.
 5. `git clean -ffd` removes what the target commit neither tracks nor ignores,
    including a nested repository.
-6. `git update-index --refresh` starts, to record the cloned files' stat data,
-   followed by a second `git reset --hard` for the files it found changed.
-7. The warm runs with the entries already in place counted as carried.
-8. Every ignored entry the warm did not carry is removed.
-9. `post-checkout` runs with the arguments `git worktree add` gives it, since
+6. The warm runs with the entries already in place counted as carried.
+7. Every ignored entry the warm did not carry is removed.
+8. `post-checkout` runs with the arguments `git worktree add` gives it, since
    `--no-checkout` skipped it. It runs last so the ignored files it writes
    stay. A hook that fails is reported, the command exits 1 and the worktree
    stays, as with `git worktree add`. On the plain path git runs the hook, and
@@ -56,13 +55,6 @@ Reason: a checkout writes every tracked file again, and the warm then clones
 the dependency folders beside them. A clone shares the source's disk blocks, so
 a new worktree at the source's commit takes no disk of its own. The clone path
 saves disk, not time.
-
-The cloned index keeps the source index's modification time, so git still
-rereads a file changed in the second that index was written. An edit that keeps
-a file's size and modification time passes the first reset, which compares
-only those two. The index refresh reads every tracked file and finds it, and a
-second `git reset --hard`, with git's normal checks and a fresh index, restores
-it.
 
 Maintainer decision: "since we'd change api a bit I kind of want to include the new worktree add, also can it be combined with warm to run at smae time to make it faster", 2026-11-26 (#6542).
 
@@ -112,8 +104,8 @@ maintenance.
 
 Git creates the worktree and the normal warm fills it when the platform is not
 macOS, the new path is on another volume, the helper cannot be compiled, the
-source index marks a file assume-unchanged or skip-worktree, or any step from 2
-to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
+source index marks a file assume-unchanged or skip-worktree or is a split
+index, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
 After a failed step the command removes the worktree and the branch that call
 created, never a branch that existed before, and runs `git worktree add` again
@@ -128,32 +120,33 @@ Linux file systems with reflinks take the plain path today.
 
 Maintainer decision: "Can we support submodules? Can we fallback instead of refuse if not possible?", 2026-11-26 (#6542).
 
-## The index is refreshed before the command returns
+## The index is refreshed before the reset
 
-The refresh runs while the warm does and the command waits for it.
+The refresh runs right after the clone, with git's normal stat checks, and the
+reset follows it.
 
-Reason: without it the cloned index describes the source's inodes, so the first
-`git status` reads every tracked file, and Stim's own reads, which pass
-`--no-optional-locks`, would do so every time until some git command rewrote
-the index. A refresh left running after the command returned holds
-`index.lock` until it ends, and a `git add` in that time fails with `Unable to
-create '.../index.lock': File exists`, reproduced on 2026-11-26. `git status`
-as the background job takes the lock only to write, but it reads the index
-first and can then overwrite what a `git add` staged meanwhile.
+Reason: the cloned index describes the source's inodes and change times. A
+reset on it rewrites every tracked file, which is the checkout the clone was
+meant to avoid. `core.checkStat=minimal` on the reset avoids that by comparing
+only size and whole-second modification time, but an edit in the source that
+keeps both then survives into the new worktree, although `git status` in the
+source sees it through the change time. Refreshing first reads every tracked
+file, so the reset restores exactly the files whose content differs, and the
+index the command leaves is current: the first `git status` reads nothing, and
+no refresh holds `index.lock` after the command returns. A split index is not
+copied, because its entries live in a second file.
 
-The refresh costs about what the checkout it replaces costs. On a clone of this
-repository with 18 `node_modules` folders (3.9 GB), creating a worktree 50
-commits behind took about the same time as `git worktree add` then
-`stim worktree warm`: a median 3.4 s against 3.2 s over six alternating runs
-on a loaded machine, a `clonefile` of the dependency folders being about 2 s of
-both. The new worktree held 9 MB of private disk against 113 MB, and 0 MB
-against 113 MB at the source's own commit. On a working checkout of this
-repository with 56 worktrees, three alternating runs at load average 40 took
-10.2 to 15.9 s against 11.7 to 15.9 s. Git work started beside the
-`clonefile` call waited for it, so the two do not overlap.
+The refresh costs about what the checkout it replaces costs, so the clone path
+saves disk, not time. On a clone of this repository with 18 `node_modules`
+folders (3.9 GB), a worktree 50 commits behind took about the same time as
+`git worktree add` then `stim worktree warm`, a `clonefile` of the dependency
+folders being about 2 s of both, and held 9 MB of private disk against 113 MB,
+or 0 MB against 113 MB at the source's own commit. Git work started beside the
+`clonefile` call waits for it, so the two do not overlap.
 
 ## Not decided
 
 - A branch the command creates is not recorded as Stim's, so
   `stim worktree remove` keeps it.
-- Running the refresh detached, which returns sooner at the cost above.
+- Writing the clones' stat data into the copied index directly, which would
+  remove the refresh.

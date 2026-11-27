@@ -301,6 +301,33 @@ test.skipIf(!clones)(
   60_000,
 );
 
+test('an edit that kept its file size and modification time does not reach a worktree at the same commit', async () => {
+  const longAgo = new Date('2020-01-01');
+  utimesSync(join(root, 'src/kept.txt'), longAgo, longAgo);
+  git(root, 'update-index', '--refresh');
+  write(root, 'src/kept.txt', 'SECOND\n');
+  utimesSync(join(root, 'src/kept.txt'), longAgo, longAgo);
+
+  const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+  expect(added.code).toBe(0);
+  expect(added.stderr).toContain(clones ? 'as a clone of' : 'with git worktree add');
+  expect(readFileSync(join(base, 'added/src/kept.txt'), 'utf-8')).toBe('second\n');
+  expect(git(join(base, 'added'), 'status', '--porcelain')).toBe('');
+}, 60_000);
+
+test('a source checkout with a split index takes the plain path and gives the same worktree', async () => {
+  git(root, 'update-index', '--split-index');
+
+  const added = await run(addOp, root, ['-b', 'added', '../added', 'HEAD~1']);
+
+  expect(added.code).toBe(0);
+  expect(added.stderr).toContain(
+    clones ? 'with git worktree add, because the source checkout uses a split index' : 'with git worktree add',
+  );
+  expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain', 'HEAD~1')));
+}, 60_000);
+
 test('an edit git hides in the source checkout does not reach the new worktree', async () => {
   git(root, 'update-index', '--assume-unchanged', 'src/kept.txt');
   write(root, 'src/kept.txt', 'hidden edit\n');
@@ -356,12 +383,13 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(!clones)(
-  'the index of a cloned worktree describes its own files when the command returns (APFS clone inodes; darwin only)',
+  'a cloned worktree keeps the cloned files and its index describes them when the command returns (APFS clone inodes; darwin only)',
   async () => {
     expect((await run(addOp, root, ['-b', 'added', '../added'])).code).toBe(0);
 
     const path = join(base, 'added');
     expect(lstatSync(join(path, 'src/kept.txt')).ino).not.toBe(lstatSync(join(root, 'src/kept.txt')).ino);
+    expect(lstatSync(join(path, 'src/kept.txt')).mtimeMs).toBe(lstatSync(join(root, 'src/kept.txt')).mtimeMs);
     expect(git(path, 'ls-files', '--debug', 'src/kept.txt')).toContain(
       `ino: ${lstatSync(join(path, 'src/kept.txt')).ino}`,
     );

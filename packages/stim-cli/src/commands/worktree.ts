@@ -118,7 +118,6 @@ import {
   discardWorktree,
   endsOperation,
   pruneUncarried,
-  restoreTracked,
   runPostCheckout,
   showOutput,
 } from '../workspace/worktree-add.ts';
@@ -759,13 +758,6 @@ export async function addWorktreeTarget(opts: {
         ),
       ),
     );
-    // @ref LLP 0029#the-index-is-refreshed-before-the-command-returns -- a refresh left running holds index.lock
-    const refresh = cloned
-      ? restoreTracked(target, operation).then(
-          () => null,
-          (error: unknown) => ({ error }),
-        )
-      : null;
     const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
     let carried: string[] = [];
     const warmed = await warmWorktreeTarget({
@@ -779,15 +771,13 @@ export async function addWorktreeTarget(opts: {
       ({ exitCode }) => ({ exitCode }),
       (error: unknown) => ({ error }),
     );
-    return { target, refresh, carried, warmed };
+    return { target, carried, warmed };
   };
   const settle = async (
-    { target, refresh, carried, warmed }: Awaited<ReturnType<typeof carry>>,
+    { target, carried, warmed }: Awaited<ReturnType<typeof carry>>,
     head: string | null,
     failed: string | null,
   ) => {
-    const restored = await refresh;
-    if (restored) throw restored.error;
     if (head !== null) {
       await pruneUncarried(
         target,
