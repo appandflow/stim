@@ -12,12 +12,8 @@ const CONVERSION_ATTRIBUTES = ['eol', 'ident', 'filter', 'working-tree-encoding'
 const XATTR_PATHS_PER_CALL = 1000;
 const XATTR_CALLS_AT_ONCE = 4;
 
-async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<void> {
-  // git(1), GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM: a relative path is read from git's working directory, the
-  // worktree, whose files are still being cloned while these reads run.
-  if ([operation.env.GIT_CONFIG_GLOBAL, operation.env.GIT_CONFIG_SYSTEM].some((file) => file && !isAbsolute(file)))
-    throw new Error('GIT_CONFIG_GLOBAL or GIT_CONFIG_SYSTEM names a file in the worktree');
-  const get = async (name: string, type: string, unset: string) =>
+function configValue(target: string, operation: StimContext) {
+  return async (name: string, type: string, unset: string) =>
     (
       await gitAsync(target, ['config', `--type=${type}`, `--default=${unset}`, '--get', name], {
         ...childEnvironment(operation.env),
@@ -27,12 +23,22 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
     )
       .trim()
       .toLowerCase();
-  const [autocrlf, eol, symlinks, tree, attributesFile] = await Promise.all([
+}
+
+/** The settings that `git check-attr` reads attributes from besides the commit. */
+async function attributeSources(target: string, operation: StimContext): Promise<string[]> {
+  const get = configValue(target, operation);
+  return Promise.all([get('attr.tree', 'path', ''), get('core.attributesFile', 'path', '')]);
+}
+
+/** Throws where the configuration makes a checkout write what a clone cannot be made into; returns `attributeSources`. */
+async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<string[]> {
+  const get = configValue(target, operation);
+  const [autocrlf, eol, symlinks, [tree, attributesFile]] = await Promise.all([
     get('core.autocrlf', 'bool-or-str', 'false'),
     get('core.eol', 'path', 'lf'),
     get('core.symlinks', 'bool', 'true'),
-    get('attr.tree', 'path', ''),
-    get('core.attributesFile', 'path', ''),
+    attributeSources(target, operation),
   ]);
   // git convert.c output_eol and text_eol_is_crlf: a checkout writes CRLF for a path no attribute names only under
   // core.autocrlf=true or core.eol=crlf. core.autocrlf=input converts nothing at checkout.
@@ -46,12 +52,14 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
   // the clone brought from the source checkout.
   if (attributesFile && (!isAbsolute(attributesFile) || isPathPrefix(target.toLowerCase(), attributesFile)))
     throw new Error('core.attributesFile names a file in the worktree');
+  return [tree ?? '', attributesFile ?? ''];
 }
 
 interface CheckoutPlan {
   entries: { mode: string; size: number; path: string }[];
   directories: Set<string>;
   attributes: string[];
+  sources: string[];
 }
 
 /**
@@ -60,7 +68,7 @@ interface CheckoutPlan {
  * be made that checkout.
  */
 export async function readCheckout(target: string, operation: StimContext): Promise<CheckoutPlan> {
-  await refuseCheckoutConfig(target, operation);
+  const sources = attributeSources(target, operation);
   const read = { ...childEnvironment(operation.env), signal: operation.signal, declareFor: operation, untrimmed: true };
   // git(1), GIT_NO_LAZY_FETCH: in a partial clone ls-tree -l otherwise fetches each missing blob for its size, one
   // at a time. Without it the size is not a number and the file is left to the reset, which fetches in one batch.
@@ -102,7 +110,7 @@ export async function readCheckout(target: string, operation: StimContext): Prom
   ).split('\0');
   if (attributes.length < entries.length * CONVERSION_ATTRIBUTES.length * 3)
     throw new Error('git did not answer for every tracked path');
-  return { entries, directories, attributes };
+  return { entries, directories, attributes, sources: await sources };
 }
 
 /**
@@ -113,6 +121,10 @@ export async function readCheckout(target: string, operation: StimContext): Prom
  * @ref LLP 0029#a-clone-is-kept-only-as-a-checkout-writes-it -- every difference is removed or left to git
  */
 export async function cloneAsCheckout(target: string, plan: CheckoutPlan, operation: StimContext): Promise<void> {
+  // git-config(1): the configuration can come from files the clone has just written, so it is checked after the
+  // clone, and the attribute settings `readCheckout` used beside it must still hold.
+  if ((await refuseCheckoutConfig(target, operation)).join('\0') !== plan.sources.join('\0'))
+    throw new Error('the attributes configuration changed while the files were cloned');
   await asCheckout(target, plan, operation).catch(async (error: unknown) => {
     if (process.platform !== 'darwin' || !(error instanceof Error && 'code' in error && error.code === 'EPERM'))
       throw error;

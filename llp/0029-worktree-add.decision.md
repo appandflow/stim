@@ -128,9 +128,7 @@ source index marks a file assume-unchanged or skip-worktree or is a split
 index, `core.autocrlf=true` or `core.eol=crlf` makes a checkout write CRLF,
 `core.symlinks=false` makes it write links as files,
 `attr.tree` or `GIT_ATTR_SOURCE` names another source of attributes,
-`core.attributesFile` names a file in the worktree, `GIT_CONFIG_GLOBAL` or
-`GIT_CONFIG_SYSTEM` is a relative path, which git reads from the worktree
-while it is still being cloned, two
+`core.attributesFile` names a file in the worktree, two
 tracked paths of the target commit differ only in case or Unicode form, a
 tracked folder is spelled another way on disk, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
@@ -197,10 +195,12 @@ folders (3.9 GB), a worktree 50 commits behind took about the same time as
 `git worktree add` then `stim worktree warm`, a `clonefile` of the dependency
 folders being about 2 s of both, and held 9 MB of private disk against 113 MB,
 or 0 MB against 113 MB at the source's own commit. The refresh reads the
-clones, so it starts after the `clonefile` call. The configuration checks,
-`git ls-tree -l` and `git check-attr --source=HEAD` read only the
-configuration and the object database, so they run beside it; the index is
-cloned first, because `check-attr` reads it.
+clones, so it starts after the `clonefile` call. `git ls-tree -l` and
+`git check-attr --source=HEAD` read only the configuration and the object
+database, so they run beside it; the index is cloned first, because
+`check-attr` reads it. The configuration checks run after the clone, since
+a configuration file can be one the clone writes, and the command takes the
+plain path when `attr.tree` or `core.attributesFile` changed in between.
 
 ## A clone is kept only as a checkout writes it
 

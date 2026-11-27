@@ -166,7 +166,7 @@ afterEach(() => {
   resetExecutor();
   process.exitCode = 0;
   delete process.env.STIM_HOME;
-  delete process.env.GIT_CONFIG_GLOBAL;
+  vi.unstubAllEnvs();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -661,7 +661,8 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
       write(root, 'repo.gitconfig', '[core]\n\tautocrlf = true\n');
       git(root, 'add', 'repo.gitconfig');
       git(root, 'commit', '-qm', 'config');
-      process.env.GIT_CONFIG_GLOBAL = 'repo.gitconfig';
+      git(root, 'config', '--unset', 'core.autocrlf');
+      vi.stubEnv('GIT_CONFIG_GLOBAL', 'repo.gitconfig');
     },
   ],
   [
