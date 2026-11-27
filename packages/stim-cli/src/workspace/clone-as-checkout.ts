@@ -1,8 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { lstat, readlink, realpath } from 'node:fs/promises';
-import { isPathPrefix } from '@stim-cli/core/state';
+import { lstat, readlink, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, parse, sep } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { fenceDeclaredSpawns } from '../engine/spawn-claims.ts';
@@ -28,9 +27,10 @@ async function fenced<T>(operation: StimContext, work: () => Promise<T>): Promis
   }
 }
 
-/** Whether opening `path` passes through `target`, a real path, at any step: a folder, a link or a link's target. */
+/** Whether opening `path` passes through the folder `target` at any step: a folder, a link or a link's target. */
 async function reaches(target: string, path: string): Promise<boolean> {
-  const inside = (candidate: string) => isPathPrefix(target.toLowerCase(), candidate.toLowerCase());
+  // APFS: firmlinks, case and Unicode form give one folder several spellings, so a step is compared by identity.
+  const { dev, ino } = await stat(target);
   const rest = path.split(sep);
   let at = parse(path).root;
   for (let links = 0; rest.length;) {
@@ -41,11 +41,11 @@ async function reaches(target: string, path: string): Promise<boolean> {
       continue;
     }
     const next = join(at, name);
-    if (inside(next)) return true;
     const found = await lstat(next).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
       throw error;
     });
+    if (found?.dev === dev && found.ino === ino) return true;
     if (!found?.isSymbolicLink()) {
       at = next;
       continue;
@@ -91,8 +91,7 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
   // git-config(1), core.attributesFile: read beside the commit's attributes, so one reached through the worktree is
   // a file or link the clone brought from the source checkout, which a checkout has not written yet.
   if (!attributesFile) return;
-  const real = await realpath(target);
-  if (!isAbsolute(attributesFile) || (await reaches(real, attributesFile).catch(() => true)))
+  if (!isAbsolute(attributesFile) || (await reaches(target, attributesFile).catch(() => true)))
     throw new Error('core.attributesFile names a file in the worktree');
 }
 
@@ -242,8 +241,8 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
     batches.push(kept.slice(at, at + XATTR_PATHS_PER_CALL).map((path) => `./${path}`));
   const run = (file: string, args: string[]) =>
     runOperationFile(operation, getExecutor(), file, args, { timeoutMs: 'unbounded', cwd: target });
-  await fenced(operation, () =>
-    Promise.all(
+  await fenced(operation, async () => {
+    const workers = await Promise.allSettled(
       Array.from({ length: XATTR_CALLS_AT_ONCE }, async () => {
         for (let batch = batches.pop(); batch; batch = batches.pop()) {
           const paths = batch;
@@ -259,6 +258,8 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
             });
         }
       }),
-    ),
-  );
+    );
+    const failed = workers.find((worker) => worker.status === 'rejected');
+    if (failed) throw failed.reason;
+  });
 }

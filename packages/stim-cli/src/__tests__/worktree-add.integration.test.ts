@@ -710,6 +710,16 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   [
+    'core.attributesFile that is a relative link to the new worktree spelled in another case',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(root, 'local.attributes', '*.txt text eol=crlf\n');
+      symlinkSync('ADDED/local.attributes', join(base, 'relative.attributes'));
+      git(root, 'config', 'core.attributesFile', join(base, 'relative.attributes'));
+    },
+  ],
+  [
     'core.autocrlf=true while GIT_CONFIG names another file',
     checkedOut,
     'HEAD',
@@ -799,6 +809,40 @@ test.skipIf(process.platform !== 'darwin')(
     expect(unfenced).toEqual([]);
   },
   60_000,
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'when every xattr call fails, no call starts after the fence closes and the plain path runs (xattr; darwin only)',
+  async () => {
+    for (let index = 0; index < 2100; index++) write(root, `many/f${index}.txt`, 'tracked\n');
+    git(root, 'add', 'many');
+    git(root, 'commit', '-qm', 'many');
+    const real = getExecutor();
+    const unfenced: string[] = [];
+    let calls = 0;
+    let fast: string | undefined;
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file !== '/usr/bin/xattr' && file !== '/usr/bin/chflags') return real.runFileAsync(file, args, opts);
+        if (!opts.cwd?.endsWith('added')) return real.runFileAsync(file, args, opts);
+        const claims = [...operationState(opts.declareFor).declaring];
+        if (!claims.length || !claims.every(claimIsFenced)) unfenced.push(file);
+        calls++;
+        fast ??= args.at(-1);
+        if (args.at(-1) !== fast) await new Promise((done) => setTimeout(done, 200));
+        throw new Error(`${file} failed`);
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added']);
+    resetExecutor();
+
+    expect(added.stderr).toContain(checkedOut);
+    expect(calls).toBeGreaterThan(3);
+    expect(unfenced).toEqual([]);
+  },
+  120_000,
 );
 
 test.skipIf(process.platform !== 'darwin')(
