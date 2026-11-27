@@ -105,7 +105,12 @@ import {
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
 import type { StaleDependencies, WorktreeEntry } from '../workspace/worktree.ts';
-import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
+import {
+  disposeTrash,
+  moveIgnoredTreesToTrash,
+  restoreTrashedTrees,
+  type WorktreeTrash,
+} from '../workspace/worktree-trash.ts';
 import { refreshPullRequests } from '../pull-request-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import { podsAreStale, readPodState } from '../engine/deps.ts';
@@ -753,6 +758,31 @@ export async function addWorktreeTarget(opts: {
       { ...git, signal: operation.signal, onSpawn },
     );
   const bounded = () => ({ ...git, signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS) });
+  const branchRefs = async (signal = operation.signal) =>
+    new Set(
+      (await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], { ...git, signal })).split('\n'),
+    );
+  const revParse = (cwd: string, args: string[]) =>
+    gitAsync(cwd, ['rev-parse', ...args], bounded()).then(
+      (output) => output.trim(),
+      () => '',
+    );
+  const rollingBack = () => out(chalk.dim(phaseLine('worktree', `interrupted, removing ${path}`)));
+  const ownBranch = async (ref: string, branches: Set<string>) => {
+    const owned = ref.startsWith('refs/heads/') && !branches.has(ref);
+    const target = realpathSync(path);
+    await withConfigLockAsync(() => {
+      if (owned)
+        upsertProject(target, {
+          worktreeBranch: ref.slice('refs/heads/'.length),
+          worktreeBranchOwned: true,
+          worktreeMainRoot: root,
+          worktreeRemovalComplete: undefined,
+          worktreePendingBranchSha: undefined,
+        });
+      else if (getProject(target)?.worktreeBranchOwned) upsertProject(target, { worktreeBranchOwned: false });
+    });
+  };
   const carry = async (cloned: boolean, slow: string | null, ignored?: readonly string[]) => {
     const target = realpathSync(path);
     out(
@@ -819,14 +849,7 @@ export async function addWorktreeTarget(opts: {
               return found;
             })
             .catch(() => new Set<string>());
-          const branches = new Set(
-            (
-              await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
-                ...git,
-                signal: operation.signal,
-              })
-            ).split('\n'),
-          );
+          const branches = await branchRefs();
           await add(['--no-checkout']);
           let gitDir = '';
           let ref = '';
@@ -840,6 +863,15 @@ export async function addWorktreeTarget(opts: {
             ).split('\n');
             await cloneCheckout({ root, target: realpathSync(path), skipped, operation });
           } catch (error) {
+            let trash: WorktreeTrash | null = null;
+            if (operation.signal.aborted) {
+              rollingBack();
+              trash = await moveIgnoredTreesToTrash(path, {
+                env: operation.env,
+                signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
+                declareFor: operation,
+              }).catch(() => null);
+            }
             await discardWorktree({
               cwd: opts.cwd,
               target: path,
@@ -847,24 +879,64 @@ export async function addWorktreeTarget(opts: {
               created: ref.startsWith('refs/heads/') && !branches.has(ref) ? { ref, sha: head } : null,
               git: bounded,
             });
+            if (trash) await disposeTrash(trash);
             if (endsOperation(error, operation)) throw error;
             slow = `cloning failed (${lastLine(error)})`;
             return null;
           }
+          await ownBranch(ref, branches);
           return carry(true, null, ignored);
         },
       );
       if (cloned) return await settle(cloned, head, null);
     }
     const existed = existsSync(path);
+    const hadGit = existsSync(join(path, '.git'));
+    const branches = await branchRefs();
     const failed = await add([], showOutput(operation)).then(
       () => null,
-      (error: unknown) => {
+      async (error: unknown) => {
+        if (endsOperation(error, operation)) {
+          if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+            throw error;
+          // gitrepository-layout(5): a linked worktree's .git file reads `gitdir: <path>`. git-worktree(1): `locked`
+          // holds "initializing" until that add's checkout ends, so only an add killed mid-checkout leaves it.
+          const linked = hadGit
+            ? null
+            : await readFile(join(path, '.git'), 'utf8').then(
+                (text) => /^gitdir: (.+)$/m.exec(text)?.[1],
+                () => undefined,
+              );
+          const gitDir = linked ? resolve(path, linked) : '';
+          const made =
+            gitDir !== '' &&
+            (await readFile(join(gitDir, 'locked'), 'utf8').then(
+              (text) => text.trim() === 'initializing',
+              () => false,
+            ));
+          if (made) {
+            const ref = opts.branch
+              ? `refs/heads/${opts.branch}`
+              : await revParse(path, ['--symbolic-full-name', 'HEAD']);
+            const after = await branchRefs(AbortSignal.timeout(CLEANUP_TIMEOUT_MS)).catch(() => new Set<string>());
+            const sha = after.has(ref) && !branches.has(ref) ? await revParse(opts.cwd, ['--verify', '-q', ref]) : '';
+            rollingBack();
+            await discardWorktree({
+              cwd: opts.cwd,
+              target: path,
+              gitDir,
+              created: sha ? { ref, sha } : null,
+              git: bounded,
+            });
+          }
+          throw error;
+        }
         // git-worktree(1) keeps the worktree it created when post-checkout fails, and exits with the hook's status.
-        if (endsOperation(error, operation) || existed || !existsSync(join(path, '.git'))) throw error;
+        if (existed || !existsSync(join(path, '.git'))) throw error;
         return lastLine(error);
       },
     );
+    await ownBranch(await revParse(path, ['--symbolic-full-name', 'HEAD']), branches);
     return await settle(await carry(false, slow), null, failed);
   } finally {
     state.draining = wasDraining;
