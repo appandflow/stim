@@ -392,9 +392,10 @@ writes daemon_tick_off.
 Each daemon_tick has phases (ms per pass) and tail, the ms of the work after
 the passes: stateMs, pendingMs, pacerMs, snapshotMs, engineDirsMs,
 engineCheckMs, updateMs; a part under 1 ms is absent. A main-thread stall of
-1 s or more writes daemon_stall (info): stallMs, after (the code that ran when
-the loop blocked), before (the code that ran next), and cpuMs (the main
-thread's CPU in the stall; near 0 means blocked in the system or suspended).
+1 s or more writes daemon_stall (info): stallMs, segment and segmentMs (the
+marked code that held the loop longest, and for how long), next (the mark
+after it), and cpuMs (the main thread's CPU meanwhile; near 0 means blocked in
+the system or suspended).
 A size walk that fails or times out adds one record, event size_failed (warn,
 info when aborted),
 from whichever process ran it, at most once per folder and reason every 6

@@ -14,29 +14,30 @@ let clock: () => number = () => performance.now();
 
 /** Names the main-thread code that starts now, for the `daemon_stall` record of a stall that blocks the loop in it. */
 export function markSegment(label: string): void {
-  if (marks.length >= MARKS) marks.shift();
+  if (marks.length >= MARKS) marks.splice(1, 1);
   marks.push({ label, at: clock() });
 }
 
 /**
- * The marks around a stall whose timer was due at `dueAt`: `after`, the last mark set at or before it, which names the
- * code that ran when the loop blocked, and `before`, the first mark set after it, which ran once the loop moved again.
+ * The marked code that held the loop longest between `from` and `to`: each mark runs until the next one, the first
+ * from `from`, and `next` is the mark that followed it.
  */
-function blameStall(recorded: readonly Mark[], dueAt: number): { after: string | null; before: string | null } {
-  let after: string | null = null;
-  let before: string | null = null;
-  for (const mark of recorded) {
-    if (mark.at <= dueAt) after = mark.label;
-    else {
-      before = mark.label;
-      break;
-    }
-  }
-  return { after, before };
+function blameStall(
+  recorded: readonly Mark[],
+  from: number,
+  to: number,
+): { segment: string | null; segmentMs: number; next: string | null } {
+  let blamed = { segment: null as string | null, segmentMs: 0, next: null as string | null };
+  recorded.forEach((mark, index) => {
+    const following = recorded[index + 1];
+    const ms = Math.min(following?.at ?? to, to) - Math.max(mark.at, from);
+    if (ms > blamed.segmentMs) blamed = { segment: mark.label, segmentMs: ms, next: following?.label ?? null };
+  });
+  return { ...blamed, segmentMs: Math.round(blamed.segmentMs) };
 }
 
 function threadCpu(): number | null {
-  // Node.js 22 releases older than the one that added process.threadCpuUsage are still supported.
+  // Older Node.js 22 releases, which the package supports, have no process.threadCpuUsage.
   if (!('threadCpuUsage' in process)) return null;
   const { user, system } = process.threadCpuUsage();
   return (user + system) / 1000;
@@ -44,7 +45,8 @@ function threadCpu(): number | null {
 
 /**
  * Writes one `daemon_stall` record each time this thread's event loop was blocked for `thresholdMs` or longer, measured
- * by how late a short interval timer fires, with the marks around the stall and the CPU this thread used during it.
+ * by how late a short interval timer fires, with the marked code that held the loop longest since the timer last fired and
+ * the CPU this thread used in that time.
  * Returns the function that stops it.
  */
 export function watchStalls(
@@ -66,17 +68,25 @@ export function watchStalls(
     const dueAt = firedAt + intervalMs;
     const stallMs = Math.round(at - dueAt);
     if (stallMs >= thresholdMs) {
-      const { after, before } = blameStall(marks, dueAt);
-      log('info', 'daemon_stall', `the event loop was blocked for ${stallMs}ms after ${after ?? 'no marked code'}`, {
-        stallMs,
-        ...(cpu === null || cpuAt === null ? {} : { cpuMs: Math.round(cpu - cpuAt) }),
-        after,
-        before,
-      });
+      const blamed = blameStall(marks, firedAt, at);
+      log(
+        'info',
+        'daemon_stall',
+        `the event loop was blocked for ${stallMs}ms in ${blamed.segment ?? 'unmarked code'}`,
+        {
+          stallMs,
+          ...(cpu === null || cpuAt === null ? {} : { cpuMs: Math.round(cpu - cpuAt) }),
+          ...blamed,
+        },
+      );
     }
+    marks.splice(0, marks.length - 1);
     firedAt = at;
     cpuAt = cpu;
   }, intervalMs);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    clock = () => performance.now();
+  };
 }

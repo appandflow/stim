@@ -6,29 +6,30 @@ describe('stimd stall watch', () => {
   let stop: (() => void) | undefined;
   afterEach(() => stop?.());
 
-  test('a blocked loop writes one daemon_stall naming the code marked before the timer was due, the code after, and the CPU it used', () => {
+  test('a blocked loop writes one daemon_stall naming the marked code that held it longest, the code after, and the CPU it used', () => {
     let clock = 0;
     let cpu = 0;
     const log = vi.fn<DaemonLog>();
     stop = watchStalls(log, { thresholdMs: 1000, intervalMs: 100, now: () => clock, threadCpuMs: () => cpu });
-    markSegment('tick passes');
-    clock = 50;
-    markSegment('tick engine dirs');
-    clock = 4600;
+    markSegment('tick state');
+    clock = 120;
+    markSegment('tick snapshot');
+    clock = 1370;
     cpu = 30;
-    markSegment('tick engine check');
+    markSegment('tick engine dirs');
+    clock = 1380;
     vi.advanceTimersByTime(100);
-    clock = 4700;
+    clock = 1480;
     vi.advanceTimersByTime(100);
-    clock = 5300;
+    clock = 2000;
     vi.advanceTimersByTime(100);
 
     expect(log.mock.calls).toEqual([
       [
         'info',
         'daemon_stall',
-        'the event loop was blocked for 4500ms after tick engine dirs',
-        { stallMs: 4500, cpuMs: 30, after: 'tick engine dirs', before: 'tick engine check' },
+        'the event loop was blocked for 1280ms in tick snapshot',
+        { stallMs: 1280, cpuMs: 30, segment: 'tick snapshot', segmentMs: 1250, next: 'tick engine dirs' },
       ],
     ]);
   });
