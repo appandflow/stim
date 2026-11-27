@@ -453,7 +453,10 @@ export async function cloneIgnoredEntries({
    * unless `withhold` checks it: that copy was made outside the claim the check holds, and is replaced under it.
    */
   precloned?: boolean;
-  /** What `listGitignoredEntries` gives for `root`, listed by the caller under the source claim this warm runs in. */
+  /**
+   * What `listGitignoredEntries` gave for `root`, listed by the caller under the source claim this warm runs in. An
+   * entry since removed from `root` is left out, as a listing taken now would leave it.
+   */
   ignored?: readonly string[];
 }): Promise<CloneResult> {
   const options = {
@@ -467,7 +470,9 @@ export async function cloneIgnoredEntries({
   const guard = trackedPathsGuard(await listTrackedPaths(target, reads));
   if (!guard.known) throw new Error("Could not list the destination's tracked files.");
   const nested = await nestedWorktreePaths(target, reads);
-  const carryable = await listCarryableIgnoredEntries(root, patterns, reads, ignored);
+  const carryable = (await listCarryableIgnoredEntries(root, patterns, reads, ignored)).filter(
+    (rel) => !ignored || lstatSync(join(root, rel), { throwIfNoEntry: false }),
+  );
   const keptReason = (rel: string): string | null =>
     guard.covers(rel)
       ? 'tracked'

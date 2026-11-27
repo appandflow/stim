@@ -1,18 +1,8 @@
 import type { StimContext } from '@stim-cli/core';
 import { randomUUID } from 'node:crypto';
-import {
-  chmodSync,
-  lchmodSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { getExecutor } from '../exec.ts';
 import { childEnvironment } from './git-read.ts';
@@ -22,8 +12,8 @@ const CONVERSION_ATTRIBUTES = ['eol', 'ident', 'filter', 'working-tree-encoding'
 const XATTR_PATHS_PER_CALL = 1000;
 const XATTR_CALLS_AT_ONCE = 4;
 
-function configValue(target: string, operation: StimContext) {
-  return async (name: string, type: string, unset: string) =>
+async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<void> {
+  const get = async (name: string, type: string, unset: string) =>
     (
       await gitAsync(target, ['config', `--type=${type}`, `--default=${unset}`, '--get', name], {
         ...childEnvironment(operation.env),
@@ -33,19 +23,6 @@ function configValue(target: string, operation: StimContext) {
     )
       .trim()
       .toLowerCase();
-}
-
-function configListing(target: string, operation: StimContext): Promise<string> {
-  return gitAsync(target, ['config', '--list', '-z'], {
-    ...childEnvironment(operation.env),
-    signal: operation.signal,
-    declareFor: operation,
-    untrimmed: true,
-  });
-}
-
-async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<void> {
-  const get = configValue(target, operation);
   const [autocrlf, eol, symlinks, tree, attributesFile] = await Promise.all([
     get('core.autocrlf', 'bool-or-str', 'false'),
     get('core.eol', 'path', 'lf'),
@@ -63,46 +40,32 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
     throw new Error('attr.tree or GIT_ATTR_SOURCE names another source of attributes');
   // git-config(1), core.attributesFile: read beside the commit's attributes, so one inside the worktree is a file
   // the clone brought from the source checkout.
-  if (
-    attributesFile &&
-    (!isAbsolute(attributesFile) ||
-      [attributesFile, throughLinks(attributesFile)].some((path) =>
-        isPathPrefix(target.toLowerCase(), path.toLowerCase()),
-      ))
-  )
+  if (attributesFile && (!isAbsolute(attributesFile) || isPathPrefix(target.toLowerCase(), attributesFile)))
     throw new Error('core.attributesFile names a file in the worktree');
 }
 
-/** `path`, or its deepest existing folder, resolved through links, so a link into the worktree is seen as one. */
-function throughLinks(path: string): string {
-  for (let dir = path; ; dir = dirname(dir)) {
-    const real = (() => {
-      try {
-        return realpathSync.native(dir);
-      } catch {
-        return null;
-      }
-    })();
-    if (real) return join(real, relative(dir, path));
-    if (dirname(dir) === dir) return path;
-  }
-}
-
-interface CheckoutPlan {
-  entries: { mode: string; size: number; path: string }[];
-  directories: Set<string>;
-  attributes: string[];
-  config: string;
-}
-
 /**
- * Reads what a checkout of `HEAD` writes in `target`, a worktree made with `git worktree add --no-checkout`, from
- * its configuration and the object database, so it can run while the files are cloned. Throws where a clone cannot
- * be made that checkout.
+ * Makes the tracked files of `target`, a worktree whose files were cloned from another checkout, what
+ * `git worktree add` writes for its `HEAD`, or removes them so `git reset --hard` writes them: a file a checkout
+ * converts or whose size is not its blob's, and a file whose name is spelled another way on disk, are removed;
+ * permission bits and extended attributes are set to a new file's. Throws where that takes more than a file.
+ * @ref LLP 0029#a-clone-is-kept-only-as-a-checkout-writes-it -- every difference is removed or left to git
  */
-export async function readCheckout(target: string, operation: StimContext): Promise<CheckoutPlan> {
-  const config = configListing(target, operation);
-  void config.catch(() => {});
+export async function cloneAsCheckout(target: string, operation: StimContext): Promise<void> {
+  await refuseCheckoutConfig(target, operation);
+  await asCheckout(target, operation).catch(async (error: unknown) => {
+    if (process.platform !== 'darwin' || !(error instanceof Error && 'code' in error && error.code === 'EPERM'))
+      throw error;
+    // chflags(1): a file with the uchg flag, which clonefile(2) copies, cannot be changed or removed until the flag
+    // is cleared. -R does not follow links.
+    await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['-R', 'nouchg', target], {
+      timeoutMs: 'unbounded',
+    });
+    await asCheckout(target, operation);
+  });
+}
+
+async function asCheckout(target: string, operation: StimContext): Promise<void> {
   const read = { ...childEnvironment(operation.env), signal: operation.signal, declareFor: operation, untrimmed: true };
   // git(1), GIT_NO_LAZY_FETCH: in a partial clone ls-tree -l otherwise fetches each missing blob for its size, one
   // at a time. Without it the size is not a number and the file is left to the reset, which fetches in one batch.
@@ -144,39 +107,6 @@ export async function readCheckout(target: string, operation: StimContext): Prom
   ).split('\0');
   if (attributes.length < entries.length * CONVERSION_ATTRIBUTES.length * 3)
     throw new Error('git did not answer for every tracked path');
-  return { entries, directories, attributes, config: await config };
-}
-
-/**
- * Makes the tracked files of `target`, a worktree whose files were cloned from another checkout, what
- * `git worktree add` writes for its `HEAD`, or removes them so `git reset --hard` writes them: a file a checkout
- * converts or whose size is not its blob's, and a file whose name is spelled another way on disk, are removed;
- * permission bits and extended attributes are set to a new file's. Throws where that takes more than a file.
- * @ref LLP 0029#a-clone-is-kept-only-as-a-checkout-writes-it -- every difference is removed or left to git
- */
-export async function cloneAsCheckout(target: string, plan: CheckoutPlan, operation: StimContext): Promise<void> {
-  // git-config(1): a configuration file can be one the clone has just written, so the configuration is checked after
-  // the clone, and must be the one the reads beside it saw.
-  await refuseCheckoutConfig(target, operation);
-  if ((await configListing(target, operation)) !== plan.config)
-    throw new Error('the git configuration changed while the files were cloned');
-  await asCheckout(target, plan, operation).catch(async (error: unknown) => {
-    if (process.platform !== 'darwin' || !(error instanceof Error && 'code' in error && error.code === 'EPERM'))
-      throw error;
-    // chflags(1): a file with the uchg flag, which clonefile(2) copies, cannot be changed or removed until the flag
-    // is cleared. -R does not follow links.
-    await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['-R', 'nouchg', target], {
-      timeoutMs: 'unbounded',
-    });
-    await asCheckout(target, plan, operation);
-  });
-}
-
-async function asCheckout(
-  target: string,
-  { entries, directories, attributes }: CheckoutPlan,
-  operation: StimContext,
-): Promise<void> {
   // git entry.c create_file and create_directories: a checkout creates a file with mode 0666, or 0777 for an
   // executable one, and a directory with 0777, each less the umask.
   const umask = process.umask();

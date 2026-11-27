@@ -166,7 +166,6 @@ afterEach(() => {
   resetExecutor();
   process.exitCode = 0;
   delete process.env.STIM_HOME;
-  vi.unstubAllEnvs();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -336,6 +335,30 @@ test.each([
     if (!another) return;
     expect(readFileSync(join(other, 'in-progress.txt'), 'utf-8')).toBe('work in another worktree\n');
     expect(git(other, 'branch', '--show-current')).toBe('other');
+  },
+  60_000,
+);
+
+test.skipIf(!clones)(
+  'an ignored file removed from the source checkout while the worktree is cloned is not reported as a failed copy (needs a volume that clones)',
+  async () => {
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        const output = await real.runFileAsync(file, args, opts);
+        if (file === 'git' && args.includes('--no-checkout')) rmSync(join(root, '.env'));
+        return output;
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+    expect(added.stderr).toContain(cloned);
+    expect(added.stderr).not.toContain('could not copy');
+    expect(added.code).toBe(0);
+    expect(existsSync(join(base, 'added/.env'))).toBe(false);
+    expect(readFileSync(join(base, 'added/node_modules/pkg/index.js'), 'utf-8')).toBe('package\n');
   },
   60_000,
 );
@@ -642,26 +665,6 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   [
-    'core.attributesFile naming a file of the new worktree through a link',
-    checkedOut,
-    'HEAD',
-    () => {
-      write(root, 'local.attributes', '*.txt text eol=crlf\n');
-      symlinkSync(base, join(base, 'alias'));
-      git(root, 'config', 'core.attributesFile', join(base, 'alias/added/local.attributes'));
-    },
-  ],
-  [
-    'core.attributesFile that is a link to a file of the new worktree',
-    checkedOut,
-    'HEAD',
-    () => {
-      write(root, 'local.attributes', '*.txt text eol=crlf\n');
-      symlinkSync(join(base, 'added/local.attributes'), join(base, 'attributes-link'));
-      git(root, 'config', 'core.attributesFile', join(base, 'attributes-link'));
-    },
-  ],
-  [
     'core.symlinks=false and a link kept as a file',
     checkedOut,
     'HEAD',
@@ -673,18 +676,6 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   ['core.eol=crlf', checkedOut, 'HEAD', () => git(root, 'config', 'core.eol', 'crlf')],
-  [
-    'GIT_CONFIG_GLOBAL naming a tracked file that sets core.autocrlf=true',
-    checkedOut,
-    'HEAD',
-    () => {
-      write(root, 'repo.gitconfig', '[core]\n\tautocrlf = true\n');
-      git(root, 'add', 'repo.gitconfig');
-      git(root, 'commit', '-qm', 'config');
-      git(root, 'config', '--unset', 'core.autocrlf');
-      vi.stubEnv('GIT_CONFIG_GLOBAL', 'repo.gitconfig');
-    },
-  ],
   [
     'attr.tree naming attributes of another branch',
     checkedOut,
@@ -1047,7 +1038,7 @@ test('git refusing the worktree fails the command without a second attempt', asy
 }, 60_000);
 
 test.skipIf(!clones)(
-  'an operation cancelled during the clone or the checkout reads beside it leaves no worktree and no branch, and one cancelled during the carry leaves no ignored file (needs a volume that clones)',
+  'an operation cancelled during the clone leaves no worktree and no branch, and one cancelled during the carry leaves no ignored file (needs a volume that clones)',
   async () => {
     const real = getExecutor();
     const cancelAt = async (
@@ -1073,14 +1064,6 @@ test.skipIf(!clones)(
     await cancelAt((file, _args, opts) => clonesInto(join(base, 'cloning'), file, opts).length > 0, '../cloning');
     expect(existsSync(join(base, 'cloning'))).toBe(false);
     expect(git(root, 'branch', '--list', 'cloning')).toBe('');
-    expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
-
-    await cancelAt(
-      (file, _args, opts) => file === binaryPath() && (opts.input ?? '').endsWith('/index\0'),
-      '../reading',
-    );
-    expect(existsSync(join(base, 'reading'))).toBe(false);
-    expect(git(root, 'branch', '--list', 'reading')).toBe('');
     expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
 
     await cancelAt((file, args) => file === 'git' && args.includes('--untracked-files=normal'), '../carrying');

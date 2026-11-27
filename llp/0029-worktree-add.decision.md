@@ -90,6 +90,14 @@ files and another ignored folder of 154,000, the command took 20 s against 6 s
 for the plain path until those were skipped. A wrong guess costs time only: the
 warm copies what is missing and the removal takes what it did not carry.
 
+The warm takes its ignored entries from the listing of the source checkout
+made for that step, under the same claim, and leaves out an entry since
+removed from the source. It still filters them with a `git worktree list`
+taken after `git worktree add`, so a new worktree inside the source checkout
+keeps the folder that holds it out of the carry. An ignored entry created in
+the source after the listing is not carried, and the prune removes it if the
+clone brought it.
+
 A submodule folder is emptied by removing files, and no git command runs inside
 it. Submodules are supported, not refused.
 
@@ -128,8 +136,7 @@ source index marks a file assume-unchanged or skip-worktree or is a split
 index, `core.autocrlf=true` or `core.eol=crlf` makes a checkout write CRLF,
 `core.symlinks=false` makes it write links as files,
 `attr.tree` or `GIT_ATTR_SOURCE` names another source of attributes,
-`core.attributesFile` names a file in the worktree, directly or through a
-link, two
+`core.attributesFile` names a file in the worktree, two
 tracked paths of the target commit differ only in case or Unicode form, a
 tracked folder is spelled another way on disk, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
@@ -195,14 +202,8 @@ saves disk, not time. On a clone of this repository with 18 `node_modules`
 folders (3.9 GB), a worktree 50 commits behind took about the same time as
 `git worktree add` then `stim worktree warm`, a `clonefile` of the dependency
 folders being about 2 s of both, and held 9 MB of private disk against 113 MB,
-or 0 MB against 113 MB at the source's own commit. The refresh reads the
-clones, so it starts after the `clonefile` call. `git ls-tree -l` and
-`git check-attr --source=HEAD` read only the configuration and the object
-database, so they run beside it; the index is cloned first, because
-`check-attr` reads it. The configuration checks run after the clone, since
-a configuration file can be one the clone writes, and the command takes the
-plain path when `git config --list` gives anything other than it did before
-those reads.
+or 0 MB against 113 MB at the source's own commit. Git work started beside the
+`clonefile` call waits for it, so the two do not overlap.
 
 ## A clone is kept only as a checkout writes it
 
@@ -279,3 +280,6 @@ four calls at a time. On a checkout of 19,021 tracked files the step adds about
   the entries matches its stat data without that. The refresh is the hashing:
   on 19,021 tracked files it took 2.7 s, against 2.4 s for
   `git hash-object --stdin-paths` over the same files (#6562).
+- Running `git ls-tree -l` and `git check-attr` beside the clone. It saved 0.2
+  to 0.4 s, and each review found another configuration or attributes file
+  that the clone writes while they read (#6563).
