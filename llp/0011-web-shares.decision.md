@@ -124,8 +124,7 @@ The server serves
 shares on a separate loopback listener, not the Noise protocol: per share
 the viewer page, the frames of its one device and, with control, input to
 that device through `ControlHub` (on a simulator, emulator or Android phone that includes
-its clipboard: a viewer's paste, and the viewer's own sync or copy of the device's text, never logged; a sync poll
-never starts a control session or keeps one alive), behind a 256-bit URL token, a generated
+its clipboard: a viewer's paste and the browser text it sends, never logged), behind a 256-bit URL token, a generated
 password and an HttpOnly Secure SameSite=Strict session cookie. A control
 share can also have a second, view-only password (`--view-password`): login
 compares both digests, always both, with `timingSafeEqual`; the cookie stays an
@@ -137,6 +136,10 @@ share socket also carries presence (each viewer's name and touches) from
 never logged or written to disk.
 
 A single link can admit observers and controllers. The server checks the session’s permission for every input so viewer-side behavior cannot grant control. [View-only access and presence](https://github.com/appandflow/stim/pull/4909).
+
+A share link writes the device clipboard and never reads it. The server answers a viewer's `clipboard-get` with the `clipboard-read-refused` code before it starts control or reaches the device, and the page offers no copy from the device. A simulator or emulator may sync its clipboard with the host Mac, so a read would hand a link holder what the host user copied. Paired clients (Desktop, the phone app, `device-host`) keep `input.clipboard.get`. [Share clipboard reads](https://github.com/appandflow/stim/issues/6572).
+
+Maintainer decision: "for share links lets make only sending to pasteboard not reading, but onlu for share ljnks", 2026-11-27.
 
 ## Own the route and capture only on demand
 

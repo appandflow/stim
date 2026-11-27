@@ -72,8 +72,9 @@ device is back, within the original expiry.
   the rest of that window.
 - Saved links and passwords stay in the workspace's Stim state with owner-only
   permissions. `--forget` removes them.
-- A viewer with `--control` can read the device clipboard. A simulator or
-  emulator may share its clipboard with the host Mac.
+- A viewer with `--control` can paste text into the device clipboard but can
+  never read it. A simulator or emulator may share its clipboard with the host
+  Mac, so a share link never returns the device clipboard to the browser.
 - Stim does not record a share, but the live screen, touches and clipboard can
   expose whatever the app or device shows.
 

@@ -384,7 +384,7 @@ SECURITY MODEL
   and the phone app use too. A viewer that can control starts the share's
   session, and so takes the device lease, when it connects, and the session ends
   after 5 minutes without input or when the last viewer leaves. It carries taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, rotation and the
-  hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
+  hardware buttons of the shared device, plus writes to the device clipboard on an iOS simulator, an Android emulator or an
   Android phone only. On a touch-first browser a Keyboard button in the device toolbar opens a "Type on the device" field above the phone's keyboard, because a phone cannot type through the canvas; a desktop browser types through the canvas. Viewers, Stim Desktop, the phone app and agents control
   the device at the same time; none of them refuses or takes over the others' control. The device has
   one touch pointer: whoever puts a finger down holds it until they lift it,
@@ -397,24 +397,20 @@ SECURITY MODEL
   the frames helper restarts or control restarts. Stopping stim-server resets it to off. Android emulators, physical
   devices, macOS apps and hosted sessions have no switch, and a view-only viewer cannot change it. Two live shares
   of one simulator do not coordinate the switch, and ending one turns it off for the other.
-- Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
+- Clipboard, with --control on an iOS simulator, Android emulator or Android phone: a share link writes the device
+  clipboard and never reads it, because a simulator or emulator may share its clipboard with the host Mac; stim-server
+  answers a viewer's clipboard read with clipboard-read-refused before it starts control. Command-V or Control-V while
   the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, which lands without a prompt in an app Stim installed on an owned simulator (Stim allows its paste permission) and where iOS can ask first in any other app. The
-  top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
-  browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
-  failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
-  the write, and where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends
-  the browser's new text to the device when the page regains focus. The menu's Copy from device button copies
-  once. On a touch-first browser (a phone or tablet) there is no automatic sync, because a browser lets a page read
-  or write the clipboard only inside a tap: the switch is replaced by a Paste to device button, which reads the browser
-  clipboard inside the tap (iOS Safari shows its own Paste button to confirm, Android Chrome asks for clipboard
-  permission once) and sends it as the same paste Command-V sends, with a short note when the read is denied or empty,
-  and Copy from device fetches the device text and writes it with a ClipboardItem that holds a promise, which keeps the
-  tap's permission to write; when the browser still refuses, the text shows in a field to select. Command-V still works
-  on a tablet with a keyboard. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
-  Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
-  (from the moment a viewer that can control connects) and does not count as input for the 5 minute idle end. Text a control
-  viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
-  logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get.
+  top bar's options menu has a Send clipboard switch, on by default for control viewers and remembered in the
+  browser: where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends the
+  browser's new text to the device clipboard when the page regains focus. On a touch-first browser (a phone or tablet)
+  a page can read the clipboard only inside a tap, so the switch is replaced by a Paste to device button, which reads
+  the browser clipboard inside the tap (iOS Safari shows its own Paste button to confirm, Android Chrome asks for
+  clipboard permission once) and sends it as the same paste Command-V sends, with a short note when the read is denied
+  or empty. Command-V still works on a tablet with a keyboard. Sending the browser's text is an input: it starts the
+  control session like a paste, and on an Android phone takes its lease. A share without --control, a web page and a
+  macOS app never set the device clipboard, and the text is never logged. The stim-server protocol method is
+  input.clipboard.set; paired clients such as Stim Desktop and the phone app also use input.clipboard.get.
 - Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real
   fingers on a phone or tablet, Option-drag with a mouse for a pinch (the second finger mirrors
   the first through the screen center) and Shift-Option-drag to move both fingers together. A
