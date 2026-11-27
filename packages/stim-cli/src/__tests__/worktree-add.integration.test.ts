@@ -9,7 +9,9 @@ import {
   readdirSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -39,16 +41,36 @@ function write(dir: string, rel: string, value: string): void {
   writeFileSync(join(dir, rel), value);
 }
 
-/** Every entry below `dir` outside `.git`, with a file's bytes and a link's target. */
-function tree(dir: string, rel = ''): Record<string, string> {
+/** The extended attribute names of every entry below `dir`, by path; xattr(1) prints `path: name` lines. */
+function extendedAttributes(dir: string): Map<string, string[]> {
+  const names = new Map<string, string[]>();
+  if (!clones) return names;
+  for (const line of execFileSync('/usr/bin/xattr', ['-r', '-s', dir], { encoding: 'utf-8' }).split('\n')) {
+    const at = line.lastIndexOf(': ');
+    if (at > 0) names.set(line.slice(0, at), [...(names.get(line.slice(0, at)) ?? []), line.slice(at + 2)].toSorted());
+  }
+  return names;
+}
+
+/** The text of the files `names` of `dir`. */
+function texts(dir: string, ...names: string[]): Record<string, string> {
+  return Object.fromEntries(names.map((name) => [name, readFileSync(join(dir, name), 'utf-8')]));
+}
+
+/**
+ * Every entry below `dir` outside `.git`, under the name it has on disk, with its permission bits, its extended
+ * attributes and a file's bytes or a link's target.
+ */
+function tree(dir: string, rel = '', attributes = extendedAttributes(dir)): Record<string, string> {
   const entries: Record<string, string> = {};
   for (const name of readdirSync(join(dir, rel)).toSorted()) {
     const path = rel ? `${rel}/${name}` : name;
     if (path === '.git') continue;
     const stat = lstatSync(join(dir, path));
-    if (stat.isSymbolicLink()) entries[path] = `-> ${readlinkSync(join(dir, path))}`;
-    else if (stat.isDirectory()) Object.assign(entries, { [path]: 'dir' }, tree(dir, path));
-    else entries[path] = readFileSync(join(dir, path), 'utf-8');
+    const meta = `${(stat.mode & 0o7777).toString(8)} [${attributes.get(join(dir, path)) ?? ''}]`;
+    if (stat.isSymbolicLink()) entries[path] = `${meta} -> ${readlinkSync(join(dir, path))}`;
+    else if (stat.isDirectory()) Object.assign(entries, { [path]: `dir ${meta}` }, tree(dir, path, attributes));
+    else entries[path] = `${meta} ${readFileSync(join(dir, path), 'latin1')}`;
   }
   return entries;
 }
@@ -149,7 +171,10 @@ test('a dirty source checkout gives a clean worktree at the target commit, the s
   expect(git(path, 'branch', '--show-current')).toBe('added');
   expect(git(root, 'worktree', 'list', '--porcelain')).toContain(`worktree ${path}\n`);
   expect(tree(path)).toEqual(tree(await plain('plain', 'HEAD~1')));
-  expect(tree(path)).toMatchObject({ 'node_modules/pkg/index.js': 'package\n', '.env': 'SECRET=1\n' });
+  expect(texts(path, 'node_modules/pkg/index.js', '.env')).toEqual({
+    'node_modules/pkg/index.js': 'package\n',
+    '.env': 'SECRET=1\n',
+  });
   expect(git(root, 'status', '--porcelain')).toBe(dirty);
 
   expect((await run(removeOp, root, [path])).code).toBe(0);
@@ -244,7 +269,10 @@ test('a worktree added inside the source checkout carries no other worktree', as
   expect(added.code).toBe(0);
   expect(added.stderr).toContain(clones ? 'as a clone of' : 'with git worktree add');
   expect(existsSync(join(path, '.worktrees'))).toBe(false);
-  expect(tree(path)).toMatchObject({ 'node_modules/pkg/index.js': 'package\n', 'src/kept.txt': 'second\n' });
+  expect(texts(path, 'node_modules/pkg/index.js', 'src/kept.txt')).toEqual({
+    'node_modules/pkg/index.js': 'package\n',
+    'src/kept.txt': 'second\n',
+  });
   expect(git(path, 'status', '--porcelain')).toBe('');
   expect(readFileSync(join(other, 'in-progress.txt'), 'utf-8')).toBe('work in another worktree\n');
   expect(git(other, 'branch', '--show-current')).toBe('other');
@@ -316,6 +344,354 @@ test('an edit that kept its file size and modification time does not reach a wor
   expect(git(join(base, 'added'), 'status', '--porcelain')).toBe('');
 }, 60_000);
 
+/** Checks `file` out again in the source checkout, so its bytes are what git writes under the conversion in force. */
+function checkOutAgain(file: string): void {
+  rmSync(join(root, file));
+  git(root, 'checkout', '--', file);
+}
+
+function commitAttributes(attributes: string, ...files: string[]): void {
+  write(root, '.gitattributes', attributes);
+  git(root, 'add', '.gitattributes', ...files);
+  git(root, 'commit', '-qm', 'attributes');
+}
+
+const cloned = 'as a clone of';
+const checkedOut = 'with git worktree add, because';
+
+/** A source checkout git reports clean, or dirty only as named, whose files are not what a checkout writes. */
+const unlikeACheckout: [name: string, path: string, commit: string, prepare: () => void][] = [
+  [
+    'an untracked .gitattributes that asks for CRLF, at an older commit',
+    cloned,
+    'HEAD~1',
+    () => write(root, '.gitattributes', '*.txt eol=crlf\n'),
+  ],
+  ['an LF file where the commit asks for CRLF', cloned, 'HEAD', () => commitAttributes('*.txt text eol=crlf\n')],
+  [
+    'a CRLF file left from core.autocrlf=true',
+    cloned,
+    'HEAD',
+    () => {
+      git(root, 'config', 'core.autocrlf', 'true');
+      checkOutAgain('src/kept.txt');
+      expect(readFileSync(join(root, 'src/kept.txt'), 'utf-8')).toBe('second\r\n');
+      git(root, 'update-index', '--refresh');
+      git(root, 'config', 'core.autocrlf', 'false');
+    },
+  ],
+  [
+    'a CRLF file git cleans to its LF blob under core.autocrlf=input',
+    cloned,
+    'HEAD',
+    () => {
+      git(root, 'config', 'core.autocrlf', 'input');
+      write(root, 'src/kept.txt', 'second\r\n');
+      git(root, 'add', 'src/kept.txt');
+      expect(git(root, 'status', '--porcelain')).toBe('');
+    },
+  ],
+  [
+    'an ident attribute and an identifier from another blob',
+    cloned,
+    'HEAD',
+    () => {
+      write(root, 'src/ident.txt', '$Id$\n');
+      commitAttributes('*.txt ident\n', 'src/ident.txt');
+      write(root, 'src/ident.txt', `$Id: ${'0'.repeat(40)} $\n`);
+    },
+  ],
+  [
+    'a smudge filter whose output the source checkout does not hold',
+    cloned,
+    'HEAD',
+    () => {
+      git(root, 'config', 'filter.upper.clean', 'tr A-Z a-z');
+      git(root, 'config', 'filter.upper.smudge', 'tr a-z A-Z');
+      commitAttributes('src/kept.txt filter=upper\n');
+    },
+  ],
+  [
+    'the output of a filter the commit no longer names',
+    cloned,
+    'HEAD',
+    () => {
+      git(root, 'config', 'filter.upper.clean', 'tr A-Z a-z');
+      git(root, 'config', 'filter.upper.smudge', 'tr a-z A-Z');
+      commitAttributes('src/kept.txt filter=upper\n');
+      checkOutAgain('src/kept.txt');
+      git(root, 'rm', '-q', '--cached', '.gitattributes');
+      git(root, 'commit', '-qm', 'no filter');
+    },
+  ],
+  [
+    'the output of a filter only an untracked .gitattributes names',
+    cloned,
+    'HEAD',
+    () => {
+      git(root, 'config', 'filter.upper.clean', 'tr A-Z a-z');
+      git(root, 'config', 'filter.upper.smudge', 'tr a-z A-Z');
+      write(root, '.gitattributes', 'src/kept.txt filter=upper\n');
+      checkOutAgain('src/kept.txt');
+      expect(readFileSync(join(root, 'src/kept.txt'), 'utf-8')).toBe('SECOND\n');
+      expect(git(root, 'status', '--porcelain')).toBe('?? .gitattributes');
+    },
+  ],
+  [
+    'a working-tree-encoding',
+    cloned,
+    'HEAD',
+    () => {
+      writeFileSync(join(root, 'src/kept.txt'), Buffer.from('second\n', 'utf16le'));
+      commitAttributes('src/kept.txt working-tree-encoding=UTF-16LE\n', 'src/kept.txt');
+    },
+  ],
+  [
+    'core.checkStat=minimal and an edit that kept its size and modification time',
+    cloned,
+    'HEAD',
+    () => {
+      git(root, 'config', 'core.checkStat', 'minimal');
+      const longAgo = new Date('2020-01-01');
+      utimesSync(join(root, 'src/kept.txt'), longAgo, longAgo);
+      git(root, 'update-index', '--refresh');
+      write(root, 'src/kept.txt', 'SECOND\n');
+      utimesSync(join(root, 'src/kept.txt'), longAgo, longAgo);
+      expect(git(root, 'status', '--porcelain')).toBe('');
+    },
+  ],
+  [
+    'an fsmonitor hook that reports no change after an edit',
+    cloned,
+    'HEAD',
+    () => {
+      write(base, 'fsmonitor.sh', "#!/bin/sh\nprintf 'token\\0'\n");
+      chmodSync(join(base, 'fsmonitor.sh'), 0o755);
+      git(root, 'config', 'core.fsmonitor', join(base, 'fsmonitor.sh'));
+      git(root, 'config', 'core.fsmonitorHookVersion', '2');
+      git(root, 'status');
+      git(root, 'status');
+      write(root, 'src/kept.txt', 'an edit the hook hides\n');
+      expect(git(root, 'status', '--porcelain')).toBe('');
+    },
+  ],
+  [
+    'a link created under another umask',
+    cloned,
+    'HEAD',
+    () => {
+      const umask = process.umask(0o077);
+      symlinkSync('kept.txt', join(root, 'src/link'));
+      process.umask(umask);
+      git(root, 'add', 'src/link');
+      git(root, 'commit', '-qm', 'link');
+    },
+  ],
+  [
+    'a file and a folder with other permission bits',
+    cloned,
+    'HEAD',
+    () => {
+      chmodSync(join(root, 'src/kept.txt'), 0o600);
+      chmodSync(join(root, 'src'), 0o700);
+      chmodSync(join(root, 'package.json'), 0o664);
+    },
+  ],
+  [
+    'a file whose name is spelled in another case on disk',
+    cloned,
+    'HEAD',
+    () => {
+      renameSync(join(root, 'src/kept.txt'), join(root, 'src/moved.txt'));
+      renameSync(join(root, 'src/moved.txt'), join(root, 'src/KEPT.txt'));
+    },
+  ],
+  [
+    'a file whose name is decomposed on disk',
+    cloned,
+    'HEAD',
+    () => {
+      write(root, 'src/café.txt', 'precomposed in the commit\n');
+      git(root, 'add', 'src');
+      git(root, 'commit', '-qm', 'accent');
+      renameSync(join(root, 'src/café.txt'), join(root, 'src/moved.txt'));
+      renameSync(join(root, 'src/moved.txt'), join(root, 'src/café.txt'));
+    },
+  ],
+  [
+    'a folder whose name is spelled in another case on disk',
+    checkedOut,
+    'HEAD',
+    () => {
+      renameSync(join(root, 'src'), join(root, 'moved'));
+      renameSync(join(root, 'moved'), join(root, 'SRC'));
+    },
+  ],
+  [
+    'two tracked paths that differ only in case',
+    checkedOut,
+    'HEAD',
+    () => {
+      const blob = execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], { input: 'other case\n' });
+      git(root, 'update-index', '--add', '--cacheinfo', `100644,${String(blob).trim()},src/KEPT.txt`);
+      git(root, 'commit', '-qm', 'collision');
+    },
+  ],
+  [
+    'extended attributes and an access control list',
+    cloned,
+    'HEAD',
+    () => {
+      for (const path of ['src/kept.txt', 'src', 'package.json'])
+        execFileSync('/usr/bin/xattr', ['-w', 'user.stim-test', 'value', join(root, path)]);
+      execFileSync('/bin/chmod', ['+a', 'everyone allow read', join(root, 'src/kept.txt')]);
+    },
+  ],
+  [
+    'a folder replaced by an absolute link to its renamed self',
+    cloned,
+    'HEAD',
+    () => {
+      renameSync(join(root, 'src'), join(root, 'moved'));
+      symlinkSync(join(root, 'moved'), join(root, 'src'));
+      chmodSync(join(root, 'moved/kept.txt'), 0o600);
+    },
+  ],
+  ['core.autocrlf=true', checkedOut, 'HEAD', () => git(root, 'config', 'core.autocrlf', 'true')],
+  [
+    'core.autocrlf written as a bare key',
+    checkedOut,
+    'HEAD',
+    () =>
+      writeFileSync(
+        join(root, '.git/config'),
+        `${readFileSync(join(root, '.git/config'), 'utf-8')}[core]\n\tautocrlf\n`,
+      ),
+  ],
+  [
+    'core.autocrlf=1 set only for the new branch',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(base, 'branch.config', '[core]\n\tautocrlf = 1\n');
+      git(root, 'config', 'includeIf.onbranch:added.path', join(base, 'branch.config'));
+      git(root, 'config', 'includeIf.onbranch:plain.path', join(base, 'branch.config'));
+    },
+  ],
+  [
+    'core.attributesFile naming an untracked file of the checkout',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(root, 'local.attributes', '*.txt text eol=crlf\n');
+      git(root, 'config', 'core.attributesFile', 'local.attributes');
+    },
+  ],
+  [
+    'core.symlinks=false and a link kept as a file',
+    checkedOut,
+    'HEAD',
+    () => {
+      symlinkSync('kept.txt', join(root, 'src/link'));
+      git(root, 'add', 'src/link');
+      git(root, 'commit', '-qm', 'link');
+      git(root, 'config', 'core.symlinks', 'false');
+    },
+  ],
+  ['core.eol=crlf', checkedOut, 'HEAD', () => git(root, 'config', 'core.eol', 'crlf')],
+  [
+    'attr.tree naming attributes of another branch',
+    checkedOut,
+    'HEAD',
+    () => {
+      git(root, 'checkout', '-q', '-b', 'attributes');
+      commitAttributes('*.txt text eol=crlf\n');
+      git(root, 'checkout', '-q', 'main');
+      git(root, 'config', 'attr.tree', 'attributes');
+    },
+  ],
+];
+
+for (const [name, path, commit, prepare] of unlikeACheckout)
+  test.skipIf(!clones)(
+    `a source checkout with ${name} gives what git worktree add then warm gives, in bytes, modes, names and extended attributes (APFS clonefile; darwin only)`,
+    async () => {
+      prepare();
+      const source = tree(root);
+      const acl = (dir: string) => execFileSync('/bin/ls', ['-leR', join(dir, 'src')], { encoding: 'utf-8' });
+
+      const added = await run(addOp, root, ['-b', 'added', '../added', commit]);
+
+      expect(added.stderr).toContain(path);
+      expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain', commit)));
+      expect(acl(join(base, 'added')).replaceAll(join(base, 'added'), '')).not.toContain('everyone allow read');
+      expect(git(join(base, 'added'), 'status', '--porcelain')).toBe(git(join(base, 'plain'), 'status', '--porcelain'));
+      expect(tree(root)).toEqual(source);
+    },
+    60_000,
+  );
+
+test.skipIf(!clones)(
+  'a file the source checkout marks immutable is cloned without its flag or its extended attributes (APFS clonefile; darwin only)',
+  async () => {
+    execFileSync('/usr/bin/xattr', ['-w', 'user.stim-test', 'value', join(root, 'src/kept.txt')]);
+    chmodSync(join(root, 'package.json'), 0o600);
+    for (const file of ['src/kept.txt', 'package.json']) execFileSync('/usr/bin/chflags', ['uchg', join(root, file)]);
+    try {
+      const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+      expect(added.stderr).toContain(cloned);
+      expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
+      rmSync(join(base, 'added/src/kept.txt'));
+      rmSync(join(base, 'added/package.json'));
+    } finally {
+      for (const file of ['src/kept.txt', 'package.json'])
+        execFileSync('/usr/bin/chflags', ['nouchg', join(root, file)]);
+    }
+  },
+  60_000,
+);
+
+test.skipIf(!clones)(
+  'a commit that names .git is left to git, which refuses it, and the source checkout is untouched (APFS clonefile; darwin only)',
+  async () => {
+    const blob = git(root, 'rev-parse', 'HEAD:package.json');
+    const made = execFileSync('git', ['-C', root, 'mktree'], {
+      input: `100644 blob ${blob}\t.git\n100644 blob ${blob}\tpackage.json\n`,
+      encoding: 'utf-8',
+    }).trim();
+    const commit = git(root, 'commit-tree', '-m', 'names .git', made);
+    write(root, 'staged.txt', 'staged and not committed\n');
+    git(root, 'add', 'staged.txt');
+    mkdirSync(join(root, '.worktrees'));
+    const source = tree(root);
+    const status = git(root, 'status', '--porcelain');
+
+    const added = await run(addOp, root, ['-b', 'added', '.worktrees/added', commit]);
+
+    expect(added.code).toBe(1);
+    expect(added.stderr).toContain("invalid path '.git'");
+    expect(git(root, 'status', '--porcelain')).toBe(status);
+    expect(tree(root)).toEqual(source);
+  },
+  60_000,
+);
+
+test.skipIf(!clones)(
+  'a cloned worktree gets the permission bits a checkout gives under the umask in force (APFS clonefile; darwin only)',
+  async () => {
+    const umask = process.umask(0o027);
+    try {
+      expect((await run(addOp, root, ['-b', 'added', '../added'])).stderr).toContain(cloned);
+      expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
+      expect(lstatSync(join(base, 'added/src/kept.txt')).mode & 0o7777).toBe(0o640);
+    } finally {
+      process.umask(umask);
+    }
+  },
+  60_000,
+);
+
 test('a source checkout with a split index takes the plain path and gives the same worktree', async () => {
   git(root, 'update-index', '--split-index');
 
@@ -365,7 +741,7 @@ test.skipIf(process.platform === 'win32')(
     expect(failing.stderr).toContain('post-checkout failed');
     expect(readFileSync(log, 'utf-8').match(/again/g)).toHaveLength(1);
     expect(git(join(base, 'failing'), 'status', '--porcelain')).toBe('');
-    expect(tree(join(base, 'failing'))).toMatchObject({
+    expect(texts(join(base, 'failing'), '.env', 'cache/made-by-hook', 'node_modules/pkg/index.js')).toEqual({
       '.env': 'hook\n',
       'cache/made-by-hook': 'hook\n',
       'node_modules/pkg/index.js': 'package\n',

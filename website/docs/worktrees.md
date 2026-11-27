@@ -36,7 +36,19 @@ worktree takes almost no disk space until its files change. It always starts
 clean at the commit you name: uncommitted edits, staged changes and untracked
 files stay in the source checkout. Submodule folders start empty, as Git
 leaves them. Anywhere else Git creates the worktree and Stim copies into it.
-The files are the same either way.
+
+The tracked files are the same either way: the same bytes, permission bits,
+names and extended attributes as `git worktree add` writes. Stim keeps a cloned
+file only when it is exactly that, and lets Git write the rest, such as a file
+a filter or a line-ending rule converts. What a cloned file keeps from the
+source checkout is its modification time, usually a file flag such as
+`hidden`, and the `com.apple.provenance` attribute macOS sets.
+
+Git also creates the worktree, with no clone, when `core.autocrlf=true`,
+`core.eol=crlf`, `core.symlinks=false` or `attr.tree` is set, when Git is
+older than 2.41, when two tracked paths differ only in
+letter case, or when a tracked folder is spelled another way on disk than in
+Git. The command prints which way it took and why.
 
 For a worktree something else created, such as an agent harness, warm it
 yourself:
