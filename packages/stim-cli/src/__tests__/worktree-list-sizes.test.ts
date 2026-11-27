@@ -3,7 +3,7 @@ import { diskUsageCacheFile } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { worktreeListPayload } from '../commands/worktree-list.ts';
+import { measureWorktreeSizes, worktreeListPayload } from '../commands/worktree-list.ts';
 import { getExecutor } from '../exec.ts';
 import { measureTree } from '../private-size.ts';
 
@@ -52,7 +52,10 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-const listing = () => worktreeListPayload([roots[0]], { measure: true });
+const listing = async () => {
+  await measureWorktreeSizes([roots[0]]);
+  return worktreeListPayload([roots[0]]);
+};
 
 it.each([
   { rule: 'fresh parts stay cached', hours: 0.5, change: false, dependency: false, rest: false },

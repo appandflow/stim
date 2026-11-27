@@ -16,14 +16,14 @@ import {
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
 import { canonicalPath } from './gc/paths.ts';
-import { eachLimited, sizeConcurrency } from './gc/limited.ts';
-import { phase } from './gc/progress.ts';
+import { openGitReads } from '../workspace/git-reads.ts';
+import { startWorktreeSizes } from './worktree-list-job.ts';
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 
 const DAY = 86_400_000;
 const OLD_DAYS = 30;
 const LARGE_BYTES = 1024 ** 3;
-const BUDGET_MS = 120_000;
+const WALK_TIMEOUT_MS = 120_000;
 const MEASURE_OPTIONS = { private: true, maxAgeMs: 60 * 60_000 };
 
 interface ListingEntry {
@@ -35,6 +35,8 @@ interface ListingEntry {
   /** Set when a walk left part of the worktree out, so `realBytes` and `apparentBytes` are lower bounds. */
   partial?: true;
   measuredAt: string | null;
+  /** Set when this call started measuring the worktree's missing or stale sizes after it returns. */
+  measuring?: true;
   willRemove: boolean | null;
   reason: string | null;
   detail: string | null;
@@ -179,18 +181,62 @@ function idleDays(times: (number | null | undefined)[], now: number): number | n
   return known.length ? Math.max(0, Math.floor((now - Math.max(...known)) / DAY)) : null;
 }
 
+interface SizeJob {
+  path: string;
+  root: string;
+  options: { private?: boolean; maxAgeMs?: number; targets?: () => string[] };
+}
+
 /**
- * Builds a listing from saved observations and measures. With `measure`, dependency trees follow their install and clone-group
- * validity rule; the rest is walked hourly. A project-local .pnpm-store requires a whole hourly walk.
- * All walks share a two minute budget for the whole call.
+ * The size-cache entries of `roots` that are missing or stale: dependency trees follow their install and clone-group
+ * validity rule; the rest is stale after an hour. A worktree with a project-local .pnpm-store or a linked ios is one
+ * whole entry.
  */
+function dueSizeJobs(roots: readonly string[]): SizeJob[] {
+  return roots
+    .flatMap((root) =>
+      wholeWalk(root)
+        ? [{ path: root, root, options: MEASURE_OPTIONS }]
+        : [
+            ...dependencies(root).map((path) => ({ path, root, options: {} })),
+            { path: restKey(root), root, options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
+          ],
+    )
+    .filter(({ path, options }) => !freshMeasure(path, options));
+}
+
+async function listedWorktrees(
+  repositories: readonly string[],
+  operation?: StimContext,
+): Promise<{ repository: string; entries: WorktreeEntry[] }[]> {
+  return Promise.all(
+    [...new Set(repositories.map(canonicalPath))].toSorted().map(async (repository) => ({
+      repository,
+      entries: linked(
+        await listWorktreesAsync(repository, { env: operation?.env, signal: operation?.signal, declareFor: operation }),
+        repository,
+      ),
+    })),
+  );
+}
+
+/**
+ * Walks the missing and stale size-cache entries of the linked worktrees of `repositories`, one at a time under the
+ * machine-wide walk claim, and stops when another process holds it. `stim worktree list` starts it detached.
+ */
+export async function measureWorktreeSizes(repositories: readonly string[], operation?: StimContext): Promise<void> {
+  const listed = await listedWorktrees(repositories, operation);
+  const roots = listed.flatMap(({ entries }) => entries.map((entry) => canonicalPath(entry.path)));
+  for (const { path, options } of dueSizeJobs(roots)) {
+    const { outcome } = await refreshMeasure(path, { ...options, timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
+    if (outcome === 'busy') return;
+  }
+}
+
+/** Builds a listing from saved observations and the saved sizes, at any age; it walks nothing. */
 export async function worktreeListPayload(
   repositories: readonly string[],
-  {
-    measure = false,
-    operation,
-    scope = 'repository',
-  }: { measure?: boolean; operation?: StimContext; scope?: 'repository' | 'machine' } = {},
+  { operation, scope = 'repository' }: { operation?: StimContext; scope?: 'repository' | 'machine' } = {},
 ): Promise<{
   scope: 'repository' | 'machine';
   daemonMode: DaemonMode;
@@ -204,40 +250,7 @@ export async function worktreeListPayload(
   total: Summary;
 }> {
   const settings = resolveMaintenanceSettings(undefined, operation?.env ?? process.env);
-  const deadline = Date.now() + BUDGET_MS;
-  const listed = await Promise.all(
-    [...new Set(repositories.map(canonicalPath))].toSorted().map(async (repository) => ({
-      repository,
-      entries: linked(
-        await listWorktreesAsync(repository, { env: operation?.env, signal: operation?.signal, declareFor: operation }),
-        repository,
-      ),
-    })),
-  );
-  if (measure) {
-    const roots = listed.flatMap(({ entries }) => entries.map(({ path }) => canonicalPath(path)));
-    const jobs = roots.flatMap((root) =>
-      (wholeWalk(root)
-        ? [{ path: root, options: MEASURE_OPTIONS }]
-        : [
-            ...dependencies(root).map((path) => ({ path, options: {} })),
-            { path: restKey(root), options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
-          ]
-      ).map((job) => ({ path: job.path, options: job.options, root })),
-    );
-    const due = jobs.filter(({ path, options }) => !freshMeasure(path, options));
-    if (due.length) phase('measuring', plural(new Set(due.map(({ root }) => root)).size, 'worktree'), operation);
-    await eachLimited(due, sizeConcurrency(operation), async ({ path, options }) => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return;
-      await refreshMeasure(path, {
-        ...options,
-        timeoutMs: Math.min(30_000, remaining),
-        operation,
-        admit: () => Date.now() < deadline,
-      });
-    });
-  }
+  const listed = await listedWorktrees(repositories, operation);
   const now = Date.now();
   const result = listed.map(({ repository, entries }) => {
     const worktrees: ListingEntry[] = entries.map((entry) => {
@@ -322,6 +335,15 @@ export const listOp: Op = defineOp({
   },
   run: async ({ options }) => {
     const { value, interrupted } = await runProcessOperation(process.cwd(), async (operation) => {
+      const closeGitReads = openGitReads(operation);
+      try {
+        return await list(operation);
+      } finally {
+        closeGitReads();
+      }
+    });
+    process.exitCode = interrupted ?? value ?? 1;
+    async function list(operation: StimContext): Promise<number> {
       const source = await resolveSourceCheckoutAsync(operation.cwd, {
         env: operation.env,
         signal: operation.signal,
@@ -349,10 +371,23 @@ export const listOp: Op = defineOp({
         for (const mark of readGcMarks())
           if (mark.worktree?.source && existsSync(mark.worktree.source)) repositories.add(mark.worktree.source);
       const payload = await worktreeListPayload([...repositories], {
-        measure: true,
         operation,
         scope: options.all ? 'machine' : 'repository',
       });
+      const due = new Set(
+        dueSizeJobs(payload.repositories.flatMap((repo) => repo.worktrees.map((entry) => entry.path))).map(
+          ({ root }) => root,
+        ),
+      );
+      if (
+        due.size &&
+        startWorktreeSizes(
+          payload.repositories.map((repo) => repo.repository),
+          operation.env,
+        )
+      )
+        for (const repo of payload.repositories)
+          for (const entry of repo.worktrees) if (due.has(entry.path)) entry.measuring = true;
       if (options.all && payload.daemonMode === 'off')
         console.error(
           'Automatic maintenance is off on this machine, so saved verdicts are not refreshed. Run stim worktree list in a repository to check it now.',
@@ -409,8 +444,10 @@ export const listOp: Op = defineOp({
             const path = rel && !rel.startsWith(`..${sep}`) && rel !== '..' ? rel : entry.path;
             const size =
               entry.apparentBytes === null
-                ? 'not measured'
-                : `${entry.realBytes === null ? 'real unknown' : `${formatSize({ bytes: entry.realBytes, partial: entry.partial })} real`}, ${formatSize({ bytes: entry.apparentBytes, partial: entry.partial })} apparent`;
+                ? entry.measuring
+                  ? 'measuring'
+                  : 'not measured'
+                : `${entry.realBytes === null ? 'real unknown' : `${formatSize({ bytes: entry.realBytes, partial: entry.partial })} real`}, ${formatSize({ bytes: entry.apparentBytes, partial: entry.partial })} apparent${entry.measuring && entry.measuredAt ? `, measured ${formatLongDuration(Math.max(0, Date.now() - Date.parse(entry.measuredAt)))} ago` : ''}`;
             const state =
               entry.willRemove === null
                 ? 'not checked'
@@ -424,7 +461,6 @@ export const listOp: Op = defineOp({
         if (options.all) console.log(`${payload.repositories.length} repositories; ${summaryLine(payload.total)}`);
       }
       return 0;
-    });
-    process.exitCode = interrupted ?? value ?? 1;
+    }
   },
 });

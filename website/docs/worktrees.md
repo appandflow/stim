@@ -104,7 +104,8 @@ checkout. If you deleted a worktree by hand, pass its path to
 ## Remove finished worktrees in bulk {/* #remove-finished-worktrees-in-bulk */}
 
 `stim worktree list` shows each worktree's size, age and what cleanup would do,
-without deleting anything.
+without deleting anything. Sizes it has not measured yet show `measuring` and
+appear on the next run.
 
 <StimTabs
 code={`stim gc --dry-run

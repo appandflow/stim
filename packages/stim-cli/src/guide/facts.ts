@@ -181,7 +181,7 @@ leased until <time>" for each one.`,
     { scope: "repository" | "machine", daemonMode: "on" | "report" | "off",
       repositories: [{ repository, checkedAt, oldestCheckedAt,
       worktrees: [{ path, branch, idleDays, realBytes, apparentBytes, partial?,
-        measuredAt, willRemove, reason, detail, checkedAt, old, large }],
+        measuredAt, measuring?, willRemove, reason, detail, checkedAt, old, large }],
       summary: Summary }], total: Summary }
     Summary = { count, realBytes, realPartial?, unmeasured, unchecked,
       removeBytes, removePartial?, keptBytes, keptPartial?,
@@ -193,7 +193,7 @@ leased until <time>" for each one.`,
     Real size sums node_modules, Pods and the rest's private bytes, or one whole walk's (APFS, ext4, btrfs or XFS),
     unknown when unavailable; apparent size is allocated bytes. partial and the
     *Partial fields mark lower bounds. Neither includes Stim workspace data outside the checkout.
-    measuredAt is when its oldest measured part was walked.
+    measuredAt is when its oldest measured part was walked; measuring: being measured after this call.
 
   stim start --json
 

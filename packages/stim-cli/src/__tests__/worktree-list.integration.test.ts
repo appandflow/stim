@@ -1,12 +1,24 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, utimesSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+  utimesSync,
+  readFileSync,
+} from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { diskUsageCacheFile, gcMarkFile, GC_MARK_VERSION, loadConfig, getConfigPath } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { formatBytes } from '../fs-util.ts';
 import { linkedWorktreeFindings } from '../diagnostics/doctor-worktrees.ts';
-import { listOp, worktreeListPayload } from '../commands/worktree-list.ts';
+import { listOp, measureWorktreeSizes, worktreeListPayload } from '../commands/worktree-list.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { startWorktreeSizes } from '../commands/worktree-list-job.ts';
+
+vi.mock('../commands/worktree-list-job.ts', () => ({ startWorktreeSizes: vi.fn<() => boolean>(() => true) }));
 
 let home: string;
 let repository: string;
@@ -126,8 +138,10 @@ test('JSON is one payload and splits kept totals by gc reason', async () => {
       'checkedAt',
       'old',
       'large',
+      'measuring',
     ].toSorted(),
   );
+  await measureWorktreeSizes([repository]);
   save(diskUsageCacheFile(rest(roots[1])), {
     path: rest(roots[1]),
     bytes: 4 * GIB,
@@ -339,4 +353,22 @@ test('listing a repository when git cannot run prints one JSON refusal', async (
     remedy: 'Run git worktree list here to see why, fix it, then run stim worktree list again.',
   });
   expect(process.exitCode).toBe(1);
+});
+
+test('listing walks nothing and measures missing sizes after it returns', async () => {
+  const cache = dirname(diskUsageCacheFile(roots[0]));
+  const saved = readdirSync(cache).length;
+  rmSync(diskUsageCacheFile(roots[2]));
+  rmSync(diskUsageCacheFile(rest(roots[2])));
+  const plain = await run({});
+  expect(readdirSync(cache)).toHaveLength(saved - 2);
+  expect(vi.mocked(startWorktreeSizes)).toHaveBeenCalledWith([repository], expect.anything());
+  expect(plain.find((line) => line.startsWith(`.worktrees${sep}unknown`))).toContain(' | measuring | ');
+
+  await measureWorktreeSizes([repository]);
+  vi.mocked(startWorktreeSizes).mockClear();
+  const payload = JSON.parse((await run({ json: true }))[0] ?? '');
+  expect(vi.mocked(startWorktreeSizes)).not.toHaveBeenCalled();
+  expect(payload.total.unmeasured).toBe(0);
+  for (const entry of payload.repositories[0].worktrees) expect(entry.measuring).toBeUndefined();
 });
