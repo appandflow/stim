@@ -584,7 +584,7 @@ test.skipIf(!clones)(
 );
 
 test.skipIf(!clones)(
-  'a SHA-256 repository is cloned and git reads every tracked file (APFS clone inodes; darwin only)',
+  'a SHA-256 repository is cloned and git reads every tracked file, whatever its fsmonitor hook reports (APFS clone inodes; darwin only)',
   async () => {
     const other = join(base, 'sha256');
     mkdirSync(other);
@@ -596,12 +596,19 @@ test.skipIf(!clones)(
     write(other, 'src/kept.txt', 'tracked\n');
     git(other, 'add', '.');
     git(other, 'commit', '-qm', 'first');
+    write(base, 'fsmonitor.sh', "#!/bin/sh\nprintf 'token\\0'\n");
+    chmodSync(join(base, 'fsmonitor.sh'), 0o755);
+    git(other, 'config', 'core.fsmonitor', join(base, 'fsmonitor.sh'));
+    git(other, 'config', 'core.fsmonitorHookVersion', '2');
+    git(other, 'status');
+    git(other, 'status');
     write(other, 'src/kept.txt', 'edited and not committed\n');
 
     const added = await addCounting(other, ['-b', 'added', '../sha256-added']);
 
     expect(added.stderr).toContain('as a clone of');
     expect(added.refreshes).toBe(1);
+    git(other, 'config', 'core.fsmonitor', 'false');
     expectExactCheckout(join(base, 'sha256-added'));
   },
   60_000,

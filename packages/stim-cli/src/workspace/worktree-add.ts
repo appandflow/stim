@@ -208,8 +208,12 @@ export async function cloneCheckout({
   const cloned = copyIndex?.(target) ?? null;
   await writeFile(join(await gitDir(target), 'index'), cloned?.bytes ?? source);
   // @ref LLP 0029#the-copied-index-gets-the-clones-stat-data -- reset rewrites every file whose stat data it cannot trust
-  if (!cloned || cloned.unproven) await gitAsync(target, ['update-index', '-q', '--unmerged', '--refresh'], write);
-  await gitAsync(target, ['-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
+  // git-update-index(1), fsmonitor: git skips a file the copied index's fsmonitor bitmap marks unchanged, and a
+  // core.fsmonitor hook answers for the source checkout's token, so an index copied whole is read without it.
+  const withoutFsmonitor = cloned ? [] : ['-c', 'core.fsmonitor=false'];
+  if (!cloned || cloned.unproven)
+    await gitAsync(target, [...withoutFsmonitor, 'update-index', '-q', '--unmerged', '--refresh'], write);
+  await gitAsync(target, [...withoutFsmonitor, '-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
   for (const record of (await gitAsync(target, ['ls-files', '--stage', '-z'], read)).split('\0')) {
     if (!record.startsWith('160000 ')) continue;
     const path = record.slice(record.indexOf('\t') + 1);
