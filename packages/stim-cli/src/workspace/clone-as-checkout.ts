@@ -1,9 +1,10 @@
 import type { StimContext } from '@stim-cli/core';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { isPathPrefix } from '@stim-cli/core/state';
-import { dirname, isAbsolute, join } from 'node:path';
+import { lstat, readlink, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join, parse, sep } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
+import { fenceDeclaredSpawns } from '../engine/spawn-claims.ts';
 import { getExecutor } from '../exec.ts';
 import { childEnvironment } from './git-read.ts';
 import { gitAsync } from './git.ts';
@@ -12,24 +13,82 @@ const CONVERSION_ATTRIBUTES = ['eol', 'ident', 'filter', 'working-tree-encoding'
 const XATTR_PATHS_PER_CALL = 1000;
 const XATTR_CALLS_AT_ONCE = 4;
 
+/** Runs `work`, which starts declared children at once: each claim records one child unless a fence holds it. */
+async function fenced<T>(operation: StimContext, work: () => Promise<T>): Promise<T> {
+  const fence = fenceDeclaredSpawns(operation);
+  let unverified: unknown;
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) unverified = error;
+    throw error;
+  } finally {
+    await fence.finish(unverified);
+  }
+}
+
+/** Every result of `promises` once all have settled, so no child starts after a fence closes, or the first failure. */
+async function settled<T>(promises: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  return results.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+}
+
+/** Whether opening `path` passes through the folder `target` at any step: a folder, a link or a link's target. */
+async function reaches(target: string, path: string): Promise<boolean> {
+  // APFS: firmlinks, case and Unicode form give one folder several spellings, so a step is compared by identity.
+  const { dev, ino } = await stat(target);
+  const rest = path.split(sep);
+  let at = parse(path).root;
+  for (let links = 0; rest.length;) {
+    const name = rest.shift() ?? '';
+    if (!name || name === '.') continue;
+    if (name === '..') {
+      at = dirname(at);
+      continue;
+    }
+    const next = join(at, name);
+    const found = await lstat(next).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    });
+    if (found?.dev === dev && found.ino === ino) return true;
+    if (!found?.isSymbolicLink()) {
+      at = next;
+      continue;
+    }
+    // symlink(7): the kernel gives up after 40 links.
+    if (++links > 40) throw new Error('too many links');
+    const link = await readlink(next);
+    rest.unshift(...link.split(sep));
+    if (isAbsolute(link)) at = parse(link).root;
+  }
+  return false;
+}
+
 async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<void> {
+  // git-config(1), GIT_CONFIG: only git config reads that file, in place of every other; a checkout ignores it.
+  const { env, omitEnv } = childEnvironment(operation.env);
   const get = async (name: string, type: string, unset: string) =>
     (
       await gitAsync(target, ['config', `--type=${type}`, `--default=${unset}`, '--get', name], {
-        ...childEnvironment(operation.env),
+        env,
+        omitEnv: [...omitEnv, 'GIT_CONFIG'],
         signal: operation.signal,
         declareFor: operation,
       })
-    )
-      .trim()
-      .toLowerCase();
-  const [autocrlf, eol, symlinks, tree, attributesFile] = await Promise.all([
-    get('core.autocrlf', 'bool-or-str', 'false'),
-    get('core.eol', 'path', 'lf'),
-    get('core.symlinks', 'bool', 'true'),
-    get('attr.tree', 'path', ''),
-    get('core.attributesFile', 'path', ''),
-  ]);
+    ).trim();
+  const [autocrlf, eol, symlinks, tree, attributesFile] = await fenced(operation, () =>
+    settled([
+      get('core.autocrlf', 'bool-or-str', 'false').then((value) => value.toLowerCase()),
+      get('core.eol', 'path', 'lf').then((value) => value.toLowerCase()),
+      get('core.symlinks', 'bool', 'true'),
+      get('attr.tree', 'path', ''),
+      get('core.attributesFile', 'path', ''),
+    ]),
+  );
   // git convert.c output_eol and text_eol_is_crlf: a checkout writes CRLF for a path no attribute names only under
   // core.autocrlf=true or core.eol=crlf. core.autocrlf=input converts nothing at checkout.
   if (autocrlf === 'true' || eol === 'crlf') throw new Error('core.autocrlf or core.eol makes a checkout write CRLF');
@@ -38,9 +97,10 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
   // gitattributes(5): attr.tree and GIT_ATTR_SOURCE name a tree whose attributes replace the working tree's.
   if (tree || operation.env.GIT_ATTR_SOURCE)
     throw new Error('attr.tree or GIT_ATTR_SOURCE names another source of attributes');
-  // git-config(1), core.attributesFile: read beside the commit's attributes, so one inside the worktree is a file
-  // the clone brought from the source checkout.
-  if (attributesFile && (!isAbsolute(attributesFile) || isPathPrefix(target.toLowerCase(), attributesFile)))
+  // git-config(1), core.attributesFile: read beside the commit's attributes, so one reached through the worktree is
+  // a file or link the clone brought from the source checkout, which a checkout has not written yet.
+  if (!attributesFile) return;
+  if (!isAbsolute(attributesFile) || (await reaches(target, attributesFile).catch(() => true)))
     throw new Error('core.attributesFile names a file in the worktree');
 }
 
@@ -190,16 +250,23 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
     batches.push(kept.slice(at, at + XATTR_PATHS_PER_CALL).map((path) => `./${path}`));
   const run = (file: string, args: string[]) =>
     runOperationFile(operation, getExecutor(), file, args, { timeoutMs: 'unbounded', cwd: target });
-  await Promise.all(
-    Array.from({ length: XATTR_CALLS_AT_ONCE }, async () => {
-      for (let batch = batches.pop(); batch; batch = batches.pop()) {
-        const paths = batch;
-        await run('/usr/bin/xattr', ['-c', '-s', ...paths]).catch(async () => {
-          operation.signal.throwIfAborted();
-          await run('/usr/bin/chflags', ['-h', 'nouchg', ...paths]);
-          await run('/usr/bin/xattr', ['-c', '-s', ...paths]);
-        });
-      }
-    }),
+  await fenced(operation, () =>
+    settled(
+      Array.from({ length: XATTR_CALLS_AT_ONCE }, async () => {
+        for (let batch = batches.pop(); batch; batch = batches.pop()) {
+          const paths = batch;
+          await run('/usr/bin/xattr', ['-c', '-s', ...paths])
+            .catch(async () => {
+              operation.signal.throwIfAborted();
+              await run('/usr/bin/chflags', ['-h', 'nouchg', ...paths]);
+              await run('/usr/bin/xattr', ['-c', '-s', ...paths]);
+            })
+            .catch((error: unknown) => {
+              batches.length = 0;
+              throw error;
+            });
+        }
+      }),
+    ),
   );
 }
