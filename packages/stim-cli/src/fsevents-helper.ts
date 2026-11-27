@@ -7,6 +7,7 @@ import release from '../native/fsevents-release.json' with { type: 'json' };
 import { isJsonObject, type GcHistoryStatus } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { readHistoryCheckpoints, writeHistoryCheckpoints } from './fsevents-state.ts';
+import { markSegment } from './stimd/stall-watch.ts';
 
 export interface HistoryRoot {
   root: string;
@@ -95,6 +96,7 @@ export function startHistoryFeed({
     const batch = received;
     received = [];
     if (failed || closing) return;
+    markSegment('fsevents batch');
     const changed = new Set<string>();
     let next = checkpoints;
     let fdLimit = false;
@@ -132,6 +134,7 @@ export function startHistoryFeed({
     }
     if (changed.size) await dirty([...changed], Date.now());
     if (next !== checkpoints) {
+      markSegment('fsevents checkpoint write');
       writeHistoryCheckpoints(next);
       checkpoints = next;
     }

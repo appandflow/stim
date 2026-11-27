@@ -1,3 +1,5 @@
+import { markSegment } from '../stimd/stall-watch.ts';
+
 export type DaemonLog = (
   level: 'debug' | 'info' | 'warn' | 'error',
   event: string,
@@ -55,9 +57,11 @@ function watchStep(
 /** Runs `run` and writes a `daemon_step_running` record for each 10 minutes it runs, without a record when it ends. */
 export async function watchedStep<T>(log: DaemonLog, step: string, run: () => Promise<T>): Promise<T> {
   const stop = watchStep(log, step, Date.now(), performance.now());
+  markSegment(step);
   try {
     return await run();
   } finally {
+    markSegment(`${step} ended`);
     stop();
   }
 }
@@ -90,6 +94,7 @@ export async function timedStep<T>(
   let result: T | undefined;
   let failure: string | undefined;
   const stop = watchStep(log, step, startedAt, started, fields);
+  markSegment(step);
   try {
     result = await run(tally);
     return result;
@@ -97,6 +102,7 @@ export async function timedStep<T>(
     ({ outcome, failure } = classify(error, signal));
     throw error;
   } finally {
+    markSegment(`${step} ended`);
     stop();
     try {
       const durationMs = Math.round(performance.now() - started);

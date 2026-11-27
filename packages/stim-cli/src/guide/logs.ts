@@ -389,6 +389,13 @@ idle_stage, fingerprint_precompute and maintenance phases; they only log. A
 shutdown past 10 awake minutes writes daemon_shutdown_timeout (waiting names what it
 waits on) and is forced. With daemon.mode off, each loop while stimd stays up
 writes daemon_tick_off.
+Each daemon_tick has phases (ms per pass) and tail, the ms of the work after
+the passes: stateMs, pendingMs, pacerMs, snapshotMs, engineDirsMs,
+engineCheckMs, updateMs; a part that rounds to 0 ms is absent. A main-thread stall of
+1 s or more writes daemon_stall (info): stallMs, segment and segmentMs (the
+marked code that held the loop longest, and for how long), next (the mark
+after it), and cpuMs (the main thread's CPU meanwhile; near 0 means blocked in
+the system or suspended).
 A size walk that fails or times out adds one record, event size_failed (warn,
 info when aborted),
 from whichever process ran it, at most once per folder and reason every 6
