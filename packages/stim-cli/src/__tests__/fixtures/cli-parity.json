@@ -2810,7 +2810,7 @@
     "exitCode": 0
   },
   "[\"worktree\",\"add\",\"--help\"]": {
-    "out": "Usage: stim worktree add [options] <path> [commit-ish]\n\nCreate a linked worktree as git worktree add does, already warmed: where the\nfile system clones, it is cloned from the source checkout, tracked and ignored\nfiles together, and anywhere else git creates it and the warm copies into it.\n\nOptions:\n  -b, --branch <branch>  create this branch at the commit-ish and check it out\n                         in the new worktree\n  -h, --help             display help for command\n",
+    "out": "Usage: stim worktree add [options] <path> [commit-ish]\n\nCreate a linked worktree as git worktree add does, already warmed: where the\nfile system clones, it is cloned from the source checkout, tracked and ignored\nfiles together, and anywhere else git creates it and the warm copies into it.\n\nOptions:\n  -b, --branch <branch>  create this branch at the commit-ish and check it out\n                         in the new worktree\n  --refresh              Before adding, fast-forward the source checkout to its\n                         upstream and install what the new commits moved, as\n                         worktree warm --refresh does. With no commit-ish, the\n                         worktree starts from the refreshed source HEAD.\n  -h, --help             display help for command\n",
     "err": "",
     "exitCode": 0
   },
