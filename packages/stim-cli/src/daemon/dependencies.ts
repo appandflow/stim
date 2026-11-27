@@ -437,7 +437,7 @@ export async function clearDependency(
   operation?: StimContext,
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
-  saved?: (candidate: ArtifactCandidate) => Promise<string | null>,
+  saved?: (candidate: ArtifactCandidate, fresh?: boolean) => Promise<string | null>,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     const marked = await saved?.(dependency.candidate);
@@ -458,7 +458,7 @@ export async function clearDependency(
         worktrees,
         requireRestorable,
         recheck: async (keys, worktree) =>
-          (await saved?.({ ...dependency.candidate, keys: [...keys], worktree })) ??
+          (await saved?.({ ...dependency.candidate, keys: [...keys], worktree }, true)) ??
           (await stillUnused(false, keys, worktree, idleMs, operation)),
         level,
         operation,
@@ -486,7 +486,7 @@ export async function clearSourceCheckouts(
   setting: string,
   level: PressureLevel,
   between: () => Promise<void>,
-  saved?: (candidate: ArtifactCandidate) => Promise<string | null>,
+  saved?: (candidate: ArtifactCandidate, fresh?: boolean) => Promise<string | null>,
 ): Promise<Map<RankedDependency, TreeResult>> {
   const groups = new Map<string, RankedDependency[]>();
   for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
@@ -523,23 +523,26 @@ export async function clearSourceDependencies(
   level: PressureLevel,
   operation?: StimContext,
   setting?: string,
-  saved?: (candidate: ArtifactCandidate) => Promise<string | null>,
+  saved?: (candidate: ArtifactCandidate, fresh?: boolean) => Promise<string | null>,
 ): Promise<TreeResult[]> {
   forgetGitReads(operation);
   try {
-    const markedProblem = async (keys?: readonly string[], worktree?: string) => {
+    const markedProblem = async (fresh: boolean, keys?: readonly string[], worktree?: string) => {
       if (!saved) return null;
       for (const { candidate } of dependencies) {
-        const problem = await saved({
-          ...candidate,
-          ...(keys ? { keys: [...keys] } : {}),
-          ...(worktree ? { worktree } : {}),
-        });
+        const problem = await saved(
+          {
+            ...candidate,
+            ...(keys ? { keys: [...keys] } : {}),
+            ...(worktree ? { worktree } : {}),
+          },
+          fresh,
+        );
         if (problem) return problem;
       }
       return null;
     };
-    const marked = await markedProblem();
+    const marked = await markedProblem(false);
     if (marked) return dependencies.map(() => ({ status: 'kept', bytes: 0, detail: marked }));
     const results = await clearSourceTrees(
       dependencies.map(({ candidate }) => candidate.path),
@@ -548,7 +551,7 @@ export async function clearSourceDependencies(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         recheck: async (keys, worktree) =>
-          (await markedProblem(keys, worktree)) ??
+          (await markedProblem(true, keys, worktree)) ??
           (await stillUnused(true, keys, worktree, idleMs, operation, setting)),
         level,
         operation,
