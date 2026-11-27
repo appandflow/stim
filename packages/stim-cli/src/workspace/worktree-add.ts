@@ -76,18 +76,26 @@ function look(base: string, path: Buffer): FileStat | null {
   }
 }
 
+function parentOf(path: Buffer): Buffer {
+  return path.subarray(0, Math.max(path.lastIndexOf(0x2f), 0));
+}
+
+function directoryIdentity(found: FileStat | null): string | null {
+  return found && (found.mode & 0o170000n) === 0o040000n ? `${found.ino} ${found.ctimeNs}` : null;
+}
+
 /**
- * The index for `target`, whose files are clones of the source checkout `root`, from `bytes`, the source's index as
- * it was before the clone: an entry whose source file is unchanged gets its clone's stat data, and every other
- * entry is left for git to read, `unproven` of them outside submodules. Null when the index is in a format this does not write.
+ * Reads `bytes`, the index of the source checkout `root`, before the checkout is cloned, and returns what writes the
+ * index for the clone at `target` afterwards: an entry whose source file is unchanged gets its clone's stat data,
+ * and every other entry is left for git to read, `unproven` of them outside submodules. Null when the index is in a
+ * format this does not write.
  * @ref LLP 0029#the-copied-index-gets-the-clones-stat-data -- only what the source checkout proves is trusted
  */
-function clonedIndex(
+function indexForClone(
   bytes: Buffer,
   mtimeSec: number,
   root: string,
-  target: string,
-): { bytes: Buffer; unproven: number } | null {
+): ((target: string) => { bytes: Buffer; unproven: number }) | null {
   const index = readIndex(bytes);
   if (!index) return null;
   // gitformat-index(5): an extension whose signature does not start with A to Z is one a reader must understand.
@@ -99,33 +107,46 @@ function clonedIndex(
   )
     throw new Error('the source index changed to one that cannot be copied');
   if (required.length) return null;
-  const directories = new Map<string, boolean>();
-  // git checks a tracked path with has_symlink_leading_path when it refreshes, but reset --hard only calls lstat,
-  // which follows a symbolic link that replaced a parent directory to a file that still matches.
-  const realDirectory = (path: Buffer): boolean => {
-    const slash = path.lastIndexOf(0x2f);
-    if (slash < 0) return true;
-    const parent = path.subarray(0, slash);
-    const key = parent.toString('latin1');
-    let real = directories.get(key);
-    if (real === undefined) {
-      real =
-        realDirectory(parent) &&
-        [root, target].every((base) => ((look(base, parent)?.mode ?? 0n) & 0o170000n) === 0o040000n);
-      directories.set(key, real);
+  const before = new Map<string, string | null>();
+  for (const entry of index.entries)
+    for (let parent = parentOf(entry.path); parent.length; parent = parentOf(parent)) {
+      const key = parent.toString('latin1');
+      if (before.has(key)) break;
+      before.set(key, directoryIdentity(look(root, parent)));
     }
-    return real;
+  return (target) => {
+    const unmoved = new Map<string, boolean>();
+    // git checks a tracked path with has_symlink_leading_path when it refreshes, but reset --hard only calls lstat,
+    // which follows a symbolic link that replaced a parent directory to a file that still matches. rename(2) leaves
+    // the stat data of what a moved directory holds as it was, so a directory moved away and back shows only in
+    // its own change time.
+    const inPlace = (path: Buffer): boolean => {
+      const parent = parentOf(path);
+      if (!parent.length) return true;
+      const key = parent.toString('latin1');
+      let same = unmoved.get(key);
+      if (same === undefined) {
+        const was = before.get(key);
+        same =
+          inPlace(parent) &&
+          was !== null &&
+          was === directoryIdentity(look(root, parent)) &&
+          directoryIdentity(look(target, parent)) !== null;
+        unmoved.set(key, same);
+      }
+      return same;
+    };
+    let unproven = 0;
+    const stats = index.entries.map((entry) => {
+      const proven = inPlace(entry.path)
+        ? cloneStat(entry, look(root, entry.path), look(target, entry.path), mtimeSec)
+        : null;
+      if (!proven && (entry.mode & 0o170000) !== 0o160000) unproven += 1;
+      return proven;
+    });
+    // The untracked cache, the fsmonitor bitmap and the entry offset tables describe the source's worktree or bytes.
+    return { bytes: writeIndex(bytes, index, stats, (signature) => ['TREE', 'REUC'].includes(signature)), unproven };
   };
-  let unproven = 0;
-  const stats = index.entries.map((entry) => {
-    const proven = realDirectory(entry.path)
-      ? cloneStat(entry, look(root, entry.path), look(target, entry.path), mtimeSec)
-      : null;
-    if (!proven && (entry.mode & 0o170000) !== 0o160000) unproven += 1;
-    return proven;
-  });
-  // The untracked cache, the fsmonitor bitmap and the entry offset tables describe the source's worktree or bytes.
-  return { bytes: writeIndex(bytes, index, stats, (signature) => ['TREE', 'REUC'].includes(signature)), unproven };
 }
 
 /**
@@ -176,6 +197,7 @@ export async function cloneCheckout({
   } finally {
     await handle.close();
   }
+  const copyIndex = format === 'sha1' ? indexForClone(source, sourceMtimeSec, root) : null;
   const pairs = whole.map((rel) => [join(root, rel), join(target, rel)]);
   // execve(2) fails with E2BIG past ARG_MAX, which a monorepo cloned child by child reaches in one call.
   for (let at = 0; at < pairs.length; at += CLONES_PER_CALL)
@@ -183,7 +205,7 @@ export async function cloneCheckout({
       timeoutMs: 'unbounded',
       cwd: target,
     });
-  const cloned = format === 'sha1' ? clonedIndex(source, sourceMtimeSec, root, target) : null;
+  const cloned = copyIndex?.(target) ?? null;
   await writeFile(join(await gitDir(target), 'index'), cloned?.bytes ?? source);
   // @ref LLP 0029#the-copied-index-gets-the-clones-stat-data -- reset rewrites every file whose stat data it cannot trust
   if (!cloned || cloned.unproven) await gitAsync(target, ['update-index', '-q', '--unmerged', '--refresh'], write);

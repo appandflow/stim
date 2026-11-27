@@ -109,8 +109,8 @@ macOS, the new path is on another volume, the helper cannot be compiled, the
 source index marks a file assume-unchanged or skip-worktree or is a split
 index, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
-A source index that gains such a flag or becomes a split or sparse index
-between that check and the copy counts as a failed step.
+A source index that parses and has gained such a flag, or become a split or
+sparse index, between that check and the copy counts as a failed step.
 After a failed step the command removes the worktree and the branch that call
 created, never a branch that existed before, and runs `git worktree add` again
 with the same arguments. An interrupt does the same removal and stops. The
@@ -132,12 +132,14 @@ and writes the clone's change time, inode, device, owner and group into the
 entry when all of these hold:
 
 - the entry is a regular file or a symbolic link at stage 0, not intent-to-add;
-- the source file still matches the entry in every stat field git stores,
+- the source file still matches the entry in every stat field git compares,
   nanoseconds included, and in type and executable bit;
 - a recorded size of 0 belongs to the empty blob;
 - the entry's modification time is in an earlier second than the source
   index's own;
-- every parent directory of the path is a real directory in both checkouts;
+- every parent directory of the path is a real directory in both checkouts,
+  and in the source checkout the same one, with the same change time, as
+  before the clone;
 - the clone has the source file's mode, size and modification time.
 
 Every other entry gets zeroed stat data, the state `git read-tree` leaves, and
@@ -154,7 +156,12 @@ did not change in between, so its clone holds the blob the entry names. The
 index is read first because one read after the clone could describe a file
 that was edited and added in between, with the clone holding the older bytes.
 `git reset --hard` checks a path with `lstat` alone, which follows a symbolic
-link that replaced a parent directory, so the parents are checked here.
+link that replaced a parent directory, so the parents are checked here. A
+directory moved away and back keeps the stat data of its files, so a
+look-alike cloned in between would pass for them; the move shows in the
+directory's own change time. Git compares the device number only when built
+for it, and an index keeps the number its volume had when an entry was
+written, so the device is not compared.
 `core.checkStat=minimal` on the reset was rejected: it compares only size and
 whole-second modification time, so an edit in the source that keeps both
 survives into the new worktree.
@@ -173,7 +180,7 @@ machine, against a full refresh before the reset and against
 | --------------------------------------------------------------- | ---------- | ---------- | ------------ | ----------------- |
 | expo, 19,021 tracked files, no dependencies                     | `HEAD`     | 2.86 s     | 5.94 s       | 1.95 s            |
 | expo                                                            | `HEAD~200` | 3.68 s     | 6.99 s       | 3.05 s            |
-| this repository, 3,811 tracked files, 18 `node_modules` folders | `HEAD~50`  | 6.71 s     | 7.68 s       | 7.06 s            |
+| this repository, 3,811 tracked files, 18 `node_modules` folders | `HEAD~50`  | 6.78 s     | 7.70 s       | 6.47 s            |
 
 The pass over the index takes about 0.1 s for 19,000 entries. What is left on
 a checkout with dependency folders is their `clonefile`, which both paths pay.

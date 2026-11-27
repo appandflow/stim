@@ -551,6 +551,39 @@ for (const [name, prepare] of changedSources)
   );
 
 test.skipIf(!clones)(
+  'a folder swapped for a look-alike while the clone runs does not leave its files in the new worktree (APFS clonefile; darwin only)',
+  async () => {
+    settle();
+    const real = getExecutor();
+    const longAgo = new Date('2020-01-01');
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (!file.includes('stim-clonefile') || !args.includes(join(root, 'src')))
+          return real.runFileAsync(file, args, opts);
+        renameSync(join(root, 'src'), join(root, 'moved'));
+        write(root, 'src/kept.txt', 'SECOND\n');
+        write(root, 'src/added-later.txt', 'ONLY IN THE SECOND COMMIT\n');
+        for (const name of ['kept.txt', 'added-later.txt']) utimesSync(join(root, 'src', name), longAgo, longAgo);
+        try {
+          return await real.runFileAsync(file, args, opts);
+        } finally {
+          rmSync(join(root, 'src'), { recursive: true });
+          renameSync(join(root, 'moved'), join(root, 'src'));
+        }
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+    expect(added.stderr).toContain('as a clone of');
+    expect(git(root, 'status', '--porcelain')).toBe('');
+    expectExactCheckout(join(base, 'added'));
+  },
+  60_000,
+);
+
+test.skipIf(!clones)(
   'a SHA-256 repository is cloned and git reads every tracked file (APFS clone inodes; darwin only)',
   async () => {
     const other = join(base, 'sha256');

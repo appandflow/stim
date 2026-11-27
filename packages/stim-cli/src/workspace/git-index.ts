@@ -196,13 +196,14 @@ export function cloneStat(
   if ((mode & FILE_TYPE) !== type) return null;
   if (type === REGULAR && (mode ^ entry.mode) & 0o100) return null;
   const recorded = entry.stat;
+  // git statinfo.c match_stat_data: the device is compared only in a git built with USE_STDEV, so an index keeps the
+  // number a volume had when the entry was written.
   const seen = statOf(source);
   if (
     recorded.ctimeSec !== seen.ctimeSec ||
     recorded.ctimeNsec !== seen.ctimeNsec ||
     recorded.mtimeSec !== seen.mtimeSec ||
     recorded.mtimeNsec !== seen.mtimeNsec ||
-    recorded.dev !== seen.dev ||
     recorded.ino !== seen.ino ||
     recorded.uid !== seen.uid ||
     recorded.gid !== seen.gid ||

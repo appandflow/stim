@@ -182,6 +182,9 @@ test('a clone of a file its entry still describes gets the stat data git would r
       INDEX_WRITTEN,
     ),
   ).toMatchObject({ size: 0, ino: 99 });
+  expect(
+    cloneStat({ ...entry, stat: { ...entry.stat, dev: 16_777_233 } }, recorded, cloned, INDEX_WRITTEN),
+  ).toMatchObject({ dev: 16_777_234, ino: 99 });
   const link = { ...entry, mode: 0o120000 };
   expect(
     cloneStat(link, { ...recorded, mode: 0o120755n }, { ...cloned, mode: 0o120755n }, INDEX_WRITTEN),
