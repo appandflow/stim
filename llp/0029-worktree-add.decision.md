@@ -174,9 +174,9 @@ its default and `core.fsmonitor` off. The configuration is read in the new
 worktree, which can differ from the source checkout's. Three things are not
 made equal: a cloned file keeps the source checkout's modification time, its
 BSD file flags, and the `com.apple.provenance` attribute, which macOS sets and
-`xattr` cannot remove. When a flag such as `uchg` stops a change, the flags
-of the paths in that call, or of the whole new worktree, are cleared and the
-change runs again. Blob sizes are read with `GIT_NO_LAZY_FETCH`, so in a
+`xattr` cannot remove. When the `uchg` flag stops a change, it is cleared
+from the paths in that call, or from the whole new worktree, and the change
+runs again. Blob sizes are read with `GIT_NO_LAZY_FETCH`, so in a
 partial clone a file whose blob is missing is left to the reset, which
 fetches in one batch.
 

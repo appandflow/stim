@@ -56,7 +56,7 @@ export async function cloneAsCheckout(target: string, operation: StimContext): P
     if (!(error instanceof Error && 'code' in error && error.code === 'EPERM')) throw error;
     // chflags(1): a file with the uchg flag, which clonefile(2) copies, cannot be changed or removed until the flag
     // is cleared. -R does not follow links.
-    await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['-R', '0', target], {
+    await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['-R', 'nouchg', target], {
       timeoutMs: 'unbounded',
     });
     await asCheckout(target, operation);
@@ -174,7 +174,7 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
         const paths = batch;
         await run('/usr/bin/xattr', ['-c', '-s', ...paths]).catch(async () => {
           operation.signal.throwIfAborted();
-          await run('/usr/bin/chflags', ['-h', '0', ...paths]);
+          await run('/usr/bin/chflags', ['-h', 'nouchg', ...paths]);
           await run('/usr/bin/xattr', ['-c', '-s', ...paths]);
         });
       }
