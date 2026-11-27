@@ -166,6 +166,12 @@ written, so the device is not compared.
 whole-second modification time, so an edit in the source that keeps both
 survives into the new worktree.
 
+A file git reports unchanged in the source checkout although the checkout
+conversion configured now would write other bytes, after `core.autocrlf`, an
+`eol` attribute or a filter changed since it was checked out, keeps the
+source's bytes in the new worktree, where `git worktree add` would convert it
+again (#6549).
+
 An index the command cannot vouch for is copied as it is and refreshed whole
 before the reset, with `core.fsmonitor` off and `core.checkStat` at its default
 for both, so neither the copied fsmonitor bitmap nor a size and time match
