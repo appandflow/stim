@@ -112,9 +112,12 @@ stim gc --dry-run --json`}
 - A per-home `stimd` now runs Metro, tunnels and device logs. `daemon.mode`
   controls automatic maintenance; a command that needs `stimd` can start it
   even when that is `off`.
-- A 1.40 daemon can keep running after its workspaces stop. While it
-  does, `stim start` and `stim serve` refuse and print its PID and the command
-  that stops it. Check the PID before you run that command.
+- A 1.40 daemon can keep running after its workspaces stop, and Stim
+  Desktop 0.3.0 starts it again on each Run. The first 2.0 command that starts
+  `stimd` stops it for you and takes its place; its dev servers keep running.
+  Only a process Stim cannot verify as its own 1.40 daemon makes `stim start`
+  and `stim serve` refuse with its PID and the command that stops it. Check the
+  PID before you run that command.
 - A managed engine is optional: `stim engine install` sets one up,
   `stim engine status` shows it, `stim engine update` follows its channel, and
   `stim engine rollback` returns to the previous build.
@@ -286,18 +289,18 @@ The first five refuse `start`, `ios`, `android`, `web`, `macos`, `revive` and `g
 
 ### 3. Changed defaults
 
-**Ask first** whether to keep the 1.40 values, and apply the answer before step 4: the first `stim start` after the old daemon stops runs cleanup under the values then in force. 2.0 cleans up sooner by default: `idle.dormantDays` 1 (was 3), `maintenance.olderThanDays` 3 (was 7), `disk.minFreeGb` 40 (was 20), `disk.criticalFreeGb` 20 (was 6), and `ios.simslim` `on` (was `off`). To keep a 1.40 value, run `stim settings set <key> <value> --scope machine`.
+**Ask first** whether to keep the 1.40 values, and apply the answer before step 4: the first `stim start` runs cleanup under the values then in force. 2.0 cleans up sooner by default: `idle.dormantDays` 1 (was 3), `maintenance.olderThanDays` 3 (was 7), `disk.minFreeGb` 40 (was 20), `disk.criticalFreeGb` 20 (was 6), and `ios.simslim` `on` (was `off`). To keep a 1.40 value, run `stim settings set <key> <value> --scope machine`.
 
 ### 4. Old processes
 
 Do this after steps 1 to 3: `stim start` refuses while a refusing setting or export is left, and the first 2.0 daemon runs cleanup under the defaults step 3 settled.
 
-**Check:** `stim status`. It lists the live workspaces of this Stim home, and the line `Daemon: pid <n> from an older stim holds the daemon claim` means a 1.x daemon still runs.
+**Check:** `stim status`. It lists the live workspaces of this Stim home. The line `Daemon: pid <n> from an older stim holds the daemon claim` means a 1.x daemon still runs: when it goes on `the next command that starts stimd stops it`, nothing is needed, since the first 2.0 command that starts `stimd` stops that daemon and takes its place. When it says `stimd does not stop it`, Stim cannot verify the process as its own 1.x daemon.
 
-**Migrate (ask first):** a shared home can hold other people's or other agents' active work. List the live workspaces and the old daemon to the user, and wait for an answer before you stop anything.
+**Migrate (ask first):** a shared home can hold other people's or other agents' active work. List the live workspaces, and any process `stimd` does not stop, to the user, and wait for an answer before you stop anything.
 
 - With the user's go, run `stim stop` in each workspace they name that a 1.x Stim started before the upgrade.
-- With the user's go, run the stop command the daemon line prints (`kill <pid>`, or `taskkill /PID <pid> /F` on Windows).
+- Only for a process `stimd` does not stop, and with the user's go, run the stop command the daemon line prints (`kill <pid>`, or `taskkill /PID <pid> /F` on Windows).
 
 ### 5. Project files and scripts
 

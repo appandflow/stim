@@ -299,7 +299,7 @@ async function upgradeLeftovers(
   if (variables.length) found.push(`retired environment variables (${listed(variables)})`);
   // compat C32 until 2.1.0
   const older = legacyDaemonHolder();
-  if (older) found.push(`a daemon from an older Stim (pid ${older.owner.pid})`);
+  if (older && !older.stimDaemon) found.push(`a daemon from an older Stim (pid ${older.owner.pid})`);
   // compat end
   const services = earlierServices();
   if (services.length) found.push(`a service installed by an earlier Stim (${listed(services)})`);

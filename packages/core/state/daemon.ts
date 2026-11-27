@@ -195,7 +195,7 @@ export interface DaemonStatus {
   unanswered?: { pid: number; waitedMs: number; socketMissing?: true };
   /**
    * A stim-daemon from before Stim 2.0 holds the daemon claim; it is not this home's running daemon. `verified` is
-   * whether its claim has the record that daemon writes; stimd does not stop it either way.
+   * whether its claim has the record that daemon writes, which the next stimd start stops.
    */
   older?: { pid: number; stop: string; verified: boolean };
   lastTickAt: string | null;

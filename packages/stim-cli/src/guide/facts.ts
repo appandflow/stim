@@ -2052,7 +2052,7 @@ RULES
     $STIM_HOME/daemon/claim. older is a stim-daemon from before Stim 2.0 that
     holds that claim exclusively, with its pid and the command that stops it;
     verified is true when its claim has the record that daemon writes; stimd
-    never stops it. It is not the running daemon, so running is
+    stops it. It is not the running daemon, so running is
     null and the old daemon's tick and pressure are not reported. lastTickAt and
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null

@@ -70,6 +70,11 @@
       "end": "permanent",
       "mechanism": "the share viewer reloads on a new build id"
     },
+    "C22": {
+      "loc": 60,
+      "end": "2.1.0",
+      "mechanism": "stimd stops a pre-2.0 stim-daemon that holds the daemon claim, by its verified process identity, and takes its place"
+    },
     "C26": {
       "loc": 25,
       "end": "permanent",
@@ -96,9 +101,9 @@
       "mechanism": "a prebuild record that is a bare hash string, as Stim 1.40 wrote it, counts as an earlier Stim's record"
     },
     "C32": {
-      "loc": 59,
+      "loc": 70,
       "end": "2.1.0",
-      "mechanism": "the CLI and stimd refuse while a pre-2.0 stim-daemon holds the daemon claim, naming its pid and the stop command"
+      "mechanism": "the CLI and stimd refuse while a pre-2.0 daemon claim holder that stimd does not stop holds the daemon claim, naming its pid and the stop command"
     },
     "C33": {
       "loc": 19,

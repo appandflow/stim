@@ -124,6 +124,7 @@ import { runDiskPacer } from '../daemon/pacer-run.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
+import { claimAfterLegacyDaemon } from '../daemon/legacy-daemon.ts';
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
@@ -275,7 +276,7 @@ async function takeClaim(
 
 /** Why stimd cannot start while a stim-daemon from before Stim 2.0 holds the daemon claim exclusively. */
 export function daemonClaimRefusal(): string {
-  const refusal = legacyDaemonRefusal();
+  const refusal = legacyDaemonRefusal(true);
   return refusal
     ? `${refusal.message} ${refusal.remedy}`
     : "a stim-daemon from an older stim holds this home's daemon claim, so stimd cannot start. Run stim doctor, which names it.";
@@ -1006,7 +1007,10 @@ async function runStimdInner(
     log('warn', 'stimd_boots_failed', error instanceof Error ? error.message : String(error));
   }
   startup.signal.throwIfAborted();
-  let claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
+  // compat C22 until 2.1.0
+  // @ref LLP 0015#a-stim-daemon-from-before-20-is-taken-over -- only a verified 1.40 stim-daemon of this home is signalled
+  let claim = await claimAfterLegacyDaemon(log, () => takeClaim(daemonClaimRoot(), 'shared', 'stimd', details));
+  // compat end
   startupClaim = claim;
   startup.signal.throwIfAborted();
   if (!claim) {
@@ -2857,6 +2861,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     };
     const served = await runStimd(options);
+    // compat C32 until 2.1.0
+    const refusal = served || options.attached ? null : legacyDaemonRefusal(true);
+    if (refusal) console.error(`stimd: ${refusal.message} ${refusal.remedy}`);
+    // compat end
     if (serve && !served) await serveThroughHolder(serve, service, job?.followsEngine ? job.label : undefined);
   } catch (error) {
     const message =

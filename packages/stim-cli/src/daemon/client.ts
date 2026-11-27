@@ -271,12 +271,17 @@ function waitingChildren(): number[] {
   }
 }
 
-/** The refusal of a command that needs this home's stimd while a stim-daemon from before Stim 2.0 holds the daemon claim. */
+/**
+ * The refusal of a command that needs this home's stimd while a stim-daemon from before Stim 2.0 holds the daemon
+ * claim. Before stimd has tried, only a holder it will not stop refuses; with `attempted`, any holder does.
+ */
 // compat C32 until 2.1.0
-// @ref LLP 0015#a-stim-daemon-from-before-20-is-refused -- stimd never stops a pre-2.0 daemon; the refusal names the stop command
-export function legacyDaemonRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
+// @ref LLP 0015#a-stim-daemon-from-before-20-is-taken-over -- stimd stops a verified pre-2.0 daemon, and refuses anything else
+export function legacyDaemonRefusal(
+  attempted = false,
+): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   const holder = legacyDaemonHolder();
-  if (!holder) return null;
+  if (!holder || (holder.stimDaemon && !attempted)) return null;
   const { pid } = holder.owner;
   return {
     code: 'STIM_DAEMON_UNAVAILABLE',
@@ -494,7 +499,7 @@ async function admitOperation(
   );
   const opToken = admittedOpToken(held);
   if (opToken) return { opToken };
-  const refused = otherBuildRefusal() ?? legacyDaemonRefusal();
+  const refused = otherBuildRefusal() ?? legacyDaemonRefusal(true);
   return { answer: refused ? { op: 'error', ...refused } : null };
 }
 
@@ -1057,7 +1062,16 @@ export async function ensureStimd(
           console.error(`Stim: ${crashHoldRemedy(hold, false)}`);
         }
         launched = { settled: Promise.resolve(), exited: () => true };
-      } else launched = launchStimd(env, daemonMode(env), platform);
+      } else {
+        // compat C22 until 2.1.0
+        const older = command?.startsWith('stim ') ? legacyDaemonHolder() : null;
+        if (older?.stimDaemon)
+          console.error(
+            `Stim: stopping stim-daemon pid ${older.owner.pid}, from Stim 1.x, so this Stim's stimd can take its place.`,
+          );
+        // compat end
+        launched = launchStimd(env, daemonMode(env), platform);
+      }
     } catch (error) {
       if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EPERM' && error.code !== 'EACCES'))
         throw error;
@@ -1092,8 +1106,8 @@ export async function ensureStimd(
     }
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
     // compat C32 until 2.1.0
-    if (!taken && command === 'stim start') {
-      const legacy = legacyDaemonRefusal();
+    if (!taken && command?.startsWith('stim ')) {
+      const legacy = legacyDaemonRefusal(true);
       if (legacy) throw Object.assign(new Error(legacy.message), legacy);
     }
     // compat end
