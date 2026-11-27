@@ -58,7 +58,7 @@ saves disk, not time.
 
 Maintainer decision: "since we'd change api a bit I kind of want to include the new worktree add, also can it be combined with warm to run at smae time to make it faster", 2026-11-26 (#6542).
 
-## The result equals git worktree add then warm
+## The ignored files equal git worktree add then warm
 
 The clone brings everything, so two steps make it what the plain path gives.
 The warm's own selection decides what counts as carried: `.worktreeexclude`,
@@ -158,7 +158,8 @@ differences (#6551):
   for CRLF, or any path when `attr.tree` names attributes the working tree
   lacks.
 - A name that differs from the index path in case or Unicode form, permission
-  bits other than the owner's execute bit, and extended attributes come along.
+  bits other than the owner's execute bit, extended attributes and ACLs come
+  along.
 
 Reason: the refresh proves that a file cleans to the entry's blob, not that it
 is the file a checkout of that blob writes, and `clonefile(2)` copies names,
@@ -167,10 +168,8 @@ modes and attributes as they are.
 ## Not decided
 
 - Which of the differences above the clone path closes, and how (#6551).
-
 - A branch the command creates is not recorded as Stim's, so
   `stim worktree remove` keeps it.
 - Writing the clones' stat data into the copied index directly, which would
-  remove the refresh. #6547 measured 0.3 to 0.8 s saved on 19,000 tracked files
-  and none on a checkout with dependency folders, and was closed: stat data
-  cannot prove that a clone holds its blob's bytes.
+  remove the refresh. Stat data cannot prove that a clone holds its blob's
+  bytes (#6547).

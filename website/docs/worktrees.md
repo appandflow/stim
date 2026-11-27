@@ -37,32 +37,6 @@ clean at the commit you name: uncommitted edits, staged changes and untracked
 files stay in the source checkout. Submodule folders start empty, as Git
 leaves them. Anywhere else Git creates the worktree and Stim copies into it.
 
-### Differences from `git worktree add`
-
-A cloned file that Git reports unchanged in the source checkout is kept as it
-is on disk there, not written again from the commit. The content Git tracks is
-the same, but a few things can differ from a fresh checkout
-([#6551](https://github.com/appandflow/stim/issues/6551)):
-
-- **Line endings and filters.** A file keeps the source checkout's bytes when
-  they are not what a checkout would write now, for example an LF file where
-  `.gitattributes` asks for CRLF. An uncommitted `.gitattributes` in the
-  source checkout applies to the files Git does write.
-- **File modes.** Permission bits other than the executable bit, such as
-  `chmod 600`, come along.
-- **Name spelling.** A file renamed on disk only in letter case or Unicode
-  form keeps that spelling.
-- **Extended attributes** come along.
-
-When you need exactly what Git checks out, create the worktree with Git and
-warm it:
-
-<StimTabs
-code={`git worktree add -b feature-x ../feature-x HEAD
-cd ../feature-x
-stim worktree warm`}
-/>
-
 For a worktree something else created, such as an agent harness, warm it
 yourself:
 
@@ -82,6 +56,32 @@ lockfile mismatch, run your install command.
 - `stim worktree warm --refresh` first fast-forwards the source checkout to its
   upstream and installs what changed. It refuses a dirty or diverged source
   checkout.
+
+## Differences from `git worktree add`
+
+A cloned file that Git reports unchanged in the source checkout is kept as it
+is on disk there, not written again from the commit. A few things can differ
+from a fresh checkout
+([#6551](https://github.com/appandflow/stim/issues/6551)):
+
+- **Line endings and filters.** A file keeps the source checkout's bytes when
+  they are not what a checkout would write now, for example an LF file where
+  `.gitattributes` asks for CRLF. An untracked `.gitattributes` in the
+  source checkout applies to the files Git does write.
+- **File modes.** Permission bits other than the owner's execute bit, such
+  as `chmod 600`, come along.
+- **Name spelling.** A file renamed on disk only in letter case or Unicode
+  form keeps that spelling.
+- **Extended attributes and ACLs** come along.
+
+When you need exactly what Git checks out, create the worktree with Git and
+warm it:
+
+<StimTabs
+code={`git worktree add -b feature-x ../feature-x HEAD
+cd ../feature-x
+stim worktree warm`}
+/>
 
 ## Work in parallel
 

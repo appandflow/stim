@@ -785,7 +785,7 @@ export async function addWorktreeTarget(opts: {
         operation,
         operation.signal.aborted ? AbortSignal.timeout(CLEANUP_TIMEOUT_MS) : operation.signal,
       );
-      // @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
+      // @ref LLP 0029#the-ignored-files-equal-git-worktree-add-then-warm -- the hook's own ignored files outlive the prune
       if (!operation.signal.aborted) failed = await runPostCheckout(target, head, operation);
     }
     if (failed !== null) out(chalk.red(phaseLine('worktree', `post-checkout failed: ${failed}`)));

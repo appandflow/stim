@@ -157,7 +157,7 @@ export async function runPostCheckout(target: string, head: string, operation: S
 
 /**
  * Removes every ignored entry of `target` outside `carried`, so a cloned worktree holds only what a warm carries.
- * @ref LLP 0029#the-result-equals-git-worktree-add-then-warm -- also after a warm that refused or was interrupted
+ * @ref LLP 0029#the-ignored-files-equal-git-worktree-add-then-warm -- also after a warm that refused or was interrupted
  */
 export async function pruneUncarried(
   target: string,
