@@ -15,6 +15,10 @@ if (process.argv[2] === '__stimd') {
 if (process.argv[2] === '__job') {
   const code = await (await import('../src/job/main.ts')).runJobEntry(process.argv.slice(3));
   await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+  if (hungRead() !== null && process.platform !== 'win32' && process.execve) {
+    process.emit('exit', code);
+    process.execve('/bin/sh', ['sh', '-c', `exit ${code}`]);
+  }
   process.exit(code);
 }
 
