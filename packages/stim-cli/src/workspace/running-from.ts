@@ -157,6 +157,14 @@ function namesPath(line: string, root: string): boolean {
   return false;
 }
 
+const canonicalCwds = new WeakMap<RunningProcesses['cwds'][number], string>();
+
+function canonicalCwd(entry: RunningProcesses['cwds'][number]): string {
+  let path = canonicalCwds.get(entry);
+  if (path === undefined) canonicalCwds.set(entry, (path = canonicalPath(entry.path)));
+  return path;
+}
+
 /**
  * Why something installed in or running from `folder` still needs it, or null: an installed stim service, the
  * `stim` on PATH, or a live process whose command line or working directory is inside it.
@@ -171,7 +179,7 @@ export function runningFromReason(folder: string, running: RunningProcesses | nu
   if (!running) return 'the running processes cannot be listed to prove nothing runs from it';
   const command = running.commands.find(({ line }) => namesPath(line, root));
   if (command) return `process ${command.pid} runs from it`;
-  const cwd = running.cwds.find(({ path }) => inside(canonicalPath(path)));
+  const cwd = running.cwds.find((entry) => inside(canonicalCwd(entry)));
   if (cwd) return `process ${cwd.pid} works in it`;
   return null;
 }
