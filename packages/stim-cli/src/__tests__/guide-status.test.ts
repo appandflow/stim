@@ -142,8 +142,8 @@ test('guideStatus sends a home and project an earlier Stim left to the migration
   const claim = tryAcquireClaim({
     root: daemonClaimRoot(),
     mode: 'exclusive',
-    label: 'stim-daemon',
-    details: { socket: legacyDaemonSocket(), mode: 'on' },
+    label: 'other',
+    details: { mode: 'on' },
   }).acquired;
   if (!claim) throw new Error('Could not acquire fixture claim.');
   onTestFinished(() => {
@@ -166,6 +166,16 @@ test('guideStatus sends a home and project an earlier Stim left to the migration
   expect(upgraded).not.toContain('cache-s3');
 
   releaseClaim(claim);
+  const verified = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'exclusive',
+    label: 'stim-daemon',
+    details: { socket: legacyDaemonSocket(), mode: 'on' },
+  }).acquired;
+  if (!verified) throw new Error('Could not acquire fixture claim.');
+  const stoppedByStimd = await guideStatus({ projectRoot: root, running: '2.0.0', env, now: NOW, fetch });
+  releaseClaim(verified);
+  expect(stoppedByStimd).not.toContain(`pid ${process.pid}`);
   writeFileSync(configFile, JSON.stringify(config));
   manifest('^2.0.0', { '@stim-cli/core': 'workspace:^' });
   upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '2.0.0' } } });

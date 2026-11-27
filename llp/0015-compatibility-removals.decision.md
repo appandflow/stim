@@ -66,8 +66,8 @@ reuses such a dev server as it is (`already running`). The takeover sticks: a
 A holder that is not a verified stim-daemon is never signalled (compat C32, ends
 2.1.0). stimd's shared claim attempt fails, it logs `stimd_claim_held`, and a
 detached `stimd` prints the same text on stderr, which Stim Desktop shows in
-its start error. Every command that starts stimd refuses before it launches one
-with the pid, the stop command (`kill <pid>`, `taskkill /PID <pid> /F` on
+its start error. Every `stim` command that starts stimd refuses before it
+launches one, and an API caller at admission, with the pid, the stop command (`kill <pid>`, `taskkill /PID <pid> /F` on
 Windows) and the update remedy, with the link to the upgrade guide. `stim serve`
 prints the same text. `stim status` and `stim doctor` name the holder, say
 whether stimd stops it, and print the stop command; the STATUS line of

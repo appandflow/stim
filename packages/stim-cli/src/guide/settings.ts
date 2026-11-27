@@ -756,12 +756,10 @@ run waiting to boot, and automatic maintenance.
           it, and other commands run without stimd;
           stimd keeps serving until nothing runs in the home, and the next
           command starts its own build's stimd. A stim-daemon from Stim
-          1.40 holds the daemon claim exclusively and does not
-          exit when its workspaces stop; stimd checks its process identity
-          and stops it with SIGTERM, in every daemon.mode, which leaves the
-          dev servers and devices it did not own running. A holder that is
-          not a verified stim-daemon, or that does not stop, makes every
-          command that starts stimd exit with its PID and the stop command.
+          1.40 holds the daemon claim exclusively; stimd verifies it and
+          stops it with SIGTERM, which leaves its dev servers running. Any
+          other holder makes every command that starts stimd exit with
+          its PID and the stop command.
   report  the same passes log what they would do and act on nothing.
   off     no pass. stimd still starts when a command needs it, because it
           runs each workspace's Metro and tunnel and collects device logs;
