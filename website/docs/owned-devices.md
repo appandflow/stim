@@ -156,7 +156,8 @@ Stim never touches simulators you created or physical devices.
 
 - **Another Mac.** `stim ios --remote <mac>` runs on an approved Mac with Metro
   kept here. A person at that Mac approves the `device-host` grant, which lets
-  your machine run native code there, so approve only clients you expect. See
+  your machine run native code there as that Mac's user, without a sandbox, so
+  approve only clients you expect. See
   [Remote machines](./remote-machines.md).
 - **EAS Simulator.** `stim ios --remote eas --eas-profile <profile>` runs a
   downloaded EAS build on an EAS cloud simulator. Sessions are billed by EAS.
