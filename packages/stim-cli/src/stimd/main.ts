@@ -124,7 +124,7 @@ import { runDiskPacer } from '../daemon/pacer-run.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
-import { takeOverLegacyDaemon } from '../daemon/legacy-daemon.ts';
+import { legacyDaemonHolder, takeOverLegacyDaemon } from '../daemon/legacy-daemon.ts';
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
@@ -1012,6 +1012,12 @@ async function runStimdInner(
   await takeOverLegacyDaemon(log);
   // compat end
   let claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
+  // compat C22 until 2.1.0
+  for (let again = 0; !claim && again < 2 && legacyDaemonHolder()?.stimDaemon; again++) {
+    await takeOverLegacyDaemon(log);
+    claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details);
+  }
+  // compat end
   startupClaim = claim;
   startup.signal.throwIfAborted();
   if (!claim) {

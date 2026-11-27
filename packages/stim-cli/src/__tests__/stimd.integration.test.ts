@@ -2301,8 +2301,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(refusal?.msg).toContain(`kill ${legacy.pid}`);
   }, 60_000);
 
-  const spawnLegacy = async (args: string[]) => {
-    const record = join(home, 'legacy.log');
+  const spawnLegacy = async (args: string[], name = 'legacy.log') => {
+    const record = join(home, name);
     const legacy = spawnChild(process.execPath, ['--input-type=module', '-e', LEGACY_DAEMON, record, ...args], {
       cwd: fileURLToPath(new URL('../..', import.meta.url)),
       env: { ...process.env },
@@ -2356,6 +2356,24 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(overlap?.msg).toContain(`pid ${old.pid}`);
     expect(overlap?.msg).toContain('has released the daemon claim');
     expect(await old.exited).toBe(0);
+    successor.child.kill('SIGTERM');
+    await successor.exited;
+  }, 60_000);
+
+  test('a stim-daemon that takes the released claim during a takeover is taken over too', async () => {
+    const first = await spawnLegacy(['stim-daemon', '8000']);
+    const successor = startDaemonProcess();
+    await vi.waitFor(() => expect(first.signals()).toEqual(['sigterm']), { timeout: 10_000, interval: 20 });
+    const second = await spawnLegacy(['stim-daemon'], 'legacy-2.log');
+
+    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_started"'), {
+      timeout: 20_000,
+      interval: 50,
+    });
+    expect(await second.exited).toBe(0);
+    expect(second.signals()).toEqual(['sigterm']);
+    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.mode)).toEqual(['shared']);
+    expect(await first.exited).toBe(0);
     successor.child.kill('SIGTERM');
     await successor.exited;
   }, 60_000);

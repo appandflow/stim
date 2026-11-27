@@ -54,7 +54,9 @@ at once and its claim is recovered through its dead identity), because the old
 daemon has no stop request. The old handler releases the claim at once and exits
 after the tick in progress. stimd logs `stimd_takeover_signal` with the pid, or
 why none was sent (`stimd_takeover_skipped`), waits up to 3 seconds and logs
-`stimd_takeover`, or `stimd_takeover_overlap` when the process still runs. A CLI
+`stimd_takeover`, or `stimd_takeover_overlap` when the process still runs. When
+another 1.40 command starts a new daemon in that wait and it takes the released
+claim, stimd takes that one over too, up to two more times. A CLI
 command that starts stimd prints one line on stderr naming the pid it stops. The
 1.40 claim and `hello` answer carry no version, so the log says Stim 1.x.
 
