@@ -13,10 +13,10 @@ logs.
 The normal flow is:
 
 ```text
-git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors -> stop -> worktree remove
+worktree add -> cd -> start -> ios|android -> logs --errors -> stop -> worktree remove
 ```
 
-The command surface is `doctor`, `worktree warm|remove|list`, `start`, `stop`,
+The command surface is `doctor`, `worktree add|warm|remove|list`, `start`, `stop`,
 `ios`, `android`, `macos`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `services [start|stop|env]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
 `status`, `stats`, `test`, `gc`, `guide`, `plugin list|test`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
@@ -501,7 +501,7 @@ symlinked worktree must resolve to the same config key as its target.
 
 ### 7. Preserve stdout contracts
 
-`worktree warm` and `worktree remove` keep stdout empty. `worktree list` prints its listing on stdout and `--json` prints one payload. JSON commands print
+`worktree add`, `worktree warm` and `worktree remove` keep stdout empty. `worktree list` prints its listing on stdout and `--json` prints one payload. JSON commands print
 exactly one parseable payload, except `logs --json`, which emits newline-delimited
 records and stays empty when no records match, and `status --watch --json`,
 which emits one complete status payload per line and never repeats an

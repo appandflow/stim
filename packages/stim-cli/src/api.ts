@@ -44,6 +44,8 @@ export type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeAddOptions,
+  StimWorktreeAddResult,
   StimWorktreeWarmOptions,
   StimWorktreeRemoveOptions,
   StimWorktreeWarmResult,

@@ -708,7 +708,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'An in-process report or lifecycle operation exceeded its execution budget',
       body: () => `STIM_REPORT_TIMEOUT
 
-An API operation exceeded its execution budget: 90 minutes for warmWorktree(),
+An API operation exceeded its execution budget: 90 minutes for addWorktree() and warmWorktree(),
 60 seconds for doctor(), previewGarbage(), collectGarbage(), reload(), plan() and removeWorktree().
 Stim attempts only that operation's cleanup before rejecting, with a 35 second
 cleanup budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.

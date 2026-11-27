@@ -1,19 +1,19 @@
 {
   "unit": "bytes of UTF-8 text printed by stim guide without the status block; the skill is the file size",
   "skill": 1000,
-  "index": 2100,
-  "reactNativePath": 13160,
+  "index": 2112,
+  "reactNativePath": 13177,
   "defaults": {
     "section": 10000,
     "topic": 16000
   },
   "topics": {
-    "agent": 4200,
+    "agent": 4230,
     "errors": 5000,
-    "api": 24000,
+    "api": 24523,
     "metro": 27677,
     "logs": 51780,
-    "lifecycle": 20750,
+    "lifecycle": 20778,
     "cleanup": 30407,
     "settings": 137766,
     "share": 29250,
@@ -36,7 +36,7 @@
     "lifecycle builds": 38500,
     "lifecycle concurrency": 15101,
     "lifecycle budget": 18150,
-    "lifecycle options": 25100,
+    "lifecycle options": 26446,
     "lifecycle devices": 11000,
     "cleanup gc": 74780,
     "cleanup disk": 16250

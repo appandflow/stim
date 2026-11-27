@@ -56,6 +56,7 @@ labels consistently in document headers.
 
 - Repository guidance uses `Repo`.
 - Cleanup and state use `Cleanup`, `Claims`, and `Fingerprint`.
+- Worktree creation uses `Worktrees`.
 - Native and development builds use `Builds`, `Exact`, `EAS`, `Signing`, and `Metro`.
 - Runtime ownership uses `Devices` and `Hosted devices`.
 - Test runs use `Tests`.

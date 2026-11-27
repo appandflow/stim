@@ -25,15 +25,31 @@ the native build.
 ## Create and warm
 
 <StimTabs
-code={`git worktree add -b feature-x ../feature-x HEAD
-cd ../feature-x
+code={`stim worktree add -b feature-x ../feature-x HEAD
+cd ../feature-x`}
+/>
+
+`stim worktree add` takes the path, `-b <branch>` and commit of `git worktree add` and creates an
+ordinary Git worktree that is already warm. On macOS, with the new path on the
+source checkout's APFS volume, it clones the source checkout, so the new
+worktree takes almost no disk space until its files change. It always starts
+clean at the commit you name: uncommitted edits, staged changes and untracked
+files stay in the source checkout. Submodule folders start empty, as Git
+leaves them. Anywhere else Git creates the worktree and Stim copies into it.
+The files are the same either way.
+
+For a worktree something else created, such as an agent harness, warm it
+yourself:
+
+<StimTabs
+code={`cd ../feature-x
 stim worktree warm`}
 />
 
-`stim worktree warm` copies the Git-ignored files the worktree is missing from
-the source checkout, such as `node_modules`, Pods and `.env`. It skips an entry
-the worktree's branch does not ignore. It never overwrites tracked files or
-entries that already exist, and it does not install packages. If it reports a
+Both copy the Git-ignored files the worktree is missing from
+the source checkout, such as `node_modules`, Pods and `.env`. They skip an entry
+the worktree's branch does not ignore. Neither overwrites tracked files or
+entries that already exist, and neither installs packages. If one reports a
 lockfile mismatch, run your install command.
 
 - To leave files out, list patterns in the source checkout's

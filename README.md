@@ -8,8 +8,8 @@ Stim builds, launches and cleans up React Native, Expo and native apps for every
 agent, locally or across your machines, and shows you what each one
 is running.
 
-- **Worktree-based workflow.** One git worktree per task. `stim worktree warm`
-  copies in its dependencies, and Stim gives it its own Metro port and device,
+- **Worktree-based workflow.** One git worktree per task. `stim worktree add`
+  creates it with its dependencies, and Stim gives it its own Metro port and device,
   so parallel agents never collide.
 - **Builds you only pay for once.** React Native and Expo builds are cached and
   shared across worktrees, so a new one rarely compiles from scratch. Xcode and

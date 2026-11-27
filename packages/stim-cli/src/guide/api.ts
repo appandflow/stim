@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, reload, stop, warmWorktree, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation; plugin list and test',
+    'Typed lifecycle API: createStim, build, run, reload, stop, addWorktree, warmWorktree, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation; plugin list and test',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -100,6 +100,14 @@ A person approves each capability on the worker. Execution has a 120 second
 budget and cleanup uses the report's 35 second budget. Desktop requests access
 only through its matching-home bundled server's private desktop-machine-access
 subscription; cancellation waits for cleanup and reconnect never repeats it.
+
+addWorktree({ path, branch?, commitish?, signal? }) creates a linked worktree as
+the CLI's worktree add does, with git worktree add's path, -b branch and
+commit-ish, and warms it. A relative path resolves against projectRoot. It
+returns { exitCode, path }: the canonical path of the new worktree, and exitCode
+1 when the worktree exists but its warm did not complete. Git refusing the
+worktree rejects. Cancellation during a clone removes the half-made worktree and
+the branch the call created. It shares warmWorktree's budgets.
 
 warmWorktree({ signal?, beforeWarm? }) copies missing ignored state from the source
 checkout into the client's linked worktree in process. It returns { exitCode },

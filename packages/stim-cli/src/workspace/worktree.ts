@@ -248,7 +248,7 @@ function canonicalPath(path: string): string {
   }
 }
 
-async function nestedWorktreePaths(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
+export async function nestedWorktreePaths(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
   const out = await gitReadAsync(root, ['worktree', 'list', '--porcelain'], options);
   if (out === null) {
     throw new Error('Could not list Git worktrees. Refusing to carry ignored files.');
@@ -267,7 +267,7 @@ function relativeWorktreePaths(root: string, entries: WorktreeEntry[]): string[]
   return [...paths];
 }
 
-function overlapsNestedWorktree(rel: string, nestedPaths: string[]): boolean {
+export function overlapsNestedWorktree(rel: string, nestedPaths: string[]): boolean {
   const path = String(rel).replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
   return nestedPaths.some(
     (nested) => path === nested || path.startsWith(`${nested}/`) || nested.startsWith(`${path}/`),
@@ -437,6 +437,7 @@ export async function cloneIgnoredEntries({
   patterns,
   operation,
   withhold = () => null,
+  precloned = false,
 }: {
   root: string;
   target: string;
@@ -444,6 +445,11 @@ export async function cloneIgnoredEntries({
   operation: StimContext;
   /** For an entry that needs a check before it is carried, a promise of the reason to leave it out, or of null to carry it. */
   withhold?: (rel: string) => Promise<string | null> | null;
+  /**
+   * `target` was cloned whole from `root`, so an entry already there is the carried copy and is not copied again,
+   * unless `withhold` checks it: that copy was made outside the claim the check holds, and is replaced under it.
+   */
+  precloned?: boolean;
 }): Promise<CloneResult> {
   const options = {
     ...childEnvironment(operation.env),
@@ -463,6 +469,7 @@ export async function cloneIgnoredEntries({
       : overlapsNestedWorktree(rel, nested)
         ? 'nested worktree'
         : missingDestinationReason(target, rel);
+  const present = (reason: string | null): boolean => precloned && reason === 'exists';
   const checks = new Map<string, Promise<string | null>>();
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
@@ -476,7 +483,8 @@ export async function cloneIgnoredEntries({
     for (const rel of carryable) {
       let copies: boolean;
       try {
-        copies = keptReason(rel) === null;
+        const reason = keptReason(rel);
+        copies = reason === null || present(reason);
       } catch {
         copies = true;
       }
@@ -494,7 +502,7 @@ export async function cloneIgnoredEntries({
       let copying = false;
       try {
         const reason = keptReason(rel);
-        if (reason) {
+        if (reason && !present(reason)) {
           skipped.push({ file: rel, reason });
           continue;
         }
@@ -503,53 +511,57 @@ export async function cloneIgnoredEntries({
           withheld.push({ file: rel, reason: withholding });
           continue;
         }
-        await mkdir(dirname(to), { recursive: true });
-        copying = true;
-        const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
-          try {
-            await getExecutor().runFileAsync(file, args, options);
-            return true;
-          } catch (cause) {
-            if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-              throw cause;
-            operation.signal.throwIfAborted();
-            await removeTemporaryEntryAsync(to);
-            return false;
-          }
-        };
-        if (process.platform === 'win32') {
-          await cp(from, to, {
-            recursive: true,
-            errorOnExist: true,
-            force: false,
-            filter: async (source, destination) => {
+        const reused = present(reason) && !checks.has(rel);
+        if (present(reason) && !reused) await removeTemporaryEntryAsync(to, operation.signal);
+        if (!reused) {
+          await mkdir(dirname(to), { recursive: true });
+          copying = true;
+          const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
+            try {
+              await getExecutor().runFileAsync(file, args, options);
+              return true;
+            } catch (cause) {
+              if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+                throw cause;
               operation.signal.throwIfAborted();
-              if (!(await lstat(source)).isSymbolicLink()) return true;
-              let link = await readlink(source);
-              const inSource = isAbsolute(link) ? relative(root, link) : '..';
-              if (!inSource.startsWith('..') && !isAbsolute(inSource)) link = join(target, inSource);
-              const file = await statAsync(source).then(
-                (stat) => !stat.isDirectory(),
-                () => false,
-              );
-              // Windows: symbolic links need the create-symlink privilege; without it a junction stands in for a directory.
-              // Git for Windows leaves junctions behind on worktree remove: git-for-windows/git#6543.
-              await symlink(link, destination, file ? 'file' : 'dir').catch(async (error: NodeJS.ErrnoException) => {
-                if (error.code !== 'EPERM') throw error;
-                await (file ? copyFile(source, destination) : symlink(link, destination, 'junction'));
-              });
+              await removeTemporaryEntryAsync(to);
               return false;
-            },
-          });
-          cloned = false;
-        } else {
-          const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
-          if (
-            !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
-            !(await copiedWith('cp', ['-Rc', from, to]))
-          ) {
-            await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+            }
+          };
+          if (process.platform === 'win32') {
+            await cp(from, to, {
+              recursive: true,
+              errorOnExist: true,
+              force: false,
+              filter: async (source, destination) => {
+                operation.signal.throwIfAborted();
+                if (!(await lstat(source)).isSymbolicLink()) return true;
+                let link = await readlink(source);
+                const inSource = isAbsolute(link) ? relative(root, link) : '..';
+                if (!inSource.startsWith('..') && !isAbsolute(inSource)) link = join(target, inSource);
+                const file = await statAsync(source).then(
+                  (stat) => !stat.isDirectory(),
+                  () => false,
+                );
+                // Windows: symbolic links need the create-symlink privilege; without it a junction stands in for a directory.
+                // Git for Windows leaves junctions behind on worktree remove: git-for-windows/git#6543.
+                await symlink(link, destination, file ? 'file' : 'dir').catch(async (error: NodeJS.ErrnoException) => {
+                  if (error.code !== 'EPERM') throw error;
+                  await (file ? copyFile(source, destination) : symlink(link, destination, 'junction'));
+                });
+                return false;
+              },
+            });
             cloned = false;
+          } else {
+            const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+            if (
+              !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+              !(await copiedWith('cp', ['-Rc', from, to]))
+            ) {
+              await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+              cloned = false;
+            }
           }
         }
         if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal, trash);
