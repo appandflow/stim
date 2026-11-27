@@ -159,6 +159,7 @@ const entry: IndexEntry = {
     gid: 20,
     size: 42,
   },
+  oid: '8baef1b4abc478178b004d62031cf7fe6db6f903',
   emptyBlob: false,
   stage: 0,
   assumeUnchanged: false,

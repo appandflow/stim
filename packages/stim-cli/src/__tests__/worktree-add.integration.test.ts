@@ -327,26 +327,20 @@ function settle(): void {
   const longAgo = new Date('2020-01-01');
   for (const path of git(root, 'ls-files', '-z').split('\0').filter(Boolean))
     if (lstatSync(join(root, path), { throwIfNoEntry: false })?.isDirectory() === false)
-      lutimesSync(join(root, path), longAgo, longAgo);
+      if (lstatSync(join(root, path)).mtimeMs !== longAgo.getTime()) lutimesSync(join(root, path), longAgo, longAgo);
   git(root, 'update-index', '--refresh');
 }
 
-/** Runs `stim worktree add` from `cwd` and counts the index refreshes git ran for it. */
-async function addCounting(cwd: string, args: string[]) {
-  const real = getExecutor();
-  let refreshes = 0;
-  setExecutor({
-    ...real,
-    runFileAsync(file, gitArgs, opts) {
-      if (file === 'git' && gitArgs.includes('update-index')) refreshes++;
-      return real.runFileAsync(file, gitArgs, opts);
-    },
-  });
-  try {
-    return { ...(await run(addOp, cwd, args)), refreshes };
-  } finally {
-    resetExecutor();
-  }
+/** The tracked files of the worktree `path` that are not clones of the source checkout's, which `settle` dated. */
+function written(path: string): string[] {
+  return git(path, 'ls-files', '-z')
+    .split('\0')
+    .filter(
+      (file) =>
+        file &&
+        !lstatSync(join(path, file)).isDirectory() &&
+        lstatSync(join(path, file)).mtimeMs !== lstatSync(join(root, file)).mtimeMs,
+    );
 }
 
 /**
@@ -434,12 +428,12 @@ for (const [name, prepare] of unchangedSources)
       prepare();
       settle();
 
-      const same = await addCounting(root, ['-b', 'same', '../same']);
-      const older = await addCounting(root, ['-b', 'older', '../older', 'HEAD~2']);
+      const same = await run(addOp, root, ['-b', 'same', '../same']);
+      const older = await run(addOp, root, ['-b', 'older', '../older', 'HEAD~2']);
 
       expect(same.stderr).toContain('as a clone of');
       expect(older.stderr).toContain('as a clone of');
-      expect([same.refreshes, older.refreshes]).toEqual([0, 0]);
+      expect(written(join(base, 'same'))).toEqual([]);
       expectExactCheckout(join(base, 'same'));
       expectExactCheckout(join(base, 'older'));
       expect(tree(join(base, 'older'))).toEqual(tree(await plain('plain', 'HEAD~2')));
@@ -535,8 +529,8 @@ for (const [name, prepare] of changedSources)
       prepare();
       const source = tree(root);
 
-      const same = await addCounting(root, ['-b', 'same', '../same']);
-      const older = await addCounting(root, ['-b', 'older', '../older', 'HEAD~2']);
+      const same = await run(addOp, root, ['-b', 'same', '../same']);
+      const older = await run(addOp, root, ['-b', 'older', '../older', 'HEAD~2']);
 
       expect(same.stderr).toContain('as a clone of');
       expect(older.stderr).toContain('as a clone of');
@@ -583,8 +577,106 @@ test.skipIf(!clones)(
   60_000,
 );
 
+/** Checks `file` out again in the source checkout, so its bytes are what git writes under the conversion in force. */
+function checkOutAgain(file: string): void {
+  rmSync(join(root, file));
+  git(root, 'checkout', '--', file);
+}
+
+const convertedSources: [string, () => void][] = [
+  [
+    'a file checked out under core.autocrlf=true before it was turned off',
+    () => {
+      git(root, 'config', 'core.autocrlf', 'true');
+      checkOutAgain('src/kept.txt');
+      expect(readFileSync(join(root, 'src/kept.txt'), 'utf-8')).toBe('second\r\n');
+      settle();
+      git(root, 'config', 'core.autocrlf', 'false');
+    },
+  ],
+  [
+    'CRLF files from a .gitattributes the source checkout has not committed',
+    () => {
+      write(root, '.gitattributes', '*.txt eol=crlf\n');
+      checkOutAgain('src/kept.txt');
+      expect(readFileSync(join(root, 'src/kept.txt'), 'utf-8')).toBe('second\r\n');
+      settle();
+    },
+  ],
+  [
+    'an LF file where the commit asks for CRLF',
+    () => {
+      write(root, '.gitattributes', '*.txt text eol=crlf\n');
+      git(root, 'add', '.gitattributes');
+      git(root, 'commit', '-qm', 'attributes');
+    },
+  ],
+  [
+    'an ident attribute',
+    () => {
+      write(root, '.gitattributes', '*.txt ident\n');
+      write(root, 'src/ident.txt', '$Id$\n');
+      git(root, 'add', '.gitattributes', 'src/ident.txt');
+      git(root, 'commit', '-qm', 'ident');
+      checkOutAgain('src/ident.txt');
+      expect(readFileSync(join(root, 'src/ident.txt'), 'utf-8')).toMatch(/^\$Id: [0-9a-f]{40} \$\n$/);
+    },
+  ],
+  [
+    'a smudge filter whose output the source checkout no longer holds',
+    () => {
+      git(root, 'config', 'filter.upper.clean', 'tr A-Z a-z');
+      git(root, 'config', 'filter.upper.smudge', 'tr a-z A-Z');
+      write(root, '.gitattributes', 'src/kept.txt filter=upper\n');
+      git(root, 'add', '.gitattributes');
+      git(root, 'commit', '-qm', 'filter');
+    },
+  ],
+  [
+    'a working-tree-encoding',
+    () => {
+      write(root, '.gitattributes', 'src/kept.txt working-tree-encoding=UTF-16LE\n');
+      writeFileSync(join(root, 'src/kept.txt'), Buffer.from('second\n', 'utf16le'));
+      git(root, 'add', '.gitattributes', 'src/kept.txt');
+      git(root, 'commit', '-qm', 'encoding');
+    },
+  ],
+];
+
+for (const [name, prepare] of convertedSources)
+  test.skipIf(!clones)(
+    `a source checkout with ${name} gives the bytes git worktree add writes (APFS clone inodes; darwin only)`,
+    async () => {
+      settle();
+      prepare();
+      expect(git(root, 'status', '--porcelain', '--untracked-files=no')).toBe('');
+
+      const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+      expect(added.stderr).toContain('as a clone of');
+      expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
+      expect(git(join(base, 'added'), 'status', '--porcelain')).toBe('');
+      expect(written(join(base, 'added'))).not.toContain('package.json');
+    },
+    60_000,
+  );
+
+for (const setting of ['core.autocrlf=true', 'core.autocrlf=input', 'core.eol=crlf'])
+  test.skipIf(!clones)(
+    `a repository with ${setting} takes the plain path and gives the same worktree (APFS clonefile; darwin only)`,
+    async () => {
+      git(root, 'config', ...setting.split('='));
+
+      const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+      expect(added.stderr).toContain('with git worktree add, because cloning failed (core.autocrlf or core.eol');
+      expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
+    },
+    60_000,
+  );
+
 test.skipIf(!clones)(
-  'a SHA-256 repository is cloned and git reads every tracked file, whatever its fsmonitor hook and core.checkStat say (APFS clone inodes; darwin only)',
+  'a SHA-256 repository takes the plain path (APFS clonefile; darwin only)',
   async () => {
     const other = join(base, 'sha256');
     mkdirSync(other);
@@ -593,30 +685,15 @@ test.skipIf(!clones)(
     git(other, 'config', 'user.email', 'test@example.com');
     git(other, 'config', 'commit.gpgsign', 'false');
     git(other, 'config', 'index.skipHash', 'true');
-    git(other, 'config', 'core.checkStat', 'minimal');
     write(other, 'src/kept.txt', 'tracked\n');
-    write(other, 'src/same-size.txt', 'tracked\n');
     git(other, 'add', '.');
     git(other, 'commit', '-qm', 'first');
-    const longAgo = new Date('2020-01-01');
-    utimesSync(join(other, 'src/same-size.txt'), longAgo, longAgo);
-    git(other, 'update-index', '--refresh');
-    write(other, 'src/same-size.txt', 'TRACKED\n');
-    utimesSync(join(other, 'src/same-size.txt'), longAgo, longAgo);
-    write(base, 'fsmonitor.sh', "#!/bin/sh\nprintf 'token\\0'\n");
-    chmodSync(join(base, 'fsmonitor.sh'), 0o755);
-    git(other, 'config', 'core.fsmonitor', join(base, 'fsmonitor.sh'));
-    git(other, 'config', 'core.fsmonitorHookVersion', '2');
-    git(other, 'status');
-    git(other, 'status');
     write(other, 'src/kept.txt', 'edited and not committed\n');
 
-    const added = await addCounting(other, ['-b', 'added', '../sha256-added']);
+    const added = await run(addOp, other, ['-b', 'added', '../sha256-added']);
 
-    expect(added.stderr).toContain('as a clone of');
-    expect(added.refreshes).toBe(1);
-    git(other, 'config', 'core.fsmonitor', 'false');
-    expectExactCheckout(join(base, 'sha256-added'));
+    expect(added.stderr).toContain('with git worktree add, because cloning failed (a sha256 index is not copied)');
+    expect(readFileSync(join(base, 'sha256-added/src/kept.txt'), 'utf-8')).toBe('tracked\n');
   },
   60_000,
 );
@@ -715,6 +792,7 @@ test.skipIf(process.platform === 'win32')(
 test.skipIf(!clones)(
   'a cloned worktree keeps the cloned files and its index describes them when the command returns (APFS clone inodes; darwin only)',
   async () => {
+    settle();
     expect((await run(addOp, root, ['-b', 'added', '../added'])).code).toBe(0);
 
     const path = join(base, 'added');
@@ -770,9 +848,7 @@ test.skipIf(!clones)(
     setExecutor({
       ...real,
       async runFileAsync(file, args, opts) {
-        const step = ['--no-checkout', 'update-index', '--untracked-files=normal', 'hook'].find((arg) =>
-          args.includes(arg),
-        );
+        const step = ['--no-checkout', 'reset', '--untracked-files=normal', 'hook'].find((arg) => args.includes(arg));
         if (file === 'git' && step) readers.push([step, readClaimSet(warmClaimPath(root)).live.length]);
         if (file === 'git' && step === 'hook') {
           const refresh = tryAcquireClaim({ root: warmClaimPath(root), mode: 'exclusive', label: 'worktree warm' });
@@ -787,7 +863,7 @@ test.skipIf(!clones)(
 
     expect(readers).toEqual([
       ['--no-checkout', 1],
-      ['update-index', 1],
+      ['reset', 1],
       ['--untracked-files=normal', 1],
       ['hook', 0],
     ]);

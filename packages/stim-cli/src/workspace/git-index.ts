@@ -19,6 +19,8 @@ export interface IndexEntry {
   path: Buffer;
   mode: number;
   stat: IndexStat;
+  /** The entry's object name, in hexadecimal. */
+  oid: string;
   emptyBlob: boolean;
   stage: number;
   assumeUnchanged: boolean;
@@ -117,6 +119,7 @@ export function readIndex(bytes: Buffer): ParsedIndex | null {
         gid: bytes.readUInt32BE(at + 32),
         size: bytes.readUInt32BE(at + 36),
       },
+      oid: bytes.toString('hex', at + 40, at + 60),
       emptyBlob: bytes.subarray(at + 40, at + 60).equals(EMPTY_BLOB),
       stage: (flags >> 12) & 3,
       assumeUnchanged: (flags & 0x8000) !== 0,

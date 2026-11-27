@@ -35,11 +35,11 @@ helper available, the command does not check files out:
    leaves out or checks before carrying. An entry that holds such a directory
    is cloned child by child around it, 256 clones to a helper call.
 3. The source's index, read before the first clone, is written to the new
-   worktree with the clones' stat data in every entry the source checkout
-   proves unchanged. `git update-index --refresh` runs when an entry is left
-   unproven and reads those files only. `git reset --hard` then rewrites only
-   the tracked files that differ from the target commit, which restores files
-   the source had edited or deleted.
+   worktree with the clones' stat data in every entry whose clone is proven
+   to hold the bytes a checkout of the target commit writes. `git reset --hard`
+   then writes every other tracked file: the ones that differ from the target
+   commit, the ones the source had edited or deleted, and the ones it cannot
+   prove.
 4. Every submodule path of the target commit is emptied, as `git worktree add`
    leaves it.
 5. `git clean -ffd` removes what the target commit neither tracks nor ignores,
@@ -56,7 +56,7 @@ helper available, the command does not check files out:
 Reason: a checkout writes every tracked file again, and the warm then clones
 the dependency folders beside them. A clone shares the source's disk blocks, so
 a new worktree at the source's commit takes no disk of its own, and git reads
-no tracked file the source checkout had not changed.
+no tracked file.
 
 Maintainer decision: "since we'd change api a bit I kind of want to include the new worktree add, also can it be combined with warm to run at smae time to make it faster", 2026-11-26 (#6542).
 
@@ -107,10 +107,11 @@ maintenance.
 Git creates the worktree and the normal warm fills it when the platform is not
 macOS, the new path is on another volume, the helper cannot be compiled, the
 source index marks a file assume-unchanged or skip-worktree or is a split
-index, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
+index, the source index is one the command does not copy, `core.autocrlf` or
+`core.eol` makes a checkout write CRLF, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
-A source index that parses and has gained such a flag, or become a split or
-sparse index, between that check and the copy counts as a failed step.
+A source index that has gained such a flag, or become a split or sparse index,
+between that check and the copy counts as a failed step.
 After a failed step the command removes the worktree and the branch that call
 created, never a branch that existed before, and runs `git worktree add` again
 with the same arguments. An interrupt does the same removal and stops. The
@@ -126,12 +127,21 @@ Maintainer decision: "Can we support submodules? Can we fallback instead of refu
 
 ## The copied index gets the clones' stat data
 
+A cloned file stays in the new worktree only when it holds, byte for byte,
+what `git worktree add` would write for its entry. Git writes every other
+tracked file.
+
 The command reads the source's index before it clones anything. After the
 clone it looks at each entry's file in the source checkout and at its clone,
 and writes the clone's change time, inode, device, owner and group into the
 entry when all of these hold:
 
 - the entry is a regular file or a symbolic link at stage 0, not intent-to-add;
+- a checkout of the target commit writes the entry's blob as it is stored:
+  that commit's `.gitattributes`, read with `git check-attr --source`, give
+  the path no `ident`, `filter` or `working-tree-encoding` and no `eol` other
+  than `lf`;
+- the size the entry records is the size of its blob;
 - the source file still matches the entry in every stat field git compares,
   nanoseconds included, and in type and executable bit;
 - a recorded size of 0 belongs to the empty blob;
@@ -142,19 +152,38 @@ entry when all of these hold:
   before the clone;
 - the clone has the source file's mode, size and modification time.
 
-Every other entry gets zeroed stat data, the state `git read-tree` leaves, and
-`git update-index --refresh` then reads those files. The untracked cache, the
-fsmonitor bitmap and the entry offset tables of the source index are not
-copied. `TREE` and `REUC` are.
+Every other entry gets zeroed stat data, the state `git read-tree` leaves, so
+`git reset --hard` writes its file from the blob. No `git update-index
+--refresh` runs. The untracked cache, the fsmonitor bitmap and the entry offset
+tables of the source index are not copied. `TREE` and `REUC` are. A
+`.gitattributes` the index does not list is removed from every directory that
+holds a tracked file before the reset.
 
 Reason: a clone has a new inode and change time, so git sees every entry of a
 copied index as changed. A reset on it rewrites every tracked file, and a
 refresh before the reset reads every tracked file, which costs about what the
-checkout costs. The test above is the one `git status` runs in the source
+checkout costs. The stat test above is the one `git status` runs in the source
 checkout. A source file that still matches an entry recorded before the clone
-did not change in between, so its clone holds the blob the entry names. The
-index is read first because one read after the clone could describe a file
-that was edited and added in between, with the clone holding the older bytes.
+did not change in between, so its clone holds what the entry was recorded
+from. The index is read first because one read after the clone could describe
+a file that was edited and added in between, with the clone holding the older
+bytes.
+
+What an entry was recorded from is the blob only when no conversion stood
+between them. A file checked out under `core.autocrlf=true` keeps its CRLF
+bytes and its clean entry after the setting is turned off, and a file written
+with LF where the commit asks for CRLF is clean too, while `git worktree add`
+writes LF for the first and CRLF for the second. So the attributes of the
+target commit must leave the blob alone and the recorded size must be the
+blob's. A refresh cannot stand in for this: it compares through the clean
+filter of the `.gitattributes` in the working tree, which the clone took from
+the source checkout, so it accepts bytes a checkout would not write. An entry
+that fails is written by git instead. A checkout reads `.gitattributes` from
+the working tree for a directory whose file the index does not list, so the
+source's untracked ones are removed first; the warm carries an ignored one
+back. Under `core.autocrlf` or `core.eol=crlf` a checkout converts paths no
+attribute names, and the command takes the plain path.
+
 `git reset --hard` checks a path with `lstat` alone, which follows a symbolic
 link that replaced a parent directory, so the parents are checked here. A
 directory moved away and back keeps the stat data of its files, so a
@@ -166,39 +195,38 @@ written, so the device is not compared.
 whole-second modification time, so an edit in the source that keeps both
 survives into the new worktree.
 
-A file git reports unchanged in the source checkout although the checkout
-conversion configured now would write other bytes, after `core.autocrlf`, an
-`eol` attribute or a filter changed since it was checked out, keeps the
-source's bytes in the new worktree, where `git worktree add` would convert it
-again (#6549).
+Not covered: a file recorded under a filter or encoding that changed its bytes
+without changing its size, where that conversion has since been removed from
+the configuration and the file was left as it was.
 
-An index the command cannot vouch for is copied as it is and refreshed whole
-before the reset, with `core.fsmonitor` off and `core.checkStat` at its default
-for both, so neither the copied fsmonitor bitmap nor a size and time match
-hides a file: a SHA-256 repository, a version other than 2 to 4, a
-checksum that does not match, an extension git requires a reader to
-understand, or bytes that do not parse to the end. A split index is not
-copied, because its entries live in a second file.
+A source index the command cannot vouch for takes the plain path: a SHA-256
+repository, a version other than 2 to 4, a checksum that does not match, an
+extension git requires a reader to understand, or bytes that do not parse to
+the end. A split index is not copied, because its entries live in a second
+file.
 
 Measured with the command itself, medians of 4 alternating runs on a loaded
-machine, against a full refresh before the reset and against
-`git worktree add` then `stim worktree warm`:
+machine, against `git worktree add` then `stim worktree warm`. The full refresh
+column, a `git update-index --refresh` of the whole copied index before the
+reset, comes from an earlier run of the same script:
 
 | Source checkout                                                 | Target     | git + warm | Full refresh | Stat data written |
 | --------------------------------------------------------------- | ---------- | ---------- | ------------ | ----------------- |
-| expo, 19,021 tracked files, no dependencies                     | `HEAD`     | 2.92 s     | 5.94 s       | 2.05 s            |
-| expo                                                            | `HEAD~200` | 3.98 s     | 6.99 s       | 3.56 s            |
-| this repository, 3,811 tracked files, 18 `node_modules` folders | `HEAD~50`  | 6.78 s     | 7.70 s       | 6.47 s            |
+| expo, 19,021 tracked files, no dependencies                     | `HEAD`     | 3.07 s     | 5.94 s       | 2.24 s            |
+| expo                                                            | `HEAD~200` | 3.60 s     | 6.99 s       | 3.35 s            |
+| this repository, 3,811 tracked files, 18 `node_modules` folders | `HEAD~50`  | 6.69 s     | 7.70 s       | 6.79 s            |
 
-The full refresh column comes from an earlier run of the same script. The
-pass over the index takes about 0.2 s for 19,000 entries. Right after a
-`git clone` the files written in the second the index was written are racy,
-2,939 of them on the expo checkout, and git reads those until a `git status`
-in the source checkout records them again. What is left on
-a checkout with dependency folders is their `clonefile`, which both paths pay.
-Git work started beside that call waits for it, so the two do not overlap. The
-disk result does not change: on this repository a worktree 50 commits behind
-held 9 MB of private disk against 113 MB, and 0 MB at the source's own commit.
+On the expo checkout `git check-attr` over every path takes 0.12 s and
+`git cat-file --batch-check` over every blob 0.07 s, run together, and the pass
+over the index about 0.2 s. At the source's commit git wrote none of the 19,020
+files there and 1 of 3,811 here. Right after a `git clone` the files written in
+the second the index was written are racy, 2,939 of them on the expo checkout,
+and git writes those again until a `git status` in the source checkout records
+them. What is left on a checkout with dependency folders is their `clonefile`,
+which both paths pay. Git work started beside that call waits for it, so the
+two do not overlap. The disk result does not change: on this repository a
+worktree 50 commits behind held 9 MB of private disk against 113 MB, and 0 MB
+at the source's own commit.
 
 ## Not decided
 
