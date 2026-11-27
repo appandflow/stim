@@ -689,6 +689,27 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   [
+    'core.attributesFile naming a link of the new worktree to a file outside it',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(base, 'outside.attributes', '*.txt text eol=crlf\n');
+      symlinkSync(join(base, 'outside.attributes'), join(root, 'local.attributes'));
+      git(root, 'config', 'core.attributesFile', join(base, 'added/local.attributes'));
+    },
+  ],
+  [
+    'core.attributesFile through a link outside, then a link of the new worktree, to a file outside it',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(base, 'outside.attributes', '*.txt text eol=crlf\n');
+      symlinkSync(join(base, 'outside.attributes'), join(root, 'local.attributes'));
+      symlinkSync(join(base, 'added/local.attributes'), join(base, 'first.attributes'));
+      git(root, 'config', 'core.attributesFile', join(base, 'first.attributes'));
+    },
+  ],
+  [
     'core.autocrlf=true while GIT_CONFIG names another file',
     checkedOut,
     'HEAD',

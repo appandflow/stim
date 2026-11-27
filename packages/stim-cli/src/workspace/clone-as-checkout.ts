@@ -1,9 +1,9 @@
 import type { StimContext } from '@stim-cli/core';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readlink, realpath } from 'node:fs/promises';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, parse, sep } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { fenceDeclaredSpawns } from '../engine/spawn-claims.ts';
 import { getExecutor } from '../exec.ts';
@@ -28,11 +28,35 @@ async function fenced<T>(operation: StimContext, work: () => Promise<T>): Promis
   }
 }
 
-/** `path` through every link, also where its last components do not exist. */
-async function resolveLinks(path: string): Promise<string> {
-  let found = path;
-  while (!(await lstat(found).catch(() => null)) && dirname(found) !== found) found = dirname(found);
-  return resolve(await realpath(found), relative(found, path));
+/** Whether opening `path` passes through `target`, a real path, at any step: a folder, a link or a link's target. */
+async function reaches(target: string, path: string): Promise<boolean> {
+  const inside = (candidate: string) => isPathPrefix(target.toLowerCase(), candidate.toLowerCase());
+  const rest = path.split(sep);
+  let at = parse(path).root;
+  for (let links = 0; rest.length;) {
+    const name = rest.shift() ?? '';
+    if (!name || name === '.') continue;
+    if (name === '..') {
+      at = dirname(at);
+      continue;
+    }
+    const next = join(at, name);
+    if (inside(next)) return true;
+    const found = await lstat(next).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    });
+    if (!found?.isSymbolicLink()) {
+      at = next;
+      continue;
+    }
+    // symlink(7): the kernel gives up after 40 links.
+    if (++links > 40) throw new Error('too many links');
+    const link = await readlink(next);
+    rest.unshift(...link.split(sep));
+    if (isAbsolute(link)) at = parse(link).root;
+  }
+  return false;
 }
 
 async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<void> {
@@ -64,12 +88,12 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
   // gitattributes(5): attr.tree and GIT_ATTR_SOURCE name a tree whose attributes replace the working tree's.
   if (tree || operation.env.GIT_ATTR_SOURCE)
     throw new Error('attr.tree or GIT_ATTR_SOURCE names another source of attributes');
-  // git-config(1), core.attributesFile: read beside the commit's attributes, so one inside the worktree is a file
-  // the clone brought from the source checkout. Git opens it through every link, in its folders or the file itself.
+  // git-config(1), core.attributesFile: read beside the commit's attributes, so one reached through the worktree is
+  // a file or link the clone brought from the source checkout, which a checkout has not written yet.
   if (!attributesFile) return;
-  const file = isAbsolute(attributesFile) ? await resolveLinks(attributesFile).catch(() => null) : null;
-  if (!file || isPathPrefix((await realpath(target)).toLowerCase(), file.toLowerCase()))
-    throw new Error('core.attributesFile names a file in the worktree, or one that does not resolve');
+  const real = await realpath(target);
+  if (!isAbsolute(attributesFile) || (await reaches(real, attributesFile).catch(() => true)))
+    throw new Error('core.attributesFile names a file in the worktree');
 }
 
 /**
@@ -223,11 +247,16 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
       Array.from({ length: XATTR_CALLS_AT_ONCE }, async () => {
         for (let batch = batches.pop(); batch; batch = batches.pop()) {
           const paths = batch;
-          await run('/usr/bin/xattr', ['-c', '-s', ...paths]).catch(async () => {
-            operation.signal.throwIfAborted();
-            await run('/usr/bin/chflags', ['-h', 'nouchg', ...paths]);
-            await run('/usr/bin/xattr', ['-c', '-s', ...paths]);
-          });
+          await run('/usr/bin/xattr', ['-c', '-s', ...paths])
+            .catch(async () => {
+              operation.signal.throwIfAborted();
+              await run('/usr/bin/chflags', ['-h', 'nouchg', ...paths]);
+              await run('/usr/bin/xattr', ['-c', '-s', ...paths]);
+            })
+            .catch((error: unknown) => {
+              batches.length = 0;
+              throw error;
+            });
         }
       }),
     ),
