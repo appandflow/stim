@@ -411,9 +411,10 @@ stim settings set server.devicesPaused true`} />
   files there.
 - **`device-host` runs a hosted macOS app as native code, as the host user.**
   There is no sandbox. Approve only clients you expect.
-- **A viewer with `control`, including a share link with control, can read the
-  device clipboard.** A simulator or emulator may share its clipboard with the
-  host Mac, so that can include what you copied on the host.
+- **A paired viewer with `control` can read the device clipboard.** A simulator
+  or emulator may share its clipboard with the host Mac, so that can include
+  what you copied on the host. A share link with control can only write the
+  device clipboard, never read it.
 - Before a client authenticates, a worker answers only the handshake, its
   version, and setup progress named by a ticket. It rate-limits unauthenticated
   connections.

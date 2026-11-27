@@ -196,7 +196,8 @@ const VIEWER_TEXT = {
   noStream: 'This share has ended: its device could not stream.',
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
-  clipboardRefused: 'The device did not take or return its clipboard.',
+  clipboardRefused: 'The device did not take the clipboard text.',
+  clipboardReadRefused: 'A share link can paste to the device but cannot read its clipboard.',
   pasteBusy: 'The device is still typing the previous paste.',
   pasteSuggestion: 'If nothing appears, tap the paste suggestion on the device.',
   controlEnded: 'Control ended.',
@@ -1622,11 +1623,25 @@ export class ShareHub {
     const { type, ...fields } = message;
     const method = INPUT_METHODS.get(String(type));
     if (!method) return;
-    const clipboard = method === 'input.clipboard.set' || method === 'input.clipboard.get';
+    const clipboard = method === 'input.clipboard.set';
     const cost = method === 'input.rotate' ? ROTATE_COST : clipboard ? CLIPBOARD_INPUT_COST : 1;
     const boundary = method === 'input.touch' && (fields.phase === 'down' || fields.phase === 'up');
     const debt = boundary ? this.limits.inputPerSecond : 0;
     if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond, debt)) return;
+    // @ref LLP 0011#viewer-permissions-stay-on-the-server -- a share link writes the device clipboard, never reads it
+    if (method === 'input.clipboard.get') {
+      if (viewer.socket.readyState === viewer.socket.OPEN) {
+        viewer.socket.send(
+          JSON.stringify({
+            type: 'clipboard',
+            id: fields.id,
+            code: 'clipboard-read-refused',
+            error: VIEWER_TEXT.clipboardReadRefused,
+          }),
+        );
+      }
+      return;
+    }
     const params =
       method === 'input.touch'
         ? {
@@ -1643,21 +1658,13 @@ export class ShareHub {
               ? { direction: fields.direction }
               : method === 'input.clipboard.set'
                 ? { text: fields.text, ...(fields.paste === undefined ? {} : { paste: fields.paste }) }
-                : method === 'input.clipboard.get'
-                  ? {}
-                  : { button: fields.button };
+                : { button: fields.button };
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
-    const failRead = () => {
-      if (method === 'input.clipboard.get' && viewer.socket.readyState === viewer.socket.OPEN) {
-        viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
-      }
-    };
     const { source } = share;
-    const polling = method === 'input.clipboard.get' && fields.poll === true;
-    const session = polling ? share.controlSession : await this.controlSession(share, viewer);
-    if (!source || !session || share.ended || share.source !== source || !share.viewers.has(viewer)) return failRead();
+    const session = await this.controlSession(share, viewer);
+    if (!source || !session || share.ended || share.source !== source || !share.viewers.has(viewer)) return;
     const parsed = parseInput(method, { ...params, session }, (name) => source.targetOf(share.owner, name));
-    if ('code' in parsed) return failRead();
+    if ('code' in parsed) return;
     const command: InputCommand = parsed.value.command;
     if (
       command.input === 'text' &&
@@ -1665,7 +1672,7 @@ export class ShareHub {
     ) {
       return;
     }
-    if (!polling) share.controlUsed = true;
+    share.controlUsed = true;
     const refused = await source.input(share.owner, session, method, { ...params }, command, viewer.who);
     const open = viewer.socket.readyState === viewer.socket.OPEN;
     if (refused && 'code' in refused) {
@@ -1675,29 +1682,20 @@ export class ShareHub {
       }
       console.error(`stim-server: web share ${share.id} input refused: ${String(refused.message)}`);
       if (!open) return;
-      if (method === 'input.clipboard.get') {
-        viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
-      } else {
-        const notice = !clipboard
-          ? VIEWER_TEXT.inputRefused
-          : refused.code === 'device-busy'
-            ? VIEWER_TEXT.pasteBusy
-            : VIEWER_TEXT.clipboardRefused;
-        viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
-      }
+      const notice = !clipboard
+        ? VIEWER_TEXT.inputRefused
+        : refused.code === 'device-busy'
+          ? VIEWER_TEXT.pasteBusy
+          : VIEWER_TEXT.clipboardRefused;
+      viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
     } else if (
       open &&
-      method === 'input.clipboard.set' &&
+      clipboard &&
       fields.paste === true &&
       share.request.platform === 'ios' &&
       !(isJsonObject(refused) && refused.typed === true)
     ) {
       viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.pasteSuggestion }));
-    } else if (method === 'input.clipboard.get' && open) {
-      const text = isJsonObject(refused) ? refused.text : undefined;
-      viewer.socket.send(
-        JSON.stringify({ type: 'clipboard', id: fields.id, text: typeof text === 'string' ? text : '' }),
-      );
     }
   }
 

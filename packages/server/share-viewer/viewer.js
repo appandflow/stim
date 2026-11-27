@@ -322,9 +322,6 @@ function showVideo(buffer) {
   }
 }
 
-/** Device clipboard reads waiting for their reply, by request id. */
-const copies = new Map();
-
 let me = null;
 let busy = false;
 let chosenName = '';
@@ -615,11 +612,6 @@ function connect(codec) {
       refreshStatus();
     } else if (message.type === 'title') {
       if (typeof message.title === 'string') document.title = message.title;
-    } else if (message.type === 'clipboard') {
-      const waiting = copies.get(message.id);
-      copies.delete(message.id);
-      if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
-      else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
     } else if (message.type === 'clock') stats.clock(message);
     else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
@@ -673,8 +665,6 @@ function lostConnection() {
   delete body.dataset.away;
   reconnecting = true;
   body.dataset.reconnecting = 'true';
-  for (const waiting of copies.values()) waiting.reject(new Error('The connection was lost.'));
-  copies.clear();
   releaseInput();
   overlay.clear();
   refreshStatus();
@@ -777,14 +767,10 @@ const syncSwitch = document.getElementById('sync-clipboard');
 const syncNote = document.getElementById('sync-note');
 const syncTitle = document.getElementById('sync-title');
 const syncHelp = document.getElementById('sync-help');
-const copyFallback = document.getElementById('copy-fallback');
 const pasteDevice = document.getElementById('paste-device');
-const copyDevice = document.getElementById('copy-device');
-const copyChip = document.getElementById('copy-chip');
 const keyboardGroup = document.getElementById('keyboard-group');
 const keyboardSwitch = document.getElementById('device-keyboard');
 const SYNC_KEY = 'stim-share-clipboard-sync';
-const COPY_TIMEOUT_MS = 15000;
 
 function showDeviceKeyboard(message) {
   keyboardGroup.hidden = message.available !== true;
@@ -797,10 +783,6 @@ keyboardSwitch.addEventListener('change', () => {
 
 function setOptionsOpen(open, restoreFocus) {
   optionsPanel.hidden = !open;
-  if (!open) {
-    copyFallback.hidden = true;
-    copyFallback.value = '';
-  }
   optionsButton.setAttribute('aria-expanded', String(open));
   if (open) setPeopleOpen(false, false);
   else if (restoreFocus) optionsButton.focus();
@@ -808,18 +790,12 @@ function setOptionsOpen(open, restoreFocus) {
 
 if (!control || !['ios', 'android'].includes(body.dataset.platform)) options.remove();
 else {
-  const { writeClipboard, nextPollDelay, createClipboardSync } = globalThis.stimClipboard;
-  const sync = createClipboardSync();
+  const sync = globalThis.stimClipboard.createClipboardSync();
   const pasteKey = /Mac/.test(navigator.userAgent) ? 'Command' : 'Control';
   const touchFirst = window.matchMedia('(pointer: coarse)');
   let syncOn = true;
   let readPermission = 'unknown';
   let asked = false;
-  let copyId = 0;
-  let delay = nextPollDelay(0, true);
-  let pollTimer = null;
-  let polling = false;
-  let chipText = null;
 
   try {
     syncOn = localStorage.getItem(SYNC_KEY) !== 'off';
@@ -845,71 +821,17 @@ else {
     socket !== null &&
     socket.readyState === WebSocket.OPEN;
 
-  function requestDeviceText(poll) {
-    const id = ++copyId;
-    return new Promise((resolve, reject) => {
-      copies.set(id, { resolve, reject });
-      setTimeout(() => {
-        if (copies.delete(id)) reject(new Error('The device did not answer in time.'));
-      }, COPY_TIMEOUT_MS);
-      send({ type: 'clipboard-get', id, ...(poll ? { poll: true } : {}) });
-    });
-  }
-
-  function showChip(text) {
-    chipText = text;
-    copyChip.hidden = text === null;
-  }
-
   function refreshNote() {
     const touch = touchFirst.matches;
-    syncTitle.textContent = touch ? 'Clipboard' : 'Sync clipboard';
+    syncTitle.textContent = touch ? 'Clipboard' : 'Send clipboard';
     syncSwitch.hidden = touch;
     syncSwitch.disabled = touch;
     syncHelp.textContent = touch
-      ? 'Copy text between this phone or tablet and the device. Your browser only lets a page use the clipboard when you tap, so there is no automatic sync.'
-      : 'Copy text between this browser and the device while this page is focused.';
+      ? 'Paste text from this phone or tablet to the device. A share link cannot read the device clipboard.'
+      : 'Sends text you copy in this browser to the device clipboard when you return to this page. A share link cannot read the device clipboard.';
     pasteDevice.hidden = !touch;
     syncNote.hidden = touch || (syncOn && readPermission === 'granted');
     syncNote.textContent = `Press ${pasteKey}-V on the device screen to paste.`;
-  }
-
-  function showFallback(text) {
-    copyFallback.value = text;
-    copyFallback.hidden = false;
-    copyFallback.focus();
-    copyFallback.select();
-  }
-
-  async function writeToBrowser(text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      sync.wrote(text);
-      showChip(null);
-    } catch {
-      showChip(text);
-    }
-  }
-
-  function schedule() {
-    clearTimeout(pollTimer);
-    pollTimer = active() ? setTimeout(pollOnce, delay) : null;
-  }
-
-  async function pollOnce() {
-    pollTimer = null;
-    if (polling || !active()) return;
-    polling = true;
-    let ok = true;
-    try {
-      const text = await requestDeviceText(true);
-      if (active() && sync.deviceRead(text)) await writeToBrowser(text);
-    } catch {
-      ok = false;
-    }
-    polling = false;
-    delay = nextPollDelay(delay, ok);
-    schedule();
   }
 
   async function readBrowser() {
@@ -917,19 +839,12 @@ else {
     try {
       const request = sync.browserRead(await navigator.clipboard.readText());
       if (request && request.message) {
-        // A send the server then drops is recorded as sent; the next poll may replace the browser text.
         if (send(request.message)) sync.sent(request.message.text);
       } else if (request) showNote(request.note);
     } catch (error) {
       if (error && error.name === 'NotAllowedError') readPermission = 'denied';
       refreshNote();
     }
-  }
-
-  function returned() {
-    delay = nextPollDelay(0, true);
-    schedule();
-    void readBrowser();
   }
 
   async function askToRead() {
@@ -969,26 +884,10 @@ else {
     syncOn = syncSwitch.checked;
     remember();
     if (syncOn) {
-      returned();
+      void readBrowser();
       void askToRead();
-    } else {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-      showChip(null);
     }
     refreshNote();
-  });
-  copyChip.addEventListener('click', async () => {
-    const text = chipText;
-    if (text === null) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      sync.wrote(text);
-      showChip(null);
-      showNote('Copied the device clipboard.');
-    } catch {
-      showNote('The browser did not allow copying.');
-    }
   });
   pasteDevice.addEventListener('click', async () => {
     if (!navigator.clipboard || !navigator.clipboard.readText) {
@@ -1011,26 +910,6 @@ else {
       else showNote('Not connected to the device.');
     } else showNote(request ? request.note : 'Your clipboard has no text.');
   });
-  copyDevice.addEventListener('click', async () => {
-    copyFallback.hidden = true;
-    const text = requestDeviceText().then((value) => {
-      sync.deviceRead(value);
-      return value;
-    });
-    try {
-      if (!navigator.clipboard) throw new Error('This browser gives the page no clipboard access.');
-      await writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text);
-      sync.wrote(await text);
-      showChip(null);
-      showNote('Copied the device clipboard.');
-    } catch (error) {
-      const value = await text.catch(() => null);
-      if (value) {
-        showNote('The browser did not allow copying. Select the text below to copy it.');
-        showFallback(value);
-      } else showNote(error && error.message ? error.message : 'The browser did not allow copying.');
-    }
-  });
   optionsButton.addEventListener('click', () => setOptionsOpen(optionsPanel.hidden, false));
   options.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !optionsPanel.hidden) {
@@ -1043,11 +922,11 @@ else {
     void askToRead();
   });
   document.addEventListener('keydown', () => void askToRead());
+  const returned = () => void readBrowser();
   window.addEventListener('focus', returned);
-  window.addEventListener('blur', schedule);
-  document.addEventListener('visibilitychange', () =>
-    document.visibilityState === 'visible' ? returned() : schedule(),
-  );
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') returned();
+  });
   kickClipboard = returned;
   touchFirst.addEventListener('change', () => {
     refreshNote();

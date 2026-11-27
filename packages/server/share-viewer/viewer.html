@@ -87,23 +87,15 @@
         </button>
         <div class="options-panel" id="options-panel" role="dialog" aria-label="Options" hidden>
           <label class="switch-row" for="sync-clipboard">
-            <span class="switch-label" id="sync-title">Sync clipboard</span>
+            <span class="switch-label" id="sync-title">Send clipboard</span>
             <input class="switch" id="sync-clipboard" type="checkbox" role="switch" />
           </label>
           <p class="options-help" id="sync-help">
-            Copy text between this browser and the device while this page is focused.
+            Sends text you copy in this browser to the device clipboard when you return to this page. A share link
+            cannot read the device clipboard.
           </p>
           <p class="options-help" id="sync-note" hidden></p>
           <button type="button" class="link" id="paste-device" hidden>Paste to device</button>
-          <button type="button" class="link" id="copy-device">Copy from device</button>
-          <textarea
-            class="copy-fallback"
-            id="copy-fallback"
-            rows="3"
-            readonly
-            hidden
-            aria-label="Device clipboard text"
-          ></textarea>
           <div class="options-group" id="keyboard-group" hidden>
             <label class="switch-row" for="device-keyboard">
               <span class="switch-label">Device keyboard</span>
@@ -130,7 +122,6 @@
           <canvas id="overlay" aria-hidden="true"></canvas>
           <p class="away" id="away" role="status">This share is stopped.</p>
           <p class="note" id="note" role="status"></p>
-          <button type="button" class="chip" id="copy-chip" hidden>Copy from device</button>
         </div>
         <img class="layer" id="bezel-front" alt="" draggable="false" hidden />
       </div>
@@ -144,10 +135,14 @@
     <nav class="toolbar" id="toolbar" aria-label="Device controls">
       <div class="group" data-group="hardware">
         <button type="button" data-button="home" title="Home" aria-label="Home">
-          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8" />
+          </svg>
         </button>
         <button type="button" data-button="back" title="Back" aria-label="Back">
-          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
         </button>
         <button type="button" data-button="app-switch" title="Apps" aria-label="Apps">
           <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
@@ -209,7 +204,9 @@
     </div>
     <footer>
       <p class="credit">
-        Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a> by
+        Shared with
+        <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a>
+        by
         <a href="https://appandflow.com" target="_blank" rel="noopener noreferrer">App &amp; Flow</a>
       </p>
     </footer>

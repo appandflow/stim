@@ -750,10 +750,8 @@ button.primary.small {
 .options[hidden],
 .options-group[hidden],
 .options-panel[hidden],
-.chip[hidden],
 .options-help[hidden],
-.options-panel .link[hidden],
-.copy-fallback[hidden] {
+.options-panel .link[hidden] {
   display: none;
 }
 .options-panel {
@@ -823,20 +821,6 @@ input.switch:checked::after {
   margin-top: 10px;
   font-size: 12px;
 }
-.copy-fallback {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  margin-top: 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-  font-size: 12px;
-  resize: none;
-}
 @media (pointer: coarse) {
   .options-panel .link {
     display: flex;
@@ -845,22 +829,6 @@ input.switch:checked::after {
     margin-top: 0;
     font-size: 14px;
   }
-}
-.chip {
-  position: absolute;
-  bottom: 12%;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 5px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--card);
-  box-shadow: var(--shadow);
-  color: var(--fg);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-  z-index: 3;
 }
 .people-panel {
   position: absolute;
