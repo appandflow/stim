@@ -53,7 +53,8 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
 export async function cloneAsCheckout(target: string, operation: StimContext): Promise<void> {
   await refuseCheckoutConfig(target, operation);
   await asCheckout(target, operation).catch(async (error: unknown) => {
-    if (!(error instanceof Error && 'code' in error && error.code === 'EPERM')) throw error;
+    if (process.platform !== 'darwin' || !(error instanceof Error && 'code' in error && error.code === 'EPERM'))
+      throw error;
     // chflags(1): a file with the uchg flag, which clonefile(2) copies, cannot be changed or removed until the flag
     // is cleared. -R does not follow links.
     await runOperationFile(operation, getExecutor(), '/usr/bin/chflags', ['-R', 'nouchg', target], {
@@ -143,8 +144,10 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
       return unlinkSync(file);
     }
     if (mode === '120000' ? !found.isSymbolicLink() : !found.isFile()) return;
-    // symlink(2): a link is created with mode 0777 less the umask.
-    if (mode === '120000' && (found.mode & 0o7777) !== (0o777 & ~umask)) lchmodSync(file, 0o777 & ~umask);
+    // symlink(2): macOS creates a link with mode 0777 less the umask. Linux: a link's mode is always 0777, and
+    // Node has lchmod on macOS only.
+    if (process.platform === 'darwin' && mode === '120000' && (found.mode & 0o7777) !== (0o777 & ~umask))
+      lchmodSync(file, 0o777 & ~umask);
     if (mode !== '120000') {
       const [eol, ...others] = CONVERSION_ATTRIBUTES.map(
         (_, attribute) => attributes[(n * CONVERSION_ATTRIBUTES.length + attribute) * 3 + 2],
@@ -163,6 +166,8 @@ async function asCheckout(target: string, operation: StimContext): Promise<void>
   // xattr(1): -c removes every extended attribute and -s acts on a link instead of the file it names. clonefile(2)
   // copies extended attributes, which a file a checkout creates does not have. chflags(1): a file with the uchg
   // flag, which clonefile(2) copies too, refuses the change until the flag is cleared; -h acts on a link itself.
+  // cow-clone on Linux copies no extended attribute, and xattr(1) and chflags(1) are macOS tools.
+  if (process.platform !== 'darwin') return;
   const batches: string[][] = [];
   for (let at = 0; at < kept.length; at += XATTR_PATHS_PER_CALL)
     batches.push(kept.slice(at, at + XATTR_PATHS_PER_CALL).map((path) => `./${path}`));

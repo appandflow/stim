@@ -40,6 +40,7 @@ import { workspaceName } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { binaryPath } from 'cow-clone';
 
 const renameIo: { fail: boolean } = vi.hoisted(() => ({ fail: false }));
 
@@ -168,8 +169,11 @@ test.skipIf(process.platform === 'win32')(
   30_000,
 );
 
-test.skipIf(process.platform !== 'darwin')(
-  'direct cloning preserves source timestamps and clones a directory without a per-file copy',
+// APFS clones; a Linux or Windows lane sets TEST_CLONE_VOLUME when its temporary directory is on btrfs, XFS or ReFS.
+const clones = process.platform === 'darwin' || process.env.TEST_CLONE_VOLUME === '1';
+
+test.skipIf(!clones)(
+  'direct cloning preserves source timestamps and clones a directory without a per-file copy (needs a volume that clones)',
   async () => {
     write(root, '.env', 'source config');
     write(root, 'node_modules/pkg/index.js', 'source package');
@@ -188,11 +192,12 @@ test.skipIf(process.platform !== 'darwin')(
     const result = await warm();
     expect(result.failed).toEqual([]);
     expect(result.cloned).toBe(true);
-    expect(copiedByCp).toEqual([join(root, '.env')]);
+    expect(copiedByCp).toEqual([]);
     for (const [rel, source] of before) {
       const copied = lstatSync(join(target, rel));
-      expect(copied.ino).not.toBe(source.ino);
-      expect(copied.atimeMs).toBe(source.atimeMs);
+      // A ReFS file id does not fit a number, so two files can read as one inode.
+      if (process.platform !== 'win32') expect(copied.ino).not.toBe(source.ino);
+      if (process.platform === 'darwin') expect(copied.atimeMs).toBe(source.atimeMs);
       expect(copied.mtimeMs).toBe(source.mtimeMs);
     }
   },
@@ -306,7 +311,7 @@ test('warm reports copy failures with nonzero status and no ready claim', async 
   setExecutor({
     ...real,
     async runFileAsync(file, args, opts) {
-      if (file === 'cp') throw new Error('disk full');
+      if (file === 'cp' || file === binaryPath()) throw new Error('disk full');
       return real.runFileAsync(file, args, opts);
     },
   });
@@ -614,6 +619,7 @@ test('warm carries pnpm directory links into the destination checkout', async ()
 
   const result = await warm();
   expect(result.failed).toEqual([]);
+  expect(result.cloned).toBe(clones);
   for (const { link, name } of [
     { link: 'node_modules/expo', name: 'expo' },
     { link: nested, name: 'b' },
@@ -735,11 +741,11 @@ test('directly copied ignored files stay invisible to Git status and git add', a
     ...real,
     async runFileAsync(file, args, opts) {
       const result = real.runFile(file, args, opts);
-      if (file === 'cp') {
+      if (existsSync(join(target, '.env')) && (file === 'cp' || file === binaryPath())) {
         observations.push({
           status: git(target, 'status', '--porcelain', '--untracked-files=all'),
           add: git(target, 'add', '--dry-run', '--all'),
-          staged: readFileSync(args[2], 'utf-8'),
+          staged: readFileSync(join(target, '.env'), 'utf-8'),
         });
       }
       return result;
@@ -878,7 +884,7 @@ test('status reads a warm as warming while it copies and as idle once it fails',
   setExecutor({
     ...real,
     async runFileAsync(file, args, opts) {
-      if (file === 'cp') {
+      if (file === 'cp' || file === binaryPath()) {
         during.push(workspacePhase(false, readWorkspaceState(target)));
         throw new Error('disk full');
       }
@@ -975,7 +981,7 @@ describe('an Expo app whose native directories git ignores', () => {
     setExecutor({
       ...real,
       async runFileAsync(file, args, options) {
-        if (args?.includes(join(app(), 'ios'))) {
+        if (args?.includes(join(app(), 'ios')) || options?.input?.startsWith(`${join(app(), 'ios')}\0`)) {
           observed = true;
           expect(readClaimSet(claimRoot).live.length).toBeGreaterThan(0);
           const attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'test native-run' });

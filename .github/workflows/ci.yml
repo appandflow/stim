@@ -411,6 +411,72 @@ jobs:
         run: |
           pnpm test packages/stim-cli/src/__tests__/api-start.integration.test.ts -t "cancelling startup drains dynamic Expo config"
 
+  # worktree add clones on APFS, btrfs and XFS, worktree warm also on ReFS, and both copy on ext4 and NTFS. test (macos)
+  # covers APFS; the loopback mounts and the ReFS virtual disk are the ones cow-clone's own CI makes.
+  clone-volumes:
+    name: clone (${{ matrix.fs }})
+    if: ${{ !cancelled() && inputs.full }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, fs: ext4 }
+          - { os: ubuntu-latest, fs: btrfs }
+          - { os: ubuntu-latest, fs: xfs }
+          - { os: windows-latest, fs: ntfs }
+          - { os: windows-latest, fs: refs }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+
+      - name: btrfs or XFS loopback mount
+        if: matrix.fs == 'btrfs' || matrix.fs == 'xfs'
+        run: |
+          sudo apt-get install -y -qq btrfs-progs xfsprogs > /dev/null
+          truncate -s 2G "$RUNNER_TEMP/fs.img"
+          if [ "${{ matrix.fs }}" = btrfs ]; then mkfs.btrfs -q "$RUNNER_TEMP/fs.img"; else mkfs.xfs -q -m reflink=1 "$RUNNER_TEMP/fs.img"; fi
+          sudo mkdir -p /mnt/clone
+          sudo mount -o loop "$RUNNER_TEMP/fs.img" /mnt/clone
+          sudo chown "$(id -u):$(id -g)" /mnt/clone
+          echo "TMPDIR=/mnt/clone" >> "$GITHUB_ENV"
+          echo "TEST_CLONE_VOLUME=1" >> "$GITHUB_ENV"
+
+      - name: ReFS volume
+        if: matrix.fs == 'refs'
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'refs.vhdx'
+          $script = Join-Path $env:RUNNER_TEMP 'refs.txt'
+          @(
+            "create vdisk file=`"$vhd`" maximum=4096 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=refs quick label=refs',
+            'assign letter=R'
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          if ($LASTEXITCODE -ne 0) { throw "diskpart failed with $LASTEXITCODE" }
+          New-Item -ItemType Directory R:\tmp | Out-Null
+          "TEMP=R:\tmp" >> $env:GITHUB_ENV
+          "TMP=R:\tmp" >> $env:GITHUB_ENV
+          "TEST_CLONE_VOLUME=1" >> $env:GITHUB_ENV
+
+      - name: worktree add
+        run: pnpm test packages/stim-cli/src/__tests__/worktree-add.integration.test.ts
+
+      - name: worktree warm
+        if: runner.os == 'Linux'
+        run: pnpm test packages/stim-cli/src/__tests__/worktree-warm.integration.test.ts
+
+      - name: worktree warm clones and links
+        if: runner.os == 'Windows'
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/worktree-warm.integration.test.ts
+          -t 'warm carries pnpm directory links into the destination checkout|direct cloning preserves source timestamps'
+
   test-macos:
     name: test (macos)
     needs: native-paths

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../../packages/stim-cli/src/exec.ts';
 import { processContext } from '../../packages/stim-cli/src/cli-operation.ts';
 import { cloneIgnoredEntries } from '../../packages/stim-cli/src/workspace/worktree.ts';
@@ -70,11 +70,12 @@ test(
         setExecutor({
           ...real,
           async runFileAsync(file, args, opts) {
-            const directoryClone = file.includes('stim-clonefile-');
-            if (file !== 'cp' && !directoryClone) return real.runFileAsync(file, args, opts);
-            assert.equal(args.at(-1), join(target, 'node_modules'));
-            assert.equal(statSync(dirname(args.at(-1))).dev, statSync(source).dev);
-            if (fallback && (directoryClone || args[0] === '-Rc')) throw new Error('force clone fallback');
+            const clone = basename(file) === 'cow-clone';
+            if (file !== 'cp' && !clone) return real.runFileAsync(file, args, opts);
+            const destination = clone ? opts.input.split('\0')[1] : args.at(-1);
+            assert.equal(destination, join(target, 'node_modules'));
+            assert.equal(statSync(dirname(destination)).dev, statSync(source).dev);
+            if (fallback && clone) throw new Error('force clone fallback');
             return real.runFileAsync(file, args, opts);
           },
         });

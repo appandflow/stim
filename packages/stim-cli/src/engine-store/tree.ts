@@ -2,7 +2,7 @@ import { chmodSync, cpSync, lstatSync, mkdirSync, readdirSync, readFileSync, ren
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
-import { clonefileHelper } from '../clonefile.ts';
+import { clonePairs } from '../clone.ts';
 import { getExecutor } from '../exec.ts';
 import { SCHEMA } from './schema.ts';
 import { FORMAT, MANIFEST, readManifest, writeRecord } from './store.ts';
@@ -49,11 +49,10 @@ export function seal(root: string, scratch: string): string {
   return build;
 }
 
-/** Copies the package at `source` to `scratch`: one `clonefile(2)` on APFS, else a copy. */
+/** Copies the package at `source` to `scratch`: a copy-on-write clone where the file system can, else a copy. */
 export async function cloneTree(source: string, scratch: string, ctx: StimContext): Promise<void> {
-  const helper = await clonefileHelper(ctx);
-  if (helper && (await getExecutor().runFileQuietAsync(helper, [source, scratch], { timeoutMs: 120_000 })) !== null)
-    return;
+  const [failure] = await clonePairs(ctx, [[source, scratch]], { timeoutMs: 120_000 });
+  if (!failure) return;
   rmSync(scratch, { recursive: true, force: true });
   cpSync(source, scratch, { recursive: true, verbatimSymlinks: true });
 }

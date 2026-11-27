@@ -25,15 +25,19 @@ Maintainer decision: "Everything sounds good so lets impl it and delay 2.0 a bit
 
 ## The source checkout is cloned when it can be
 
-On macOS, with the new path on the source checkout's volume and the clone
-helper available, the command does not check files out:
+On macOS and Linux, where a tracked file of the source checkout clones to the
+new path's directory, the command does not check files out. The clones are
+made by the prebuilt binary of the `cow-clone` package: `clonefile(2)` on
+APFS, one call for a whole directory; `ioctl(FICLONE)` file by file on btrfs
+and XFS. On Windows the command takes the plain path (see below).
 
 1. `git worktree add --no-checkout` registers the worktree.
-2. One `clonefile(2)` call per top-level entry of the source checkout clones
-   the tracked and the ignored files together, skipping `.git`, every entry
-   that is or holds another worktree, and every ignored directory the warm
-   leaves out or checks before carrying. An entry that holds such a directory
-   is cloned child by child around it, 256 clones to a helper call. One more call clones the source's index.
+2. One clone per top-level entry of the source checkout brings the tracked
+   and the ignored files together, skipping `.git`, every entry that is or
+   holds another worktree, and every ignored directory the warm leaves out or
+   checks before carrying. An entry that holds such a directory is cloned
+   child by child around it. One more clone is the source's index. All of
+   them go to one `cow-clone` process, which reads the pairs on stdin.
 3. Every cloned tracked file that is not what a checkout of the target commit
    writes is removed, and the permission bits and extended attributes of the
    rest are set to a new file's.
@@ -106,8 +110,19 @@ maintenance.
 
 ## It falls back instead of refusing
 
-Git creates the worktree and the normal warm fills it when the platform is not
-macOS, the new path is on another volume, the helper cannot be compiled, git
+Before git registers anything, the command clones one tracked, non-empty file
+of the source checkout to a temporary name in the nearest existing directory
+above the new path and removes it. A clone that fails there decides the plain
+path, and its reason from `cow-clone` (`unsupported`, `cross-device`, or
+`failed` with the errno name) is the reason the output gives. Reason: without
+the test, every run on ext4 would register a worktree and a branch, fail at
+the first file, remove both and add them again. A device number comparison
+cannot stand in for it: two btrfs subvolumes have different device numbers
+and clone into each other. The file is not empty, because cloning an empty
+file shares no blocks and need not fail where cloning cannot work.
+
+Git creates the worktree and the normal warm fills it on Windows, when the
+file system cannot clone (ext4), the new path is on another volume, git
 is older than 2.41, the
 source index marks a file assume-unchanged or skip-worktree or is a split
 index, `core.autocrlf=true` or `core.eol=crlf` makes a checkout write CRLF,
@@ -126,9 +141,37 @@ A refusal from `git worktree add` itself, such as an existing branch or path,
 fails the command: the plain path would fail the same way. A failure in the
 warm reports as `worktree warm` reports it and leaves the worktree.
 
-Linux file systems with reflinks take the plain path today.
-
 Maintainer decision: "Can we support submodules? Can we fallback instead of refuse if not possible?", 2026-11-26 (#6542).
+
+## On Windows only the warm clones
+
+On Windows `worktree add` always takes the plain path, and the warm clones the
+ignored entries on ReFS and a Dev Drive.
+
+Reason: `cow-clone` copies a junction as its reparse data, so a cloned
+junction keeps its target, and a pnpm `node_modules` is full of junctions
+into the source checkout. Git for Windows takes a junction for a directory:
+a reset that puts a file where a cloned folder is deletes through its
+junctions, and one that writes tracked files below a junction writes into
+what it leads to. Pointing the links at the new worktree before git runs was
+tried and did not hold: Node cannot tell a junction from a directory symbolic
+link, reads a junction to a volume mount point as a plain directory, and a
+link spelled through another path or through another link still led out.
+Git for Windows also records no inode and uses creation time as change time,
+which a ReFS clone keeps, so a copied index would vouch for files git never
+read. The warm runs no git command that writes, so it can clone: git has
+already checked out the tracked files into an empty directory.
+
+After cloning an entry on Windows, the warm walks it and points every
+absolute link that leads into the source checkout at the same place in the
+new worktree, as its copy does (#6464). It does not walk into a junction
+that Node reads as a directory. Without the create-symbolic-link privilege
+`cow-clone` fails a tree that holds a symbolic link with `EPERM`, and the
+warm copies that entry, with a junction for a directory link.
+
+The cost is disk for the tracked files only: the ignored folders, the bulk
+of a checkout, are still shared. #6554 tracks what cloning the tracked files
+on Windows would need.
 
 ## The index is refreshed before the reset
 
@@ -202,6 +245,11 @@ A case this would need more than a file's removal for takes the plain path: a
 folder spelled another way on disk holds ignored files, and of two paths that
 differ only in case a case-insensitive volume holds one. A path that names
 `.git` takes it too, where git refuses the commit.
+
+On Linux the extended attributes and the link modes are left alone:
+`cow-clone` copies no extended attribute there, and a Linux link's mode is
+always 0777, which no call changes. The file and folder modes are set as on
+macOS, since a clone there keeps the source's permission bits too.
 
 Extended attributes are cleared with `xattr -c -s`, 1,000 paths to a call and
 four calls at a time. On a checkout of 19,021 tracked files the step adds about

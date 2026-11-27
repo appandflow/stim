@@ -796,9 +796,8 @@ export async function addWorktreeTarget(opts: {
   const wasDraining = state.draining;
   state.draining = true;
   try {
-    const source = await cloneSource(root, path, operation);
-    let slow = 'reason' in source ? source.reason : null;
-    if (!('reason' in source)) {
+    let slow = await cloneSource(root, path, operation);
+    if (slow === null) {
       let head = '';
       // @ref LLP 0029#the-source-claim-spans-the-clone-and-the-warm -- taken before git registers anything, gone before the hook
       const cloned = await withWarmClaim(
@@ -824,7 +823,7 @@ export async function addWorktreeTarget(opts: {
                 bounded(),
               )
             ).split('\n');
-            await cloneCheckout({ root, target: realpathSync(path), helper: source.helper, skipped, operation });
+            await cloneCheckout({ root, target: realpathSync(path), skipped, operation });
           } catch (error) {
             await discardWorktree({
               cwd: opts.cwd,
@@ -2417,7 +2416,7 @@ export const addOp: Op = defineOp({
   name: 'add',
   arguments: '<path> [commit-ish]',
   description:
-    'Create a linked worktree as git worktree add does, already warmed: on APFS it is cloned from the source checkout, tracked and ignored files together, and anywhere else git creates it and the warm copies into it.',
+    'Create a linked worktree as git worktree add does, already warmed: where the file system clones, it is cloned from the source checkout, tracked and ignored files together, and anywhere else git creates it and the warm copies into it.',
   options: {
     branch: {
       flags: '-b, --branch <branch>',

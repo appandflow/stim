@@ -219,11 +219,11 @@ there.
 The rest runs in the `Full suite` workflow (`full-suite.yml`), which calls
 `ci.yml`, `desktop.yml`, `mobile.yml` and, on a dispatch, `e2e-native.yml`:
 
-| trigger                                     | runs                                                                                                                                               |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| nightly at 04:30 UTC                        | `test (macos)`, `native process inspection` on macOS and Windows, `test (windows)`, the full Desktop job, the mobile license check, the Linux jobs |
-| `workflow_dispatch` with `native` (default) | the same plus the native E2E smoke on iOS, Linux Android and Windows Android; this run gates a stable release                                      |
-| the `ci-full` label on a pull request       | the same as nightly, on the pull request's merge commit; an unrelated label does not start it                                                      |
+| trigger                                     | runs                                                                                                                                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| nightly at 04:30 UTC                        | `test (macos)`, `native process inspection` on macOS and Windows, `test (windows)`, `clone (ext4, btrfs, xfs, ntfs, refs)`, the full Desktop job, the mobile license check, the Linux jobs |
+| `workflow_dispatch` with `native` (default) | the same plus the native E2E smoke on iOS, Linux Android and Windows Android; this run gates a stable release                                                                              |
+| the `ci-full` label on a pull request       | the same as nightly, on the pull request's merge commit; an unrelated label does not start it                                                                                              |
 
 The full Windows unit suite (`windows-full.yml`) runs on its own at 04:45 UTC and
 is not part of the `Full suite` or the release gate while

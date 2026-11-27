@@ -21,6 +21,7 @@ minimumReleaseAgeExclude:
   - '@stim-cli/*'
   - unique-pid@0.1.1
   - real-size@0.3.0
+  - cow-clone@0.1.0
   - react-native-unistyles@3.5.0
   - react-native-screens@4.30.0
 allowBuilds:
