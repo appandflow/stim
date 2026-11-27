@@ -399,6 +399,8 @@ export async function warmWorktreeTarget(opts: {
    * see `cloneIgnoredEntries`.
    */
   precloned?: boolean;
+  /** See `cloneIgnoredEntries`. */
+  ignored?: readonly string[];
   carried?: (copied: string[]) => void;
 }): Promise<{ exitCode: 0 | 1 }> {
   let exitCode: 0 | 1 = 0;
@@ -501,6 +503,7 @@ export async function warmWorktreeTarget(opts: {
                   patterns,
                   operation,
                   precloned: opts.precloned,
+                  ignored: opts.ignored,
                   withhold: (rel) => {
                     const exact = exactTargetWithheld(root, rel);
                     return exact ? Promise.resolve(exact) : nativeDir(rel);
@@ -678,7 +681,11 @@ const CLEANUP_TIMEOUT_MS = 30_000;
  * The ignored directories of the source checkout `root` that a warm leaves out or checks before carrying. A wrong
  * answer costs time only: the warm copies what is missing and the prune removes what it did not carry.
  */
-async function uncarriedDirectories(root: string, operation: StimContext): Promise<Set<string>> {
+async function uncarriedDirectories(
+  root: string,
+  ignored: readonly string[],
+  operation: StimContext,
+): Promise<Set<string>> {
   const reads = { env: operation.env, signal: operation.signal, declareFor: operation };
   const common = await gitCommonDirAsync(root, reads);
   let settings: WorktreeSettings = {};
@@ -687,11 +694,11 @@ async function uncarriedDirectories(root: string, operation: StimContext): Promi
   } catch {}
   const excluded = readWorktreeExclude(root);
   const patterns = excluded?.length ? excluded : settings.worktree?.exclude || [];
-  const carried = new Set(await listCarryableIgnoredEntries(root, patterns, reads));
+  const carried = new Set(await listCarryableIgnoredEntries(root, patterns, reads, ignored));
   const expoNative = (rel: string) =>
     ['ios', 'android'].includes(basename(rel)) && detectIsExpo(join(root, dirname(rel)));
   return new Set(
-    (await listGitignoredEntries(root, reads)).filter(
+    ignored.filter(
       (rel) =>
         (!carried.has(rel) || expoNative(rel) || exactTargetWithheld(root, rel) !== null) &&
         lstatSync(join(root, rel), { throwIfNoEntry: false })?.isDirectory(),
@@ -746,7 +753,7 @@ export async function addWorktreeTarget(opts: {
       { ...git, signal: operation.signal, onSpawn },
     );
   const bounded = () => ({ ...git, signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS) });
-  const carry = async (cloned: boolean, slow: string | null) => {
+  const carry = async (cloned: boolean, slow: string | null, ignored?: readonly string[]) => {
     const target = realpathSync(path);
     out(
       chalk.dim(
@@ -764,6 +771,7 @@ export async function addWorktreeTarget(opts: {
       cwd: existsSync(inside) ? inside : target,
       operation,
       precloned: cloned,
+      ignored,
       carried: (copied) => {
         carried = copied;
       },
@@ -803,7 +811,14 @@ export async function addWorktreeTarget(opts: {
       const cloned = await withWarmClaim(
         { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
         async () => {
-          const skipped = await uncarriedDirectories(root, operation).catch(() => new Set<string>());
+          let ignored: string[] | undefined;
+          const skipped = await listGitignoredEntries(root, reads)
+            .then(async (listed) => {
+              const found = await uncarriedDirectories(root, listed, operation);
+              ignored = listed;
+              return found;
+            })
+            .catch(() => new Set<string>());
           const branches = new Set(
             (
               await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
@@ -836,7 +851,7 @@ export async function addWorktreeTarget(opts: {
             slow = `cloning failed (${lastLine(error)})`;
             return null;
           }
-          return carry(true, null);
+          return carry(true, null, ignored);
         },
       );
       if (cloned) return await settle(cloned, head, null);

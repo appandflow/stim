@@ -90,6 +90,14 @@ files and another ignored folder of 154,000, the command took 20 s against 6 s
 for the plain path until those were skipped. A wrong guess costs time only: the
 warm copies what is missing and the removal takes what it did not carry.
 
+The warm takes its ignored entries from the listing of the source checkout
+made for that step, under the same claim, and leaves out an entry since
+removed from the source. It still filters them with a `git worktree list`
+taken after `git worktree add`, so a new worktree inside the source checkout
+keeps the folder that holds it out of the carry. An ignored entry created in
+the source after the listing is not carried, and the prune removes it if the
+clone brought it.
+
 A submodule folder is emptied by removing files, and no git command runs inside
 it. Submodules are supported, not refused.
 
@@ -268,4 +276,10 @@ four calls at a time. On a checkout of 19,021 tracked files the step adds about
   `stim worktree remove` keeps it.
 - Writing the clones' stat data into the copied index directly, which would
   remove the refresh. Stat data cannot prove that a clone holds its blob's
-  bytes (#6547).
+  bytes (#6547). Every clone has a new inode and change time, so no subset of
+  the entries matches its stat data without that. The refresh is the hashing:
+  on 19,021 tracked files it took 2.7 s, against 2.4 s for
+  `git hash-object --stdin-paths` over the same files (#6562).
+- Running `git ls-tree -l` and `git check-attr` beside the clone. It saved 0.2
+  to 0.4 s, and each review found another configuration or attributes file
+  that the clone writes while they read (#6563).
