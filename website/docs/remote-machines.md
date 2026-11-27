@@ -368,7 +368,8 @@ stim settings set server.devicesPaused true`} />
 ## Undo
 
 - Here: **Settings > Connections > This machine uses > Remove**, or
-  `stim remote remove <machine>`. This forgets your credentials for it.
+  `stim remote remove <machine>`. This forgets your credentials for it, and
+  the apps it built stop being cache hits here.
 - On the worker: the approval stays until a person runs the
   `stim pairings revoke <id>` command that removal prints.
 - On the worker, `stim service uninstall` removes the service and the route its
@@ -402,6 +403,16 @@ stim settings set server.devicesPaused true`} />
   emulator app runs inside the emulator. Nothing here checks what the returned
   code does, and the sha256 this machine checks is the one the worker declares.
   Build only on workers you trust as much as this Mac.
+- **An app a worker built stays a cache hit here only while that worker stays
+  paired under the same key.** Stim records the worker's pinned key on each
+  cache entry it stores from an offload. After `stim remote remove`, or when the
+  worker's key changes, those entries are misses and the next build replaces
+  them. Entries stored before Stim recorded this are kept as hits.
+- **An iOS app built under the worker's own fingerprint stays with that project
+  and worker.** When this machine has no CocoaPods, the worker runs
+  `pod install` and can report a fingerprint this machine cannot recompute.
+  Stim stores that app under a key that also names the worker and the project,
+  so no other project and no local build installs it.
 - **A release built on a worker is only as trustworthy as that worker.** An
   Android release offload signs the APK the worker built with your local
   release key.

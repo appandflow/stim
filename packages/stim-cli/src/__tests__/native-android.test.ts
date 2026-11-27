@@ -295,6 +295,7 @@ test.each([
         ...(cached ? { cacheHit: true } : {}),
         machine: 'worker',
         artifactPath,
+        serverKey: 'w'.repeat(43),
         androidPackage: 'org.example.worker',
         compilationCache: { status: 'unavailable', hits: null, cacheableTasks: null, hitRatePercent: null },
         ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },

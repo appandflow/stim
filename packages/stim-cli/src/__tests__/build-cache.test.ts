@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import assert from 'node:assert';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { runCacheProviderContract, type BuildCacheCapability, type LocalBuildCache } from '@stim-cli/cache';
+import { buildMachinesFile } from '@stim-cli/core/state';
 import { androidBuildToolName } from '../devices/android.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import {
@@ -89,6 +90,71 @@ test('a custom Android module keeps its build output out of the fingerprint', ()
   const result = walk({ roots: { project: app, install: app }, trees: [module], tracked: null });
   if (isUncertain(result)) throw new Error(result.uncertain);
   expect(result.inputs.map((input) => input.name)).toEqual(['android/mobile/build.gradle']);
+});
+
+const WORKER_KEY = 'W'.repeat(43);
+
+function pairWorker(serverKey: string | null): void {
+  mkdirSync(join(buildMachinesFile(), '..'), { recursive: true });
+  const machines =
+    serverKey === null
+      ? []
+      : [
+          {
+            machine: 'mini',
+            transport: 'tailscale',
+            address: 'mini.tail1.ts.net',
+            deviceId: 'ab12',
+            serverKey,
+            state: 'approved',
+            requestedAt: '2026-09-01T00:00:00.000Z',
+          },
+        ];
+  writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines }));
+}
+
+async function storeFromWorker(key: string): Promise<string> {
+  const build = join(root, 'worker', 'App.app');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(build, 'App'), 'worker build');
+  const stored = await storeBuild('ios', key, build, { root, origin: { machine: 'mini', serverKey: WORKER_KEY } });
+  assert(stored);
+  return stored;
+}
+
+describe('entries a build machine produced', () => {
+  test.each([
+    { pinned: WORKER_KEY, hit: true, why: 'the machine is still paired under the same key' },
+    { pinned: null, hit: false, why: 'stim remote remove forgot the machine' },
+    { pinned: 'X'.repeat(43), hit: false, why: 'the machine key changed' },
+  ])('are a hit only while an approved credential pins their key: $why', async ({ pinned, hit }) => {
+    pairWorker(WORKER_KEY);
+    const stored = await storeFromWorker('fp-worker');
+    pairWorker(pinned);
+    expect(resolveBuild('ios', 'fp-worker', root)).toBe(hit ? stored : null);
+  });
+
+  test('an entry whose origin file is unreadable is a miss, and one without an origin file stays a hit', async () => {
+    pairWorker(WORKER_KEY);
+    await storeFromWorker('fp-corrupt');
+    writeFileSync(join(entryDir('ios', 'fp-corrupt', root), 'built-on.json'), '{not json');
+    const local = seedEntry('ios', 'fp-local');
+    expect(resolveBuild('ios', 'fp-corrupt', root)).toBeNull();
+    expect(resolveBuild('ios', 'fp-local', root)).toBe(local);
+  });
+
+  test('a local build replaces an entry from a machine no longer paired, even without overwrite', async () => {
+    pairWorker(WORKER_KEY);
+    await storeFromWorker('fp-replace');
+    pairWorker(null);
+    const build = join(root, 'local', 'App.app');
+    mkdirSync(build, { recursive: true });
+    writeFileSync(join(build, 'App'), 'local build');
+    const stored = await storeBuild('ios', 'fp-replace', build, { root, overwrite: false });
+    assert(stored);
+    expect(readFileSync(join(stored, 'App'), 'utf-8')).toBe('local build');
+    expect(resolveBuild('ios', 'fp-replace', root)).toBe(stored);
+  });
 });
 
 test('storeBuild carries the sources AND the asset manifest in the same store', async () => {

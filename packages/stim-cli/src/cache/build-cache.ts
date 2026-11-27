@@ -1,8 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { basename, join } from 'path';
 import type { Input } from '../fingerprint/key.ts';
-import { buildUploadTimeoutMs, type LocalBuildCache, type ProviderCallResult } from '@stim-cli/cache/tiers';
-import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
+import {
+  buildUploadTimeoutMs,
+  type BuildOrigin,
+  type LocalBuildCache,
+  type ProviderCallResult,
+} from '@stim-cli/cache/tiers';
+import { artifactIn, resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
+import { readBuildMachines } from '@stim-cli/core/state';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
@@ -15,7 +22,7 @@ import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
 import { DEFAULT_IOS_PROJECT_PATH } from '../workspace/settings.ts';
 
-export { artifactIn, buildCacheKey } from '@stim-cli/core';
+export { buildCacheKey } from '@stim-cli/core';
 export { cacheRoot };
 
 export function entryDir(platform: string, key: string, root: string = cacheRoot()): string {
@@ -35,8 +42,57 @@ function registerOnce(root: string, registeredBy?: string): void {
   } catch {}
 }
 
+// @ref LLP 0009#worker-artifacts-in-the-client-cache -- a worker's entry is a hit only while its key stays approved
+const ORIGIN_FILE = 'built-on.json';
+
+/**
+ * False for an entry a build machine produced whose pinned key no approved build-machine credential here holds any
+ * more, such as after `stim remote remove` or a key change, and for an entry whose origin file cannot be read.
+ */
+export function trustedEntry(dir: string): boolean {
+  const file = join(dir, ORIGIN_FILE);
+  if (!existsSync(file)) return true;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf-8'));
+  } catch {
+    return false;
+  }
+  const serverKey = parsed && typeof parsed === 'object' && 'serverKey' in parsed ? parsed.serverKey : null;
+  return (
+    typeof serverKey === 'string' &&
+    readBuildMachines().some((each) => each.state === 'approved' && each.serverKey === serverKey)
+  );
+}
+
+/** The stored artifact for the key, without touching the entry; null for a miss or an entry `trustedEntry` refuses. */
+export function cachedBuild(platform: string, key: string, root: string = cacheRoot()): string | null {
+  const dir = entryDir(platform, key, root);
+  const path = artifactIn(dir);
+  return path && trustedEntry(dir) ? path : null;
+}
+
 export function resolveBuild(platform: string, key: string, root: string = cacheRoot()): string | null {
-  return resolveArtifact(entryDir(platform, key, root));
+  const dir = entryDir(platform, key, root);
+  return trustedEntry(dir) ? resolveArtifact(dir) : null;
+}
+
+/**
+ * The key for an app stored under a fingerprint only the build machine computed (a rekey after its own pod install).
+ * This machine cannot recompute that fingerprint, so the key also names the machine's pinned key and the project, and no
+ * lookup of another project or a local build reaches it.
+ */
+export function workerScopedKey(key: string, serverKey: string, projectRoot: string): string {
+  let project = projectRoot;
+  try {
+    project = realpathSync(projectRoot);
+  } catch {}
+  return `${key}-from-${createHash('sha256').update(`${serverKey}\0${project}`).digest('hex').slice(0, 16)}`;
+}
+
+/** Writes the origin file into a staged entry; a failure fails the store so the entry is never kept unmarked. */
+export async function writeOrigin(staging: string, origin: BuildOrigin): Promise<void> {
+  await writeFile(join(staging, ORIGIN_FILE), JSON.stringify({ machine: origin.machine, serverKey: origin.serverKey }));
 }
 
 export async function storeBuild(
@@ -52,6 +108,7 @@ export async function storeBuild(
         inputs?: { schema: number; hash: string; inputs: readonly Input[] } | null;
         assetManifest?: AssetManifest | null;
         readAppId?: AppIdReader;
+        origin?: BuildOrigin;
         signal?: AbortSignal;
         context?: StimContext;
       } = {},
@@ -77,8 +134,9 @@ export async function storeBuild(
             onSpawn: killOnAbort(signal),
             declareFor: options.context,
           }),
-        overwrite: Boolean(options.overwrite),
+        overwrite: Boolean(options.overwrite) || !trustedEntry(entryDir(platform, key, root)),
         writeMetadata: async (staging) => {
+          if (options.origin) await writeOrigin(staging, options.origin);
           if (platform === 'android' && buildPath.endsWith('.apk')) {
             try {
               const tail = await computeSignedTail(join(staging, basename(buildPath)), (file, args) =>
@@ -201,8 +259,8 @@ export function filesystemBuildCapability({
   };
   return {
     resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
-    store: ({ platform, key, sourcePath, overwrite, signal }) =>
-      store(platform, key, sourcePath, { ...stored, overwrite, signal }),
+    store: ({ platform, key, sourcePath, overwrite, signal, origin }) =>
+      store(platform, key, sourcePath, { ...stored, overwrite, signal, ...(origin ? { origin } : {}) }),
   };
 }
 

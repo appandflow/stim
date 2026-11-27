@@ -405,7 +405,7 @@ test.each(['bytes', 'package', 'abi', 'signature'] as const)(
   async (invalid) => {
     const first = await build();
     assert(first.cacheKey);
-    const stored = cache.artifactIn(cache.entryDir('android', first.cacheKey));
+    const stored = cache.cachedBuild('android', first.cacheKey);
     assert(stored);
     const receiptPath = join(dirname(stored), 'native-android.json');
     if (invalid === 'bytes') write(stored, 'corrupt');

@@ -740,6 +740,7 @@ test('an idle native iOS build checks peers before taking a compile slot, then s
       machine: 'mini',
       cacheHit: true,
       artifactPath,
+      serverKey: 'w'.repeat(43),
       compilationCache: xcode.COMPILATION_CACHE_NOT_RUN,
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
       timings: {

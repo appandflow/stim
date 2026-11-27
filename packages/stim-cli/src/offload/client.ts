@@ -952,6 +952,8 @@ export type OffloadOutcome =
       machine: string;
       /** The `.app` directory or the `.apk` file, under the staging directory. */
       artifactPath: string;
+      /** The pinned stim-server key of the machine that delivered the artifact. */
+      serverKey: string;
       cacheHit?: boolean;
       /** The fingerprint the machine built under after its own pod install, when it differs from the requested one. */
       builtFingerprint?: string;
@@ -2223,14 +2225,16 @@ export async function offloadBuild(
     const fetchMs = Date.now() - fetchStarted;
     closeOffload(choice);
     keepStaging = true;
+    const serverKey = choice.credential.serverKey!;
     return {
       ok: true,
       ...(rebuilt ? { builtFingerprint: rebuilt } : {}),
       machine,
       artifactPath,
+      serverKey,
       ...(sourceDigest ? { sourceDigest } : {}),
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
-        ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
+        ? { handoff: { serverKey, token: declared.handoff, sha256: digest } }
         : {}),
       ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit || result.reused === true),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),

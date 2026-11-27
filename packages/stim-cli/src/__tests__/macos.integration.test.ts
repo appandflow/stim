@@ -1376,6 +1376,7 @@ describe('macOS build placement and promotion', () => {
         ok: true,
         machine: 'mini-2',
         artifactPath,
+        serverKey: 'w'.repeat(43),
         handoff,
         compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
         ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },

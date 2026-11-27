@@ -8254,6 +8254,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath,
+      serverKey: 'w'.repeat(43),
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
       timings: {
@@ -8751,6 +8752,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath: fakeApk(),
+      serverKey: 'w'.repeat(43),
       handoff,
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },

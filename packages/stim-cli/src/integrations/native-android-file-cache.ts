@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { BuildCacheCapability, FileCacheCapability } from '@stim-cli/cache';
 import type { StimContext } from '@stim-cli/core';
-import { artifactIn, entryDir } from '../cache/build-cache.ts';
+import { cachedBuild } from '../cache/build-cache.ts';
 import { materializeNativeApk } from './native-android-cache.ts';
 
 const MAGIC = Buffer.from('STIMAPK1\n');
@@ -77,7 +77,7 @@ export function nativeAndroidFileCache(
       }
     },
     async store({ key, sourcePath, overwrite, signal }) {
-      const cached = artifactIn(entryDir('android', key));
+      const cached = cachedBuild('android', key);
       if (!cached) throw new Error('No native APK is stored locally for this key.');
       const metadata = await readFile(join(dirname(cached), RECEIPT), { signal });
       if (metadata.length > MAX_RECEIPT_BYTES) throw new Error('The native APK receipt is too large.');
