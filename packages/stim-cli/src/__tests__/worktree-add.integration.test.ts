@@ -1027,7 +1027,7 @@ test('git refusing the worktree fails the command without a second attempt', asy
 }, 60_000);
 
 test.skipIf(!clones)(
-  'an operation cancelled during the clone leaves no worktree and no branch, and one cancelled during the carry leaves no ignored file (needs a volume that clones)',
+  'an operation cancelled during the clone or the checkout reads beside it leaves no worktree and no branch, and one cancelled during the carry leaves no ignored file (needs a volume that clones)',
   async () => {
     const real = getExecutor();
     const cancelAt = async (
@@ -1053,6 +1053,11 @@ test.skipIf(!clones)(
     await cancelAt((file, _args, opts) => clonesInto(join(base, 'cloning'), file, opts).length > 0, '../cloning');
     expect(existsSync(join(base, 'cloning'))).toBe(false);
     expect(git(root, 'branch', '--list', 'cloning')).toBe('');
+    expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
+
+    await cancelAt((file, _args, opts) => file === binaryPath() && /\/index\0$/.test(opts.input ?? ''), '../reading');
+    expect(existsSync(join(base, 'reading'))).toBe(false);
+    expect(git(root, 'branch', '--list', 'reading')).toBe('');
     expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
 
     await cancelAt((file, args) => file === 'git' && args.includes('--untracked-files=normal'), '../carrying');

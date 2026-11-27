@@ -69,6 +69,7 @@ interface CheckoutPlan {
  */
 export async function readCheckout(target: string, operation: StimContext): Promise<CheckoutPlan> {
   const sources = attributeSources(target, operation);
+  void sources.catch(() => {});
   const read = { ...childEnvironment(operation.env), signal: operation.signal, declareFor: operation, untrimmed: true };
   // git(1), GIT_NO_LAZY_FETCH: in a partial clone ls-tree -l otherwise fetches each missing blob for its size, one
   // at a time. Without it the size is not a number and the file is left to the reset, which fetches in one batch.
