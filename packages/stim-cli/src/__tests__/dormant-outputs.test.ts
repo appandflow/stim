@@ -44,11 +44,17 @@ import type { RunningProcesses } from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
 import { keepReserve, RESERVE_RELEASED } from '../disk-reserve.ts';
 
-const volumes = vi.hoisted((): { freeBytes?: (path: string) => number | undefined } => ({}));
+const volumes = vi.hoisted(
+  (): { freeBytes?: (path: string) => number | undefined; onLstat?: (path: string) => void } => ({}),
+);
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...fs,
+    lstat: (...args: Parameters<typeof fs.lstat>) => {
+      volumes.onLstat?.(String(args[0]));
+      return fs.lstat(...args);
+    },
     statfs: async (...args: Parameters<typeof fs.statfs>) => {
       const free = volumes.freeBytes?.(String(args[0]));
       return free === undefined
@@ -295,6 +301,39 @@ describe.skipIf(process.platform === 'win32')(
         worktreeLists: 1,
         lastCommits: linked.length,
       });
+    });
+
+    test('turning on idle.sourceDormantDays reads no more evidence of a registered linked worktree', async () => {
+      const main = register(repo('main'));
+      const linked = ['a', 'b'].map((name) => {
+        const path = join(main, '.worktrees', name);
+        git(main, 'worktree', 'add', '-q', '-b', name, path);
+        return register(path);
+      });
+      idleFor(3, ...linked);
+      recordWorkspaceUse(main, new Date());
+      let reads = 0;
+      volumes.onLstat = (path) => {
+        if (linked.some((root) => path === join(root, '.git'))) reads++;
+      };
+      const readsWith = async (sourceDormantDays: number) => {
+        saveConfig({
+          version: 2,
+          projects: loadConfig()?.projects ?? {},
+          repos: {},
+          idle: { dormantDays: 1, sourceDormantDays },
+        });
+        reads = 0;
+        await hourlyStep(false);
+        return reads;
+      };
+
+      const without = await readsWith(0);
+      const withSource = await readsWith(1);
+      delete volumes.onLstat;
+
+      expect(without).toBeGreaterThan(0);
+      expect(withSource).toBe(without);
     });
 
     test('an empty normal candidate list reads no consumer marks', async () => {

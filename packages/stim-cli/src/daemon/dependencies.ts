@@ -679,6 +679,17 @@ async function sourceTreesOf(path: string, operation?: StimContext): Promise<boo
   }
 }
 
+/** Whether git lists `path` in a linked worktree, whose dependencies the source collection never takes. */
+async function linkedWorktree(path: string, operation?: StimContext): Promise<boolean> {
+  const { entries, ...source } = await resolveSourceCheckoutAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  const entry = matchWorktreeEntry(entries, path);
+  return !('refusal' in source) && entry !== null && !entry.bare && entry.path !== source.path;
+}
+
 async function takeIdleDependencies(
   input: Pick<IdlePassInput, 'act' | 'log'> &
     DeviceReading & { force?: boolean; walkUnknown?: false; between?: () => Promise<void>; marks?: true },
@@ -708,6 +719,7 @@ async function takeIdleDependencies(
               keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');
             return trees === true;
           },
+          skipRegistered: (path) => linkedWorktree(path, input.operation),
           between,
           ...(discovered ? { discovered } : {}),
         }
