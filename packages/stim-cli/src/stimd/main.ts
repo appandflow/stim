@@ -144,6 +144,7 @@ import {
 } from './metro/children.ts';
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { markSegment, watchStalls } from './stall-watch.ts';
 import { awakeTimeout } from './awake-timer.ts';
 import { endWorkers } from './workers.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
@@ -1638,6 +1639,7 @@ async function runStimdInner(
       .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
   };
   const server = createServer((socket) => {
+    markSegment('connection');
     open.add(socket);
     void checkEngine();
     socket.once('close', () => open.delete(socket));
@@ -1646,6 +1648,7 @@ async function runStimdInner(
     let kind: unknown;
     socket.on('error', () => drop(socket));
     socket.on('close', () => {
+      markSegment('connection closed');
       drop(socket);
       opContexts.delete(socket);
       const token = socketTokens.get(socket);
@@ -1701,6 +1704,7 @@ async function runStimdInner(
         }
         lastContact = Date.now();
         const { op } = message;
+        markSegment(typeof op === 'string' ? `op ${op.slice(0, 40)}` : 'op');
         if (refusesSealedOperation(sealed, op)) {
           socket.end(
             `${JSON.stringify({ op: 'error', code: 'daemon-ending', message: 'The Stim daemon is ending.' })}\n`,
@@ -2396,6 +2400,7 @@ async function runStimdInner(
   const homeWatch = attached
     ? undefined
     : setInterval(() => {
+        markSegment('home watch');
         runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
         if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
       }, homeWatchMs);
@@ -2403,7 +2408,10 @@ async function runStimdInner(
   const stopBuildEndTimer = startBuildEndTimer({
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
-    markers: () => listBuildEndMarkers().map((marker) => marker.file),
+    markers: () => {
+      markSegment('build-end markers');
+      return listBuildEndMarkers().map((marker) => marker.file);
+    },
     start: async () => {
       const markers = listBuildEndMarkers();
       try {
@@ -2419,6 +2427,7 @@ async function runStimdInner(
         await startMeasureJob({ cwd: process.cwd(), buildEnd: markers }, 'daemon_build_end_measure_failed');
     },
   });
+  const stopStallWatch = watchStalls(log);
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -2448,6 +2457,7 @@ async function runStimdInner(
       shutdown(`the attached engine claim failed: ${retentionError}`, 'error');
       break;
     }
+    markSegment('metro tick');
     void metroTick(mode, log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
       cancelMarks();
@@ -2460,6 +2470,7 @@ async function runStimdInner(
       shutdown('daemon.mode is off');
       break;
     }
+    markSegment('tick passes');
     const tickStarted = performance.now();
     const contactSince = lastContact;
     const replying = tickReplies;
@@ -2469,6 +2480,14 @@ async function runStimdInner(
     let pending: string | null = null;
     let wentDormant = false;
     let phases: Record<string, number> = {};
+    const tail: Record<string, number> = {};
+    let tailMark = 0;
+    const lapTail = (part: string) => {
+      const at = performance.now();
+      const ms = Math.round(at - tailMark);
+      if (ms > 0) tail[part] = ms;
+      tailMark = at;
+    };
     let ticked: HomePasses;
     let settleForeground: () => void = resolveForeground;
     foregroundDone = new Promise<void>((done) => {
@@ -2499,6 +2518,8 @@ async function runStimdInner(
           if (reclaimed?.outcome === 'done') wakeOldest('boot');
         },
       });
+      tailMark = performance.now();
+      markSegment('tick state');
       const { config, now, measured, workspaces, actions, operation } = passes;
       let pressure = passes.pressure;
       lastLadder = passes.ladder ?? null;
@@ -2532,6 +2553,8 @@ async function runStimdInner(
         net.running() !== null,
         () => homeAlive(config, measured, hasActiveCommands(), cleanups.reason()),
       );
+      lapTail('stateMs');
+      markSegment('tick pending work');
       pending = alive
         ? null
         : maintaining
@@ -2541,6 +2564,8 @@ async function runStimdInner(
             : await pendingWork(config, measured, slowTickMs, mode === 'on', operation);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
+      lapTail('pendingMs');
+      markSegment('tick disk pacer');
       const prediction = await runDiskPacer({
         pacer: diskPacer,
         passes,
@@ -2554,6 +2579,8 @@ async function runStimdInner(
       passes.pressure = pressure;
       interval = prediction.intervalMs;
       pending = prediction.pending;
+      lapTail('pacerMs');
+      markSegment('tick snapshot');
       logKeptWorkspaces(kept, workspaces, log);
       const tickAt = new Date(now).toISOString();
       const taken = [
@@ -2597,9 +2624,17 @@ async function runStimdInner(
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
       ticked = passes;
+      lapTail('snapshotMs');
+      markSegment('tick engine dirs');
       engineDirs = workspaceEngineDirs(config);
+      lapTail('engineDirsMs');
+      markSegment('tick engine check');
       await checkEngine();
+      lapTail('engineCheckMs');
+      markSegment('tick update check');
       maybeUpdate('daily check', DAILY_MS);
+      lapTail('updateMs');
+      markSegment('tick ended');
     } catch (error) {
       for (const socket of replying) socket.destroy();
       if (contain(error)) {
@@ -2623,6 +2658,7 @@ async function runStimdInner(
       {
         tickMs: tookMs,
         phases,
+        tail,
         eventLoopDelay: {
           maxMs: Math.round(loopDelay.max / 1e6),
           p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
@@ -2640,6 +2676,7 @@ async function runStimdInner(
       emptyTicks = 0;
     }
     if (maintenanceAllowed()) {
+      markSegment('lane start');
       lane.start(ticked, mode === 'on');
       refreshMarks(ticked);
     }
@@ -2658,6 +2695,7 @@ async function runStimdInner(
     clearInterval(homeWatch);
     stopBuildEndTimer();
     clearTimeout(attachedWatchdog);
+    stopStallWatch();
   }
   return true;
 }
