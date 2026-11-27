@@ -200,7 +200,8 @@ clones, so it starts after the `clonefile` call. `git ls-tree -l` and
 database, so they run beside it; the index is cloned first, because
 `check-attr` reads it. The configuration checks run after the clone, since
 a configuration file can be one the clone writes, and the command takes the
-plain path when `attr.tree` or `core.attributesFile` changed in between.
+plain path when `git config --list` gives anything other than it did before
+those reads.
 
 ## A clone is kept only as a checkout writes it
 
