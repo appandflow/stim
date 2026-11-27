@@ -8,6 +8,7 @@ import { spawnEntry } from '../spawn-entry.ts';
  * - `offload-worker <mode> [arg]` is the child an offload job starts for each build, offer probe and artifact query.
  * - `install <root> <build> release <version> | from <dir>` installs a client's build into the engine store and
  *   prints its build id.
+ * - `worktree-sizes <repository>...` measures the sizes `stim worktree list` lacks, after it returned.
  * Resolves the exit code.
  */
 export async function runJobEntry(argv: readonly string[]): Promise<number> {
@@ -45,8 +46,13 @@ export async function runJobEntry(argv: readonly string[]): Promise<number> {
       return 1;
     }
   }
+  if (kind === 'worktree-sizes' && rest.length) {
+    const { measureWorktreeSizes } = await import('../commands/worktree-list.ts');
+    await measureWorktreeSizes(rest);
+    return 0;
+  }
   process.stderr.write(
-    'usage: stim __job offload-build | offload-probe | offload-worker <mode> | install <root> <build> release <version> | from <dir>\n',
+    'usage: stim __job offload-build | offload-probe | offload-worker <mode> | install <root> <build> release <version> | from <dir> | worktree-sizes <repository>...\n',
   );
   return 2;
 }

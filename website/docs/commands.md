@@ -385,7 +385,9 @@ stim worktree list --all
 ```
 
 Lists linked worktrees by real size, with branch, idle age and whether cleanup
-would remove each. It deletes nothing.
+would remove each. It deletes nothing. It prints the sizes it already has and
+measures missing or stale ones after it returns, so a worktree without a size
+shows `measuring` and an old size shows its age until the next run.
 
 ### `gc`
 

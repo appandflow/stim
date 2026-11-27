@@ -25,7 +25,7 @@ export async function linkedWorktreeFindings(
     const repositories = new Set<string>([source.path]);
     for (const mark of readGcMarks())
       if (mark.worktree?.source && existsSync(mark.worktree.source)) repositories.add(mark.worktree.source);
-    const payload = await worktreeListPayload([...repositories], { measure: false, scope: 'machine', operation });
+    const payload = await worktreeListPayload([...repositories], { scope: 'machine', operation });
     operation?.signal.throwIfAborted();
     const repo = payload.repositories.find((entry) => entry.repository === canonicalPath(source.path));
     const total = payload.total;

@@ -14,7 +14,7 @@
     "metro": 27677,
     "logs": 52270,
     "lifecycle": 20778,
-    "cleanup": 30407,
+    "cleanup": 30440,
     "settings": 137920,
     "share": 29250,
     "macos": 35750
@@ -26,7 +26,7 @@
     "agent report": 1500,
     "agent logs": 1050,
     "agent phone": 1000,
-    "facts payloads": 39915,
+    "facts payloads": 39970,
     "facts gc": 26400,
     "facts status": 53284,
     "facts stats": 10500,
