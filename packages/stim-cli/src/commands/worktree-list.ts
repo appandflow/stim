@@ -12,8 +12,7 @@ import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { runProcessOperation } from '../cli-operation.ts';
-import { dependencyCloneGroup, freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
-import { treeSignature } from '../private-size.ts';
+import { freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { daemonMode } from '../daemon/mode.ts';
 import { formatLongDuration, plural } from '../command-output.ts';
 import { formatSize } from '../fs-util.ts';
@@ -198,33 +197,27 @@ interface SizeJob {
 
 /**
  * The size-cache entries of `roots` that are missing or stale: dependency trees follow their install and clone-group
- * validity rule; the rest is stale after an hour. A worktree with a project-local .pnpm-store or a linked ios is one
+ * validity rule, or with `assumeCloneGroups` take every recorded clone group as unchanged, which reads no sibling
+ * worktree; the rest is stale after an hour. A worktree with a project-local .pnpm-store or a linked ios is one
  * whole entry.
  */
-async function dueSizeJobs(roots: readonly string[], signal?: AbortSignal): Promise<SizeJob[]> {
-  const signatures = new Map<string, string | null>();
-  const signature = async (path: string) => {
-    if (!signatures.has(path)) signatures.set(path, treeSignature(path));
-    return signatures.get(path) ?? null;
-  };
-  const jobs: SizeJob[] = roots.flatMap((root) =>
-    wholeWalk(root)
-      ? [{ path: root, root, options: MEASURE_OPTIONS }]
-      : [
-          ...dependencies(root).map((path) => ({ path, root, options: {} })),
-          { path: restKey(root), root, options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
-        ],
-  );
-  const due: SizeJob[] = [];
-  for (const job of jobs) {
-    if (freshMeasure(job.path, job.options)) continue;
-    if (trustedMeasure(job.path) && readDiskUsageCloneGroup(job.path) !== null) {
-      const cloneGroup = (await dependencyCloneGroup(job.path, signal, signature)) ?? undefined;
-      if (freshMeasure(job.path, { ...job.options, cloneGroup })) continue;
-    }
-    due.push(job);
-  }
-  return due;
+function dueSizeJobs(roots: readonly string[], { assumeCloneGroups = false } = {}): SizeJob[] {
+  return roots
+    .flatMap((root) =>
+      wholeWalk(root)
+        ? [{ path: root, root, options: MEASURE_OPTIONS }]
+        : [
+            ...dependencies(root).map((path) => ({ path, root, options: {} })),
+            { path: restKey(root), root, options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
+          ],
+    )
+    .filter(
+      ({ path, options }) =>
+        !freshMeasure(path, {
+          ...options,
+          ...(assumeCloneGroups ? { cloneGroup: readDiskUsageCloneGroup(path) ?? undefined } : {}),
+        }),
+    );
 }
 
 async function listedWorktrees(
@@ -250,7 +243,7 @@ export async function measureWorktreeSizes(repositories: readonly string[], oper
   const listed = await listedWorktrees(repositories, operation);
   const roots = listed.flatMap(({ entries }) => entries.map((entry) => canonicalPath(entry.path)));
   const deadline = Date.now() + BUDGET_MS;
-  for (const { path, options } of await dueSizeJobs(roots, operation?.signal)) {
+  for (const { path, options } of dueSizeJobs(roots)) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) return;
     const { outcome } = await refreshMeasure(path, {
@@ -406,11 +399,9 @@ export const listOp: Op = defineOp({
         scope: options.all ? 'machine' : 'repository',
       });
       const due = new Set(
-        (
-          await dueSizeJobs(
-            payload.repositories.flatMap((repo) => repo.worktrees.map((entry) => entry.path)),
-            operation.signal,
-          )
+        dueSizeJobs(
+          payload.repositories.flatMap((repo) => repo.worktrees.map((entry) => entry.path)),
+          { assumeCloneGroups: true },
         ).map(({ root }) => root),
       );
       if (
