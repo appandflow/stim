@@ -118,6 +118,7 @@ import {
   discardWorktree,
   endsOperation,
   pruneUncarried,
+  restoreTracked,
   runPostCheckout,
   showOutput,
 } from '../workspace/worktree-add.ts';
@@ -759,7 +760,12 @@ export async function addWorktreeTarget(opts: {
       ),
     );
     // @ref LLP 0029#the-index-is-refreshed-before-the-command-returns -- a refresh left running holds index.lock
-    const refresh = cloned ? gitAsync(target, ['update-index', '-q', '--refresh'], git).catch(() => null) : null;
+    const refresh = cloned
+      ? restoreTracked(target, operation).then(
+          () => null,
+          (error: unknown) => ({ error }),
+        )
+      : null;
     const inside = join(target, relative(realpathSync(current), realpathSync(opts.cwd)));
     let carried: string[] = [];
     const warmed = await warmWorktreeTarget({
@@ -780,7 +786,8 @@ export async function addWorktreeTarget(opts: {
     head: string | null,
     failed: string | null,
   ) => {
-    await refresh;
+    const restored = await refresh;
+    if (restored) throw restored.error;
     if (head !== null) {
       await pruneUncarried(
         target,
@@ -807,6 +814,7 @@ export async function addWorktreeTarget(opts: {
       const cloned = await withWarmClaim(
         { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
         async () => {
+          const skipped = await uncarriedDirectories(root, operation).catch(() => new Set<string>());
           const branches = new Set(
             (
               await gitAsync(opts.cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
@@ -815,7 +823,6 @@ export async function addWorktreeTarget(opts: {
               })
             ).split('\n'),
           );
-          const skipped = await uncarriedDirectories(root, operation);
           await add(['--no-checkout']);
           let gitDir = '';
           let ref = '';

@@ -10,6 +10,7 @@ import {
   readlinkSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -123,13 +124,18 @@ test('a dirty source checkout gives a clean worktree at the target commit, the s
   write(root, 'build/output.bin', 'excluded from the carry\n');
   write(root, 'cache/ignored-only-at-first.txt', 'ignored at both commits\n');
   write(root, '.DS_Store', 'never carried\n');
+  const longAgo = new Date('2020-01-01');
+  utimesSync(join(root, 'package.json'), longAgo, longAgo);
+  git(root, 'update-index', '--refresh');
   write(root, 'src/kept.txt', 'edited and not committed\n');
+  write(root, 'package.json', '{"name":"ADD-FIXTURE"}\n');
+  utimesSync(join(root, 'package.json'), longAgo, longAgo);
   write(root, 'untracked.txt', 'untracked and not ignored\n');
   write(root, 'staged.txt', 'staged and not committed\n');
   git(root, 'add', 'staged.txt');
   mkdirSync(join(root, 'untracked-repository'));
   git(join(root, 'untracked-repository'), 'init', '-q');
-  rmSync(join(root, 'package.json'));
+  rmSync(join(root, 'src/added-later.txt'));
   const dirty = git(root, 'status', '--porcelain');
   const first = git(root, 'rev-parse', 'HEAD~1');
 
@@ -271,6 +277,26 @@ test.skipIf(!clones)(
     expect(cloned).toContain(join(root, 'src/kept.txt'));
     expect(cloned.filter((path) => /\/(build|\.idea|src)$/.test(path))).toEqual([]);
     expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
+
+    for (let index = 0; index < 300; index++) {
+      write(root, `packages/p${index}/index.js`, 'tracked\n');
+      write(root, `packages/p${index}/.idea/workspace.xml`, 'left out\n');
+    }
+    git(root, 'add', 'packages');
+    git(root, 'commit', '-qm', 'packages');
+    let calls = 0;
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file.includes('stim-clonefile')) calls++;
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+    const many = await run(addOp, root, ['-b', 'many', '../many']);
+    expect(many.stderr).toContain('as a clone of');
+    expect(calls).toBeGreaterThan(1);
+    expect(existsSync(join(base, 'many/packages/p299/index.js'))).toBe(true);
+    expect(existsSync(join(base, 'many/packages/p299/.idea'))).toBe(false);
   },
   60_000,
 );

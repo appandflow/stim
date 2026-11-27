@@ -23,6 +23,8 @@ function gitOptions(operation: StimContext, write = false): NonNullable<Paramete
   };
 }
 
+const CLONES_PER_CALL = 256;
+
 /** An interruption or an unresolved child cleanup, which no fallback may swallow. */
 export function endsOperation(error: unknown, operation: StimContext): boolean {
   return (
@@ -98,16 +100,20 @@ export async function cloneCheckout({
   const gitDir = async (dir: string) => (await gitAsync(dir, ['rev-parse', '--absolute-git-dir'], read)).trim();
   const index = join(await gitDir(target), 'index');
   await rm(index, { force: true });
-  await runOperationFile(
-    operation,
-    getExecutor(),
-    helper,
-    [...whole.flatMap((rel) => [join(root, rel), join(target, rel)]), join(await gitDir(root), 'index'), index],
-    { timeoutMs: 'unbounded', cwd: target },
-  );
+  const pairs = [
+    ...whole.map((rel) => [join(root, rel), join(target, rel)]),
+    [join(await gitDir(root), 'index'), index],
+  ];
+  // execve(2) fails with E2BIG past ARG_MAX, which a monorepo cloned child by child reaches in one call.
+  for (let at = 0; at < pairs.length; at += CLONES_PER_CALL)
+    await runOperationFile(operation, getExecutor(), helper, pairs.slice(at, at + CLONES_PER_CALL).flat(), {
+      timeoutMs: 'unbounded',
+      cwd: target,
+    });
   // git-config(1): core.checkStat=minimal compares only size and whole-second mtime, which a clone keeps; the inode
   // and ctime it changes would otherwise make reset rewrite every tracked file. The cloned index keeps its own mtime,
-  // so git still rereads a file changed in the second the source index was written.
+  // so git still rereads a file changed in the second the source index was written. `restoreTracked` covers the edit
+  // that kept a file's size and mtime.
   await gitAsync(
     target,
     ['-c', 'core.checkStat=minimal', '-c', 'submodule.recurse=false', 'reset', '-q', '--hard'],
@@ -121,6 +127,19 @@ export async function cloneCheckout({
   }
   // git-clean(1): only a second -f removes an untracked directory that holds a git repository.
   await gitAsync(target, ['clean', '-q', '-ffd'], write);
+}
+
+/**
+ * Records the cloned files' stat data in the index of `target`, then restores any tracked file whose content the
+ * refresh found changed: an edit in the source checkout that kept the file's size and mtime.
+ */
+export async function restoreTracked(target: string, operation: StimContext): Promise<void> {
+  const write = gitOptions(operation, true);
+  // git-update-index(1): --refresh exits 1 when a file needs an update, which is the case the reset is for.
+  await gitAsync(target, ['update-index', '-q', '--refresh'], write).catch((error: unknown) => {
+    if (endsOperation(error, operation)) throw error;
+  });
+  await gitAsync(target, ['-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
 }
 
 /** Passes what a git child prints on to the operation's stderr as it comes, as git shows a hook's output. */

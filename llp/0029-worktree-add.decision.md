@@ -33,7 +33,7 @@ helper available, the command does not check files out:
    the tracked and the ignored files together, skipping `.git`, every entry
    that is or holds another worktree, and every ignored directory the warm
    leaves out or checks before carrying. An entry that holds such a directory
-   is cloned child by child around it. One more call clones the source's index.
+   is cloned child by child around it, 256 clones to a helper call. One more call clones the source's index.
 3. `git -c core.checkStat=minimal reset --hard` rewrites only the tracked files
    that differ from the target commit, which restores files the source had
    edited or deleted.
@@ -41,7 +41,8 @@ helper available, the command does not check files out:
    leaves it.
 5. `git clean -ffd` removes what the target commit neither tracks nor ignores,
    including a nested repository.
-6. `git update-index --refresh` starts, to record the cloned files' stat data.
+6. `git update-index --refresh` starts, to record the cloned files' stat data,
+   followed by a second `git reset --hard` for the files it found changed.
 7. The warm runs with the entries already in place counted as carried.
 8. Every ignored entry the warm did not carry is removed.
 9. `post-checkout` runs with the arguments `git worktree add` gives it, since
@@ -58,8 +59,10 @@ saves disk, not time.
 
 The cloned index keeps the source index's modification time, so git still
 rereads a file changed in the second that index was written. An edit that keeps
-a file's size and modification time is invisible to git in the source checkout
-too, and survives.
+a file's size and modification time passes the first reset, which compares
+only those two. The index refresh reads every tracked file and finds it, and a
+second `git reset --hard`, with git's normal checks and a fresh index, restores
+it.
 
 Maintainer decision: "since we'd change api a bit I kind of want to include the new worktree add, also can it be combined with warm to run at smae time to make it faster", 2026-11-26 (#6542).
 
