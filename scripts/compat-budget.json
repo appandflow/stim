@@ -71,7 +71,7 @@
       "mechanism": "the share viewer reloads on a new build id"
     },
     "C22": {
-      "loc": 51,
+      "loc": 60,
       "end": "2.1.0",
       "mechanism": "stimd stops a pre-2.0 stim-daemon that holds the daemon claim, by its verified process identity, and takes its place"
     },

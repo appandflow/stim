@@ -76,6 +76,20 @@ export async function takeOverLegacyDaemon(log: Log): Promise<void> {
     `stim-daemon pid ${owner.pid} still runs ${EXIT_WAIT_MS / 1000} s after SIGTERM and ${legacyDaemonHolder() ? 'still holds the daemon claim, so stimd cannot take it' : 'has released the daemon claim, so stimd takes it while that daemon finishes its tick'}`,
   );
 }
+
+/**
+ * Takes over a pre-2.0 stim-daemon, then runs `claim`. A 1.40 command can start a new stim-daemon that takes the claim
+ * the old one released during the wait; that one is taken over too, up to two more times.
+ */
+export async function claimAfterLegacyDaemon<T>(log: Log, claim: () => Promise<T | null>): Promise<T | null> {
+  await takeOverLegacyDaemon(log);
+  let taken = await claim();
+  for (let again = 0; !taken && again < 2 && legacyDaemonHolder()?.stimDaemon; again++) {
+    await takeOverLegacyDaemon(log);
+    taken = await claim();
+  }
+  return taken;
+}
 // compat end
 
 /** The remedy for a holder Stim does not stop: its pid and the command that ends it. */
