@@ -64,4 +64,4 @@ The live Metro upgrade checks kept the original process and verified the same bu
 
 ## Docs
 
-- The Security model on the remote machines page states the reverse direction and shared-worker trust: a build worker can run code on this Mac through the iOS simulator or macOS app it returns, an Android release offload signs the APK the worker built, clients that share a build worker must trust each other, `device-host` runs hosted macOS apps unsandboxed as the host user, and a viewer with `control` can read the device clipboard. [Trust documentation](https://github.com/appandflow/stim/issues/6557)
+- The Security model on the remote machines page documents what a build worker, a shared worker and a viewer can do to the other side: a build worker can run code on this Mac through the iOS simulator or macOS app it returns, an Android release offload signs the APK the worker built, clients that share a build worker must trust each other, `device-host` runs hosted macOS apps unsandboxed as the host user, and a viewer with `control` can read the device clipboard. [Trust documentation](https://github.com/appandflow/stim/issues/6557)

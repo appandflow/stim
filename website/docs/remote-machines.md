@@ -398,9 +398,10 @@ stim settings set server.devicesPaused true`} />
 - A release offload refuses known configurations that would send signing
   credentials. Review your checkout before offloading one that holds secrets.
 - **A worker you build on can run code on this Mac.** The iOS simulator app or
-  macOS app it returns runs here as your user. An Android emulator app runs
-  inside the emulator. This machine checks only the sha256 the worker declares
-  for the artifact. Build only on workers you trust as much as this Mac.
+  macOS app it returns runs as your user when it runs on this Mac. An Android
+  emulator app runs inside the emulator. Nothing here checks what the returned
+  code does, and the sha256 this machine checks is the one the worker declares.
+  Build only on workers you trust as much as this Mac.
 - **A release built on a worker is only as trustworthy as that worker.** An
   Android release offload signs the APK the worker built with your local
   release key.
