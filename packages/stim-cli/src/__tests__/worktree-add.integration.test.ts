@@ -166,6 +166,7 @@ afterEach(() => {
   resetExecutor();
   process.exitCode = 0;
   delete process.env.STIM_HOME;
+  delete process.env.GIT_CONFIG_GLOBAL;
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -652,6 +653,17 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   ['core.eol=crlf', checkedOut, 'HEAD', () => git(root, 'config', 'core.eol', 'crlf')],
+  [
+    'GIT_CONFIG_GLOBAL naming a tracked file that sets core.autocrlf=true',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(root, 'repo.gitconfig', '[core]\n\tautocrlf = true\n');
+      git(root, 'add', 'repo.gitconfig');
+      git(root, 'commit', '-qm', 'config');
+      process.env.GIT_CONFIG_GLOBAL = 'repo.gitconfig';
+    },
+  ],
   [
     'attr.tree naming attributes of another branch',
     checkedOut,

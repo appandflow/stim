@@ -13,6 +13,10 @@ const XATTR_PATHS_PER_CALL = 1000;
 const XATTR_CALLS_AT_ONCE = 4;
 
 async function refuseCheckoutConfig(target: string, operation: StimContext): Promise<void> {
+  // git(1), GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM: a relative path is read from git's working directory, the
+  // worktree, whose files are still being cloned while these reads run.
+  if ([operation.env.GIT_CONFIG_GLOBAL, operation.env.GIT_CONFIG_SYSTEM].some((file) => file && !isAbsolute(file)))
+    throw new Error('GIT_CONFIG_GLOBAL or GIT_CONFIG_SYSTEM names a file in the worktree');
   const get = async (name: string, type: string, unset: string) =>
     (
       await gitAsync(target, ['config', `--type=${type}`, `--default=${unset}`, '--get', name], {

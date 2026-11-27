@@ -8,6 +8,7 @@ import { clonePairs, describeCloneFailure } from '../clone.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { getExecutor } from '../exec.ts';
 import { cloneAsCheckout, readCheckout } from './clone-as-checkout.ts';
+import { fenceDeclaredSpawns } from '../engine/spawn-claims.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { childEnvironment } from './git-read.ts';
@@ -128,10 +129,12 @@ export async function cloneCheckout({
   const gitDir = async (dir: string) => (await gitAsync(dir, ['rev-parse', '--absolute-git-dir'], read)).trim();
   const index = join(await gitDir(target), 'index');
   await rm(index, { force: true });
-  const [copied] = await clonePairs(operation, [[join(await gitDir(root), 'index'), index]]);
-  if (copied) throw new Error(describeCloneFailure(copied));
+  const [indexFailure] = await clonePairs(operation, [[join(await gitDir(root), 'index'), index]]);
+  if (indexFailure) throw new Error(describeCloneFailure(indexFailure));
   // git check-attr reads the index, and ioctl(FICLONE) on Linux fills a destination that already exists, so the index
   // is cloned before the checkout reads start beside the other clones.
+  // A claim records one declared child at a time; the fence keeps it pending while any of these overlapping ones runs.
+  const fence = fenceDeclaredSpawns(operation);
   const [cloned, checkout] = await Promise.allSettled([
     clonePairs(
       operation,
@@ -139,6 +142,11 @@ export async function cloneCheckout({
     ),
     readCheckout(target, operation),
   ]);
+  await fence.finish(
+    [cloned, checkout]
+      .flatMap((result) => (result.status === 'rejected' ? [result.reason] : []))
+      .find((reason) => reason instanceof Error && 'reportCleanup' in reason),
+  );
   if (cloned.status === 'rejected') throw cloned.reason;
   const failure = cloned.value.find((result) => result !== null);
   if (failure) throw new Error(describeCloneFailure(failure));
