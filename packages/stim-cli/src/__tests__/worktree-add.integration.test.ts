@@ -1055,7 +1055,10 @@ test.skipIf(!clones)(
     expect(git(root, 'branch', '--list', 'cloning')).toBe('');
     expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
 
-    await cancelAt((file, _args, opts) => file === binaryPath() && /\/index\0$/.test(opts.input ?? ''), '../reading');
+    await cancelAt(
+      (file, _args, opts) => file === binaryPath() && (opts.input ?? '').endsWith('/index\0'),
+      '../reading',
+    );
     expect(existsSync(join(base, 'reading'))).toBe(false);
     expect(git(root, 'branch', '--list', 'reading')).toBe('');
     expect(git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
