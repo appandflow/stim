@@ -35,6 +35,7 @@ import {
   unpushedCommitsAsync,
 } from '../workspace/worktree.ts';
 import { testContext } from './_context.ts';
+import * as runningFrom from '../workspace/running-from.ts';
 
 let home: string;
 const TOTAL_GC = 48;
@@ -389,6 +390,43 @@ describe('an acting run asks git again under the claim', () => {
       expect(existsSync(target)).toBe(true);
     } finally {
       chmodSync(sealed, 0o755);
+      close();
+    }
+  });
+
+  test('source checkout dependencies are kept when a process starts in the checkout after the early listing', async () => {
+    const main = repo('main');
+    writeFileSync(join(main, '.gitignore'), 'node_modules\nios/Pods\n');
+    mkdirSync(join(main, 'ios', 'Pods', 'X'), { recursive: true });
+    writeFileSync(join(main, 'ios', 'Pods', 'X', 'a.m'), 'x');
+    upsertProject(main, { metroPort: null });
+    recordWorkspaceUse(main, new Date(Date.now() - 40 * 86_400_000));
+    const self = { commands: [{ pid: process.pid, line: 'node' }], cwds: [{ pid: process.pid, path: '/' }] };
+    const fresh = vi
+      .spyOn(runningFrom, 'readRunningProcessesAsync')
+      .mockResolvedValue({ ...self, cwds: [...self.cwds, { pid: 4242, path: main }] });
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    try {
+      const worktrees = await artifactWorktreesFor(operation);
+      const targets = [join(main, 'node_modules'), join(main, 'ios', 'Pods')];
+      const results = await clearSourceTrees(targets, {
+        protectedRoot: '/nowhere',
+        pinned: () => false,
+        worktrees,
+        recheck: async () => null,
+        level: 'critical',
+        listing: async () => self,
+        operation,
+      });
+      expect(targets.map((target) => results.get(target)?.detail)).toEqual([
+        'process 4242 works in it',
+        'process 4242 works in it',
+      ]);
+      expect(fresh).toHaveBeenCalledTimes(1);
+      expect(targets.every((target) => existsSync(target))).toBe(true);
+    } finally {
+      fresh.mockRestore();
       close();
     }
   });
