@@ -652,6 +652,16 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   [
+    'core.attributesFile that is a link to a file of the new worktree',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(root, 'local.attributes', '*.txt text eol=crlf\n');
+      symlinkSync(join(base, 'added/local.attributes'), join(base, 'attributes-link'));
+      git(root, 'config', 'core.attributesFile', join(base, 'attributes-link'));
+    },
+  ],
+  [
     'core.symlinks=false and a link kept as a file',
     checkedOut,
     'HEAD',

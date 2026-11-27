@@ -73,9 +73,9 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
     throw new Error('core.attributesFile names a file in the worktree');
 }
 
-/** `path` with its deepest existing folder resolved through links, so a link into the worktree is seen as one. */
+/** `path`, or its deepest existing folder, resolved through links, so a link into the worktree is seen as one. */
 function throughLinks(path: string): string {
-  for (let dir = dirname(path); ; dir = dirname(dir)) {
+  for (let dir = path; ; dir = dirname(dir)) {
     const real = (() => {
       try {
         return realpathSync.native(dir);
