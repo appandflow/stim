@@ -493,8 +493,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
       cow-clone:
-        specifier: 0.1.0
-        version: 0.1.0
+        specifier: 0.1.1
+        version: 0.1.1
       cross-spawn:
         specifier: ^7.0.6
         version: 7.0.6
@@ -6565,8 +6565,8 @@ packages:
       typescript:
         optional: true
 
-  cow-clone@0.1.0:
-    resolution: {integrity: sha512-ug9U2ehg6Z/RBCqKXdwh6qc1RZECWA732GPNpEGkDjiRnxV64ue+n3eiQ0QciQyER1VIOPETV0PaXpJ2m6E/VQ==}
+  cow-clone@0.1.1:
+    resolution: {integrity: sha512-3QrX5yYFXL8e01Gc4v0HBpJUTQkHAmZeZOEciCwRjx0q8TRM0jMpsWGJO5d/9CssqVJVJsen6rPpAmiWRwF3zg==}
     engines: {node: ^20.19.4 || >=22.12.0}
     os: [darwin, linux, win32]
     hasBin: true
@@ -19395,7 +19395,7 @@ snapshots:
     optionalDependencies:
       typescript: 7.0.2
 
-  cow-clone@0.1.0: {}
+  cow-clone@0.1.1: {}
 
   crc-32@1.2.2: {}
 
