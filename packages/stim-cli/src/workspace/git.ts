@@ -17,7 +17,14 @@ function gitCall(
   { write, signal: _signal, timeoutMs = GIT_TIMEOUT_MS, ...opts }: GitOptions,
 ) {
   return {
-    args: [...(write ? [] : ['--no-optional-locks']), '-C', cwd, ...args],
+    args: [
+      ...(write ? [] : ['--no-optional-locks', '-c', 'core.hooksPath=/dev/null']),
+      '-c',
+      'core.fsmonitor=false',
+      '-C',
+      cwd,
+      ...args,
+    ],
     opts: { cwd, ...opts, timeoutMs },
   };
 }

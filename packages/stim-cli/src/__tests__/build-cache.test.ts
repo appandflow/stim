@@ -397,6 +397,10 @@ describe('untracked native files on a first miss', () => {
     expect(calls[0]?.file).toBe('git');
     expect(calls[0]?.args).toEqual([
       '--no-optional-locks',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=false',
       '-C',
       root,
       'ls-files',

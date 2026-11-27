@@ -22,9 +22,12 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { scanSourceWrites } from '../workspace/discovered-activity.ts';
+import { ignoredFilesHold } from '../workspace/discovered-removal.ts';
 import {
   branchStatusAsync,
   gitCommonDirAsync,
+  removeWorktreeAsync,
   gitDirAsync,
   repoRootAsync,
   resolveFullRefAsync,
@@ -389,4 +392,24 @@ describe('an acting run asks git again under the claim', () => {
       close();
     }
   });
+});
+
+test("a checkout's core.fsmonitor command never runs from the discovery and gc reads or a worktree removal", async () => {
+  const main = repo('main');
+  const linked = linkedWorktree(main, 'feature');
+  mkdirSync(join(linked, 'build'));
+  const marker = join(home, 'fsmonitor-ran');
+  const monitor = join(home, 'monitor.js');
+  writeFileSync(monitor, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
+  git(['-C', main, 'config', 'core.fsmonitor', `"${process.execPath}" "${monitor}"`]);
+  git(['-C', linked, 'status', '--porcelain']);
+  expect(existsSync(marker)).toBe(true);
+  rmSync(marker);
+
+  expect(await scanSourceWrites(linked, Number.POSITIVE_INFINITY)).toHaveProperty('newest');
+  expect(await ignoredFilesHold(linked, main)).toBeNull();
+  expect(await branchStatusAsync(linked)).toMatchObject({ dirty: false, branch: 'feature' });
+  await removeWorktreeAsync(linked, { from: main });
+  expect(existsSync(linked)).toBe(false);
+  expect(existsSync(marker)).toBe(false);
 });
