@@ -335,8 +335,9 @@ differ from the commit. The worktree shares its disk blocks with the source
 checkout until a file changes. Uncommitted edits, staged changes and untracked
 files in the source checkout do not come along. Anywhere else, or when the
 clone fails, Git creates the worktree and Stim warms it as `worktree warm`
-does. The files are the same either way, and the command prints which way it
-took and why. See [worktrees](./worktrees.md).
+does. The command prints which way it took and why. A cloned file can differ
+from a fresh checkout in line endings, mode bits and name spelling; see
+[worktrees](./worktrees.md#differences-from-git-worktree-add).
 
 ### `worktree warm`
 

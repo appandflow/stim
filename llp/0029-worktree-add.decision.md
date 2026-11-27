@@ -144,9 +144,33 @@ folders being about 2 s of both, and held 9 MB of private disk against 113 MB,
 or 0 MB against 113 MB at the source's own commit. Git work started beside the
 `clonefile` call waits for it, so the two do not overlap.
 
+## Where a clone differs from a checkout
+
+A cloned file git reports unchanged in the source checkout stays as it is on
+disk. `git worktree add` then `stim worktree warm` remains the way to get
+exactly what git checks out, and the user documentation says so. The known
+differences (#6551):
+
+- An untracked `.gitattributes` in the source checkout is cloned and applies to
+  the files the reset writes, until `git clean` removes it.
+- A file that cleans to its blob but is not what a checkout writes under the
+  commit's attributes keeps its bytes, such as an LF file where the commit asks
+  for CRLF, or any path when `attr.tree` names attributes the working tree
+  lacks.
+- A name that differs from the index path in case or Unicode form, permission
+  bits other than the owner's execute bit, and extended attributes come along.
+
+Reason: the refresh proves that a file cleans to the entry's blob, not that it
+is the file a checkout of that blob writes, and `clonefile(2)` copies names,
+modes and attributes as they are.
+
 ## Not decided
+
+- Which of the differences above the clone path closes, and how (#6551).
 
 - A branch the command creates is not recorded as Stim's, so
   `stim worktree remove` keeps it.
 - Writing the clones' stat data into the copied index directly, which would
-  remove the refresh.
+  remove the refresh. #6547 measured 0.3 to 0.8 s saved on 19,000 tracked files
+  and none on a checkout with dependency folders, and was closed: stat data
+  cannot prove that a clone holds its blob's bytes.

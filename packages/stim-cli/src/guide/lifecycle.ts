@@ -2948,7 +2948,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   last; a failing hook exits 1 and leaves the worktree.
   Anywhere else, or when cloning fails, git creates the worktree and the warm
   copies into it; a failed clone first removes the worktree and the branch it
-  made. Either way the files are the same. The worktree's ignored files are
+  made. A cloned file git reports unchanged keeps the source checkout's line
+  endings, mode bits and name spelling; for git's exact checkout run
+  \`git worktree add\` then \`stim worktree warm\`. The worktree's ignored files are
   the ones a warm carries, so the warm rules below apply. An interrupt during
   the clone removes the half-made worktree.
 
