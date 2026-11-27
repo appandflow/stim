@@ -136,7 +136,8 @@ source index marks a file assume-unchanged or skip-worktree or is a split
 index, `core.autocrlf=true` or `core.eol=crlf` makes a checkout write CRLF,
 `core.symlinks=false` makes it write links as files,
 `attr.tree` or `GIT_ATTR_SOURCE` names another source of attributes,
-`core.attributesFile` names a file in the worktree, two
+`core.attributesFile` names a file in the worktree, through a link or not, or
+a link that does not resolve, two
 tracked paths of the target commit differ only in case or Unicode form, a
 tracked folder is spelled another way on disk, or any step from 2 to 5 fails. `git reset --hard` keeps both index flags, so a copied index would
 carry the source's hidden edits and its sparse checkout into the new worktree.
@@ -222,7 +223,8 @@ Before the refresh, for every path of the target commit:
 
 The refresh and the reset run with `--attr-source=HEAD`, `core.checkStat` at
 its default and `core.fsmonitor` off. The configuration is read in the new
-worktree, which can differ from the source checkout's. Three things are not
+worktree, which can differ from the source checkout's, and without
+`GIT_CONFIG`, which only `git config` reads. Three things are not
 made equal: a cloned file keeps the source checkout's modification time, its
 BSD file flags, and the `com.apple.provenance` attribute, which macOS sets and
 `xattr` cannot remove. When the `uchg` flag stops a change, it is cleared

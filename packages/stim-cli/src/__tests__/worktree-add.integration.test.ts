@@ -24,6 +24,8 @@ import { addOp, removeOp, warmOp } from '../commands/worktree.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { processContext } from '../cli-operation.ts';
 import { warmClaimPath } from '../engine/warm-claim.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { claimIsFenced } from '../engine/spawn-claims.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { cloneIgnoredEntries } from '../workspace/worktree.ts';
 import type { Op } from '../cli/define-op.ts';
@@ -166,6 +168,8 @@ afterEach(() => {
   resetExecutor();
   process.exitCode = 0;
   delete process.env.STIM_HOME;
+  for (const name of ['GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'])
+    delete process.env[name];
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -665,6 +669,46 @@ const unlikeACheckout: [name: string, path: string, commit: string, prepare: () 
     },
   ],
   [
+    'core.attributesFile naming a file of the new worktree through a linked folder',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(root, 'local.attributes', '*.txt text eol=crlf\n');
+      symlinkSync(base, join(base, 'alias'));
+      git(root, 'config', 'core.attributesFile', join(base, 'alias/added/local.attributes'));
+    },
+  ],
+  [
+    'core.attributesFile that is a link to a file of the new worktree',
+    checkedOut,
+    'HEAD',
+    () => {
+      write(root, 'local.attributes', '*.txt text eol=crlf\n');
+      symlinkSync(join(base, 'added/local.attributes'), join(base, 'linked.attributes'));
+      git(root, 'config', 'core.attributesFile', join(base, 'linked.attributes'));
+    },
+  ],
+  [
+    'core.autocrlf=true while GIT_CONFIG names another file',
+    checkedOut,
+    'HEAD',
+    () => {
+      git(root, 'config', 'core.autocrlf', 'true');
+      process.env.GIT_CONFIG = join(base, 'other.config');
+    },
+  ],
+  [
+    'core.autocrlf=true set through GIT_CONFIG_COUNT',
+    checkedOut,
+    'HEAD',
+    () =>
+      Object.assign(process.env, {
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'core.autocrlf',
+        GIT_CONFIG_VALUE_0: 'true',
+      }),
+  ],
+  [
     'core.symlinks=false and a link kept as a file',
     checkedOut,
     'HEAD',
@@ -707,6 +751,34 @@ for (const [name, path, commit, prepare] of unlikeACheckout)
     },
     60_000,
   );
+
+test.skipIf(process.platform !== 'darwin')(
+  'the git config reads and the xattr calls that run at once each run under a fence on the warm claim (xattr; darwin only)',
+  async () => {
+    const real = getExecutor();
+    const unfenced: string[] = [];
+    const seen: string[] = [];
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        const concurrent = (file === 'git' && args.includes('--get')) || file === '/usr/bin/xattr';
+        const claims = [...operationState(opts.declareFor).declaring];
+        if (concurrent) seen.push(file);
+        if (concurrent && (!claims.length || !claims.every(claimIsFenced))) unfenced.push(`${file} ${args[0]}`);
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added']);
+    resetExecutor();
+
+    expect(added.stderr).toContain(cloned);
+    expect(seen.filter((file) => file === 'git')).toHaveLength(5);
+    expect(seen).toContain('/usr/bin/xattr');
+    expect(unfenced).toEqual([]);
+  },
+  60_000,
+);
 
 test.skipIf(process.platform !== 'darwin')(
   'a file the source checkout marks immutable is cloned without its flag or its extended attributes (chflags and xattr; darwin only)',
