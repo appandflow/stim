@@ -54,7 +54,8 @@ export function normalDependencySelection(
       const selected = await paths(root);
       return selected === undefined ? undefined : selected.length > 0;
     },
-    async problem(candidate: ArtifactCandidate): Promise<string | null> {
+    /** Why `candidate` no longer matches its saved generation; `fresh` asks git again instead of the pass's read scope. */
+    async problem(candidate: ArtifactCandidate, fresh = false): Promise<string | null> {
       try {
         const mark = await read(candidate.worktree);
         const config = loadConfig();
@@ -72,7 +73,7 @@ export function normalDependencySelection(
           env: operation?.env,
           signal: operation?.signal,
           declareFor: operation,
-          cache: false,
+          ...(fresh ? { cache: false as const } : {}),
         });
         const holder = matchWorktreeEntry(entries, candidate.worktree);
         if ('refusal' in checkout || !holder || holder.bare || (holder.path === checkout.path) !== (role === 'source'))
