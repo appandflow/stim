@@ -4,7 +4,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { storeArtifactAsync, type StimContext } from '@stim-cli/core';
 import type { LocalBuildCache } from '@stim-cli/cache';
-import { artifactIn, cacheRoot, entryDir, resolveBuild } from '../cache/build-cache.ts';
+import { cacheRoot, cachedBuild, entryDir, resolveBuild, trustedEntry, writeOrigin } from '../cache/build-cache.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { findBuildTool } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
@@ -102,7 +102,7 @@ export function nativeAndroidCache(
 ): LocalBuildCache {
   return {
     resolve: ({ key }) => resolveBuild('android', key),
-    async store({ key, sourcePath, overwrite, signal }) {
+    async store({ key, sourcePath, overwrite, signal, origin }) {
       const expectedPackage = androidPackage();
       const actual =
         expectedPackage === null
@@ -121,12 +121,14 @@ export function nativeAndroidCache(
       return storeArtifactAsync(entryDir('android', key), sourcePath, {
         signal,
         overwrite,
+        reusable: trustedEntry,
         runFile: (file, args) =>
           getExecutor().runFileAsync(file, args, { timeoutMs: 120_000, signal, declareFor: operation }),
         async writeMetadata(staging) {
           if ((await digest(join(staging, basename(sourcePath)), signal)) !== actual.sha256)
             throw new Error('The native APK changed while it was copied.');
           await writeFile(join(staging, RECEIPT), JSON.stringify({ schema: 1, key, ...actual }), { signal });
+          if (origin) await writeOrigin(staging, origin);
         },
       });
     },
@@ -139,6 +141,6 @@ export async function plannedNativeApk(
   abi: string | null,
   operation?: StimContext,
 ): Promise<boolean> {
-  const path = artifactIn(entryDir('android', key));
+  const path = cachedBuild('android', key);
   return path !== null && (await materializeNativeApk(key, path, sdk, abi, operation)) !== null;
 }

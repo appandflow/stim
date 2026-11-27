@@ -1189,6 +1189,8 @@ access, and uncertain replies or unreadable credentials preserve the pin.
 An invalid remote.machines setting reports an error and preserves every saved credential.
 \`stim remote remove\` forgets the credentials of the machine it removes, and
 \`doctor --fix\` forgets those of entries removed from remote.machines otherwise.
+Build cache entries a machine built stay hits only while an approved
+credential pins its key; after removal or a key change the next build replaces them.
 If the hosting credentials are unreadable, \`stim remote remove\` keeps the
 entry and credentials. Use a compatible Stim version, restore read access, or
 restore the file from a trusted backup, then retry.

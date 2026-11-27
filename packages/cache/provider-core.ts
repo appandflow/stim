@@ -46,6 +46,18 @@ export interface BuildStoreInput extends BuildCacheContext {
   overwrite: boolean;
 }
 
+/** The build machine an offloaded artifact came from: its `remote.machines` entry and the stim-server key pinned for it. */
+export interface BuildOrigin {
+  machine: string;
+  serverKey: string;
+}
+
+/** `origin` marks an artifact a build machine produced; the entry is a hit only while that key stays approved, and
+ * a store replaces such an entry once it is not, even with `overwrite: false`. */
+export interface LocalBuildStoreInput extends BuildStoreInput {
+  origin?: BuildOrigin;
+}
+
 /**
  * Native build artifacts.
  *
@@ -67,7 +79,7 @@ export interface BuildStoreInput extends BuildCacheContext {
 /** Stim's own local build cache, which the tiers consult before a provider; unlike a provider's, it may answer synchronously. */
 export interface LocalBuildCache {
   resolve(input: BuildResolveInput): string | null | Promise<string | null>;
-  store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+  store(input: LocalBuildStoreInput): string | null | void | Promise<string | null | void>;
 }
 
 export interface BuildCacheCapability {

@@ -708,6 +708,7 @@ export async function acquireAndroidArtifact(
               ...cacheTarget(storeKey!),
               sourcePath: artifactPath,
               overwrite: !useBuildCache || embedsJs,
+              origin: { machine: outcome.machine, serverKey: outcome.serverKey },
             })) ?? null;
         } catch (err) {
           reason = `could not store the APK: ${(err as Error)?.message || err}`;

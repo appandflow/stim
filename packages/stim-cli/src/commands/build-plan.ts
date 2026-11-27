@@ -12,7 +12,7 @@ import {
 import type { loadCacheProvider } from '@stim-cli/cache';
 import { trackReportResource } from '../report-runtime.ts';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
-import { artifactIn, entryDir, storedInputs } from '../cache/build-cache.ts';
+import { cachedBuild, storedInputs } from '../cache/build-cache.ts';
 import { predictBuildMiss } from '../fingerprint/miss.ts';
 import { predictBuildMiss as predictNativeBuildMiss } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, plural, shortHash } from '../command-output.ts';
@@ -213,7 +213,7 @@ export async function planCachedBuild(
   let cacheHit: BuildCacheHit = false;
   let provider: string | null = null;
   if (cachePolicy.read) {
-    if (artifactIn(entryDir(platform, cacheKey))) {
+    if (cachedBuild(platform, cacheKey)) {
       cacheHit = 'local';
     } else {
       provider = (cachePolicy.remote ? await providerHit(lookup, deps) : null) ?? (await expoRemoteHit(lookup, deps));

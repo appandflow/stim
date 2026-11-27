@@ -127,7 +127,7 @@ import {
   type RecordStatsResult,
   type StatsRun,
 } from '../engine/stats.ts';
-import { buildCacheKey, entryDir, resolveBuild, storeBuild } from '../cache/build-cache.ts';
+import { buildCacheKey, entryDir, resolveBuild, storeBuild, workerScopedKey } from '../cache/build-cache.ts';
 import { resolveRemote } from '../engine/remote-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -10417,6 +10417,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath,
+      serverKey: 'w'.repeat(43),
       ...(builtFingerprint ? { builtFingerprint } : {}),
       ...(cacheHit && { cacheHit }),
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
@@ -11054,6 +11055,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath,
+      serverKey: 'w'.repeat(43),
       builtFingerprint: after,
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
@@ -11068,7 +11070,9 @@ describe('strict remote machine selection', () => {
         artifactBytes: 0,
       },
     });
-    const store = vi.fn<(_platform: string, key: string, path: string) => string>((_platform, _key, path) => path);
+    const store = vi.fn<(_platform: string, key: string, path: string, options?: unknown) => string>(
+      (_platform, _key, path) => path,
+    );
     const result = await run(
       { remoteBuild: 'mini', json: true },
       {
@@ -11082,6 +11086,10 @@ describe('strict remote machine selection', () => {
     const keys = store.mock.calls.map(([, key]) => key);
     expect(keys).toEqual([expect.stringContaining(after)]);
     expect(keys[0]).not.toContain(FINGERPRINT);
+    const lookupKey = buildCacheKey('ios', after, { isSimulator: true, arch: 'arm64' });
+    expect(keys[0]).not.toBe(lookupKey);
+    expect(keys[0]).toBe(workerScopedKey(lookupKey, 'w'.repeat(43), root));
+    expect(store.mock.calls[0]?.[3]).toMatchObject({ origin: { machine: 'mini', serverKey: 'w'.repeat(43) } });
     expect(result.stderr).toContain('a3f9b1.. -> bbbbbb.. (as mini built it)');
     expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ fingerprint: after, status: 'ok' });
   });
@@ -11106,6 +11114,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath,
+      serverKey: 'w'.repeat(43),
       handoff,
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },

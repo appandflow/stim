@@ -20,6 +20,7 @@ import {
   providerDownloadPath,
   providerUploadOutcome,
   storedAppId,
+  workerScopedKey,
 } from '../../cache/build-cache.ts';
 import { settleFingerprintCheck } from '../../fingerprint/operation.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
@@ -794,7 +795,7 @@ export async function acquireIosArtifact(
             ),
           );
           storeHash = rekeyed.hash;
-          storeKey = rekeyed.key;
+          storeKey = workerScopedKey(rekeyed.key, outcome.serverKey, root);
           buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
         }
         try {
@@ -803,6 +804,7 @@ export async function acquireIosArtifact(
               ...cacheTarget(storeKey),
               sourcePath: outcome.artifactPath,
               overwrite: !useBuildCache || (embedsJs(runtime) && !outcome.cacheHit),
+              origin: { machine: outcome.machine, serverKey: outcome.serverKey },
             })) ?? null;
         } catch (e) {
           reason = `could not store the app: ${(e as Error)?.message || e}`;

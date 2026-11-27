@@ -221,6 +221,27 @@ never enters the local cache key.
 
 A client job can run on a different engine, but a retained artifact still needs proof that its producer would build and describe the same artifact. Keeping the version out of the local key preserves locally valid cache entries when a wire contract changes. [Wire versions](https://github.com/appandflow/stim/pull/5327).
 
+## Worker artifacts in the client cache
+
+The client stores an app or APK a worker returned in its own build cache with
+the worker's pinned server key beside it. Such an entry is a hit only while an
+approved build-machine credential on the client pins that key, so `stim remote
+remove`, `doctor --fix` forgetting the machine, and a re-pairing under a new
+key all turn it into a miss, and the next store replaces it even without
+`overwrite`. The check runs when the entry is read instead of deleting entries
+at removal, because the cache root can be shared by Stim homes whose
+credentials differ. An entry without the record, from a local build, a cache
+provider or an earlier version, stays a hit.
+
+When a client without CocoaPods accepts the fingerprint a worker reports after
+its own `pod install` (a rekey), the client cannot recompute that fingerprint.
+It stores the app under the rekeyed key with a suffix derived from the worker's
+key and the canonical project path, which no lookup builds, so another project
+or a local build that computes the same fingerprint never installs it. The same
+workspace still reaches it through its recorded last build. Verifying the
+fingerprint instead would need the worker's generated Pods tree on the client.
+Issue [#6578](https://github.com/appandflow/stim/issues/6578).
+
 ## Repository ownership and cleanup
 
 A hosted macOS session takes a build the same Mac ran for
@@ -395,6 +416,7 @@ remains: admission racing an already committed takeback can still be cancelled.
 ## Code
 
 - [Worker approval](../packages/server/src/setup.ts), [job launch](../packages/server/src/offload-jobs.ts), and [engine update authorization](../packages/server/src/handlers/engine.ts).
+- [Worker entry trust in the client cache](../packages/stim-cli/src/cache/build-cache.ts).
 - [Build placement](../packages/stim-cli/src/offload/client.ts), [signing input selection](../packages/stim-cli/src/offload/signing-files.ts), and [compatibility version](../packages/stim-cli/src/engine/toolchain.ts).
 - [Offload job host](../packages/stim-cli/src/job/offload/host.ts) and [worker service](../packages/server/src/service.ts).
 - [Area drops a removal requests](../packages/stim-cli/src/offload/build-areas.ts) and [the worker root that serves them](../packages/server/src/build.ts).
