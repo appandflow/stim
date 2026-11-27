@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { GC_MARK_VERSION, gcMarkFile, readGcMark } from '@stim-cli/core/state';
 import { startHistoryFeed, type HistoryFeed } from '../fsevents-helper.ts';
-import { dirtyGcMarks, readHistoryCheckpoints } from '../fsevents-state.ts';
+import * as historyState from '../fsevents-state.ts';
+
+const { dirtyGcMarks, readHistoryCheckpoints } = historyState;
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { writeCacheFile } from '../cache-file.ts';
 
@@ -106,6 +108,46 @@ test('replacement watches replay from the durable cursor and ignore old root ind
   expect(dirty).toHaveBeenCalledTimes(1);
   expect(dirty.mock.calls[0]?.[0]).toEqual(['/projects/b']);
   expect(readHistoryCheckpoints()['1']?.eventId).toBe(12);
+});
+
+test('the lines of one flush cost one dirty acknowledgement and one checkpoint write', async () => {
+  const roots = [...ROOTS, { root: '/projects/b', device: 1 }];
+  const dirty = vi.fn<(roots: readonly string[], at: number) => Promise<void>>(async () => {});
+  feed = startHistoryFeed({ binary, sha256, dirty, log: vi.fn<(reason: string) => void>(), platform: 'darwin' });
+  await feed.update(roots);
+  dirty.mockClear();
+  const write = vi.spyOn(historyState, 'writeHistoryCheckpoints');
+  const flush = Array.from(
+    { length: 38 },
+    (_, index) =>
+      `${JSON.stringify({ generation: 1, dev: 1, dirty: [index % 2], uuid: 'uuid', eventId: 100 + index })}\n`,
+  );
+  output.emit('data', Buffer.from(flush.join('')));
+  await feed.changed([]);
+  expect(dirty).toHaveBeenCalledTimes(1);
+  expect(dirty.mock.calls[0]?.[0]).toEqual(['/projects/a', '/projects/b']);
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(readHistoryCheckpoints()['1']).toMatchObject({ uuid: 'uuid', eventId: 137 });
+  write.mockRestore();
+});
+
+test('a bad line later in a flush keeps the prior checkpoint and dirties every watched root', async () => {
+  const roots = [...ROOTS, { root: '/projects/b', device: 1 }];
+  const dirty = vi.fn<(roots: readonly string[], at: number) => Promise<void>>(async () => {});
+  feed = startHistoryFeed({ binary, sha256, dirty, log: vi.fn<(reason: string) => void>(), platform: 'darwin' });
+  await feed.update(roots);
+  line({ generation: 1, dev: 1, historyDone: true, uuid: 'uuid', eventId: 10 });
+  await feed.changed([]);
+  dirty.mockClear();
+  const flush = [
+    { generation: 1, dev: 1, dirty: [0], uuid: 'uuid', eventId: 20 },
+    { generation: 1, dev: 1, dirty: [1], uuid: 'uuid', eventId: 15 },
+  ];
+  output.emit('data', Buffer.from(flush.map((record) => `${JSON.stringify(record)}\n`).join('')));
+  await feed.changed([]);
+  expect(readHistoryCheckpoints()['1']?.eventId).toBe(10);
+  expect(dirty.mock.calls.flatMap(([named]) => named).toSorted()).toEqual(['/projects/a', '/projects/b']);
+  expect(feed.status()).toMatchObject({ source: 'fallback' });
 });
 
 test('a dirty-write failure retains the prior checkpoint', async () => {
