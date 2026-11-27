@@ -285,6 +285,8 @@ interface IdleSelection {
   onKept?: (path: string, reason: string) => void;
   /** Whether a discovered checkout holds anything the caller reclaims; one that does not is left out before its source walk. */
   reclaimable?: (path: string) => boolean | Promise<boolean>;
+  /** Whether a registered checkout is left out before its reads, as `reclaimable` leaves out a discovered one. */
+  skipRegistered?: (path: string) => Promise<boolean>;
   /** Runs before each checkout's reads, a unit boundary of the disk owner. */
   between?: () => Promise<void>;
   /** Hears each checkout the walk read, inside that checkout's unit. */
@@ -320,6 +322,7 @@ async function readIdleWorkspaces(
     full = false,
     onKept,
     reclaimable,
+    skipRegistered,
     between,
     onRead,
     discovered: supplied,
@@ -338,6 +341,7 @@ async function readIdleWorkspaces(
     await between?.();
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     if (reclaimable && (discoveredPaths.has(path) || recordedPaths.has(path)) && !(await reclaimable(path))) continue;
+    if (skipRegistered && path in config.projects && (await skipRegistered(path))) continue;
     const at = Date.now();
     try {
       const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
