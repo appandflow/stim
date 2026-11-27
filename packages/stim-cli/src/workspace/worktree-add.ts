@@ -1,13 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
 import type { StimContext } from '@stim-cli/core';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { lstatSync } from 'node:fs';
+import { mkdir, open, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { clonefileHelper } from '../clonefile.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
+import { cloneStat, readIndex, writeIndex } from './git-index.ts';
+import type { FileStat } from './git-index.ts';
 import { childEnvironment } from './git-read.ts';
 import { gitAsync } from './git.ts';
 import { nestedWorktreePaths, overlapsNestedWorktree } from './worktree.ts';
@@ -65,12 +68,72 @@ export async function cloneSource(
   return { helper };
 }
 
+function look(base: string, path: Buffer): FileStat | null {
+  try {
+    return lstatSync(Buffer.concat([Buffer.from(`${base}/`), path]), { bigint: true, throwIfNoEntry: false }) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The index for `target`, whose files are clones of the source checkout `root`, from `bytes`, the source's index as
+ * it was before the clone: an entry whose source file is unchanged gets its clone's stat data, and every other
+ * entry is left for git to read, `unproven` of them outside submodules. Null when the index is in a format this does not write.
+ * @ref LLP 0029#the-copied-index-gets-the-clones-stat-data -- only what the source checkout proves is trusted
+ */
+function clonedIndex(
+  bytes: Buffer,
+  mtimeSec: number,
+  root: string,
+  target: string,
+): { bytes: Buffer; unproven: number } | null {
+  const index = readIndex(bytes);
+  if (!index) return null;
+  // gitformat-index(5): an extension whose signature does not start with A to Z is one a reader must understand.
+  // "link" is the split index, whose entries live in a second file, and "sdir" the sparse index.
+  const required = index.extensions.map(({ signature }) => signature).filter((signature) => !/^[A-Z]/.test(signature));
+  if (
+    required.some((signature) => signature === 'link' || signature === 'sdir') ||
+    index.entries.some((entry) => entry.assumeUnchanged || entry.skipWorktree)
+  )
+    throw new Error('the source index changed to one that cannot be copied');
+  if (required.length) return null;
+  const directories = new Map<string, boolean>();
+  // git checks a tracked path with has_symlink_leading_path when it refreshes, but reset --hard only calls lstat,
+  // which follows a symbolic link that replaced a parent directory to a file that still matches.
+  const realDirectory = (path: Buffer): boolean => {
+    const slash = path.lastIndexOf(0x2f);
+    if (slash < 0) return true;
+    const parent = path.subarray(0, slash);
+    const key = parent.toString('latin1');
+    let real = directories.get(key);
+    if (real === undefined) {
+      real =
+        realDirectory(parent) &&
+        [root, target].every((base) => ((look(base, parent)?.mode ?? 0n) & 0o170000n) === 0o040000n);
+      directories.set(key, real);
+    }
+    return real;
+  };
+  let unproven = 0;
+  const stats = index.entries.map((entry) => {
+    const proven = realDirectory(entry.path)
+      ? cloneStat(entry, look(root, entry.path), look(target, entry.path), mtimeSec)
+      : null;
+    if (!proven && (entry.mode & 0o170000) !== 0o160000) unproven += 1;
+    return proven;
+  });
+  // The untracked cache, the fsmonitor bitmap and the entry offset tables describe the source's worktree or bytes.
+  return { bytes: writeIndex(bytes, index, stats, (signature) => ['TREE', 'REUC'].includes(signature)), unproven };
+}
+
 /**
  * Fills `target`, a worktree made with `git worktree add --no-checkout`, from the source checkout `root`: one
- * clonefile(2) call per top-level entry, or per child where the entry holds a skipped directory, and one for the
- * index. Git then reads every tracked file to refresh that index, writes only the ones that differ from the target
- * commit and removes what is neither tracked nor ignored there. Submodule paths end empty, as `git worktree add`
- * leaves them.
+ * clonefile(2) call per top-level entry, or per child where the entry holds a skipped directory. The source's index
+ * is copied with the clones' stat data, so git reads only the files the source had changed, writes the ones that
+ * differ from the target commit and removes what is neither tracked nor ignored there. Submodule paths end empty,
+ * as `git worktree add` leaves them.
  */
 export async function cloneCheckout({
   root,
@@ -103,20 +166,27 @@ export async function cloneCheckout({
   for (const name of await readdir(root))
     if (name !== '.git' && !overlapsNestedWorktree(name, nested)) await plan(name);
   const gitDir = async (dir: string) => (await gitAsync(dir, ['rev-parse', '--absolute-git-dir'], read)).trim();
-  const index = join(await gitDir(target), 'index');
-  await rm(index, { force: true });
-  const pairs = [
-    ...whole.map((rel) => [join(root, rel), join(target, rel)]),
-    [join(await gitDir(root), 'index'), index],
-  ];
+  const format = (await gitAsync(root, ['rev-parse', '--show-object-format'], read)).trim();
+  const handle = await open(join(await gitDir(root), 'index'), 'r');
+  let source: Buffer;
+  let sourceMtimeSec: number;
+  try {
+    sourceMtimeSec = Number((await handle.stat({ bigint: true })).mtimeNs / 1_000_000_000n);
+    source = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+  const pairs = whole.map((rel) => [join(root, rel), join(target, rel)]);
   // execve(2) fails with E2BIG past ARG_MAX, which a monorepo cloned child by child reaches in one call.
   for (let at = 0; at < pairs.length; at += CLONES_PER_CALL)
     await runOperationFile(operation, getExecutor(), helper, pairs.slice(at, at + CLONES_PER_CALL).flat(), {
       timeoutMs: 'unbounded',
       cwd: target,
     });
-  // @ref LLP 0029#the-index-is-refreshed-before-the-reset -- reset rewrites every file whose stat data it cannot trust
-  await gitAsync(target, ['update-index', '-q', '--unmerged', '--refresh'], write);
+  const cloned = format === 'sha1' ? clonedIndex(source, sourceMtimeSec, root, target) : null;
+  await writeFile(join(await gitDir(target), 'index'), cloned?.bytes ?? source);
+  // @ref LLP 0029#the-copied-index-gets-the-clones-stat-data -- reset rewrites every file whose stat data it cannot trust
+  if (!cloned || cloned.unproven) await gitAsync(target, ['update-index', '-q', '--unmerged', '--refresh'], write);
   await gitAsync(target, ['-c', 'submodule.recurse=false', 'reset', '-q', '--hard'], write);
   for (const record of (await gitAsync(target, ['ls-files', '--stage', '-z'], read)).split('\0')) {
     if (!record.startsWith('160000 ')) continue;

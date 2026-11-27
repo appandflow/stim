@@ -3,13 +3,16 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -315,6 +318,286 @@ test('an edit that kept its file size and modification time does not reach a wor
   expect(readFileSync(join(base, 'added/src/kept.txt'), 'utf-8')).toBe('second\n');
   expect(git(join(base, 'added'), 'status', '--porcelain')).toBe('');
 }, 60_000);
+
+/**
+ * Gives every tracked file of the source checkout an old modification time and records it, so no index entry is
+ * racy: git compares the content of a file modified in the second its index was written.
+ */
+function settle(): void {
+  const longAgo = new Date('2020-01-01');
+  for (const path of git(root, 'ls-files', '-z').split('\0').filter(Boolean))
+    if (lstatSync(join(root, path), { throwIfNoEntry: false })?.isDirectory() === false)
+      lutimesSync(join(root, path), longAgo, longAgo);
+  git(root, 'update-index', '--refresh');
+}
+
+/** Runs `stim worktree add` from `cwd` and counts the index refreshes git ran for it. */
+async function addCounting(cwd: string, args: string[]) {
+  const real = getExecutor();
+  let refreshes = 0;
+  setExecutor({
+    ...real,
+    runFileAsync(file, gitArgs, opts) {
+      if (file === 'git' && gitArgs.includes('update-index')) refreshes++;
+      return real.runFileAsync(file, gitArgs, opts);
+    },
+  });
+  try {
+    return { ...(await run(addOp, cwd, args)), refreshes };
+  } finally {
+    resetExecutor();
+  }
+}
+
+/**
+ * Fails unless every tracked path of the worktree `path` holds the bytes and mode of its commit, read without the
+ * index, and the index already holds the stat data git records for those files.
+ */
+function expectExactCheckout(path: string): void {
+  const wrong: string[] = [];
+  for (const record of git(path, 'ls-tree', '-r', '-z', 'HEAD').split('\0').filter(Boolean)) {
+    const [mode, , oid] = record.slice(0, record.indexOf('\t')).split(' ');
+    const file = join(path, record.slice(record.indexOf('\t') + 1));
+    const stat = lstatSync(file, { throwIfNoEntry: false });
+    const hash = (...args: string[]) =>
+      execFileSync('git', ['-C', path, 'hash-object', ...args], {
+        input: stat?.isSymbolicLink() ? readlinkSync(file) : '',
+        encoding: 'utf-8',
+      }).trim();
+    const exact =
+      mode === '160000'
+        ? stat?.isDirectory() && readdirSync(file).length === 0
+        : mode === '120000'
+          ? stat?.isSymbolicLink() && hash('--stdin') === oid
+          : stat?.isFile() && hash('--no-filters', file) === oid && ((stat.mode & 0o100) !== 0) === (mode === '100755');
+    if (!exact) wrong.push(file);
+  }
+  expect(wrong).toEqual([]);
+  const before = git(path, 'ls-files', '--stage', '--debug');
+  git(path, 'update-index', '--really-refresh');
+  expect(git(path, 'ls-files', '--stage', '--debug')).toBe(before);
+  expect(git(path, 'status', '--porcelain')).toBe('');
+}
+
+function commitVariety(): void {
+  write(root, 'bin/run.sh', '#!/bin/sh\n');
+  chmodSync(join(root, 'bin/run.sh'), 0o755);
+  symlinkSync('src/kept.txt', join(root, 'link'));
+  write(root, 'folder/inside.txt', 'inside a folder\n');
+  write(root, 'folder/other.txt', 'beside it\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'variety');
+}
+
+const unchangedSources: [string, () => void][] = [
+  ['an index of version 2', () => git(root, 'update-index', '--index-version', '2')],
+  ['an index of version 4', () => git(root, 'update-index', '--index-version', '4')],
+  [
+    'feature.manyFiles',
+    () => {
+      git(root, 'config', 'feature.manyFiles', 'true');
+      git(root, 'update-index', '--index-version', '4');
+      git(root, 'status');
+    },
+  ],
+  [
+    'index.skipHash',
+    () => {
+      git(root, 'config', 'index.skipHash', 'true');
+      git(root, 'update-index', '--force-write');
+    },
+  ],
+  [
+    'the untracked cache',
+    () => {
+      git(root, 'config', 'core.untrackedCache', 'true');
+      write(root, 'untracked.txt', 'in the source only\n');
+      git(root, 'update-index', '--untracked-cache');
+      git(root, 'status');
+    },
+  ],
+  [
+    'a submodule entry',
+    () => {
+      git(root, 'update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},vendor/sub`);
+      mkdirSync(join(root, 'vendor/sub'), { recursive: true });
+      git(root, 'commit', '-qm', 'gitlink');
+    },
+  ],
+];
+
+for (const [name, prepare] of unchangedSources)
+  test.skipIf(!clones)(
+    `a source checkout git sees as unchanged, with ${name}, is cloned without git reading a tracked file (APFS clone inodes; darwin only)`,
+    async () => {
+      commitVariety();
+      prepare();
+      settle();
+
+      const same = await addCounting(root, ['-b', 'same', '../same']);
+      const older = await addCounting(root, ['-b', 'older', '../older', 'HEAD~2']);
+
+      expect(same.stderr).toContain('as a clone of');
+      expect(older.stderr).toContain('as a clone of');
+      expect([same.refreshes, older.refreshes]).toEqual([0, 0]);
+      expectExactCheckout(join(base, 'same'));
+      expectExactCheckout(join(base, 'older'));
+      expect(tree(join(base, 'older'))).toEqual(tree(await plain('plain', 'HEAD~2')));
+    },
+    60_000,
+  );
+
+const changedSources: [string, () => void][] = [
+  [
+    'edits, removals, mode changes and staged changes',
+    () => {
+      write(root, 'src/kept.txt', 'edited and not committed\n');
+      rmSync(join(root, 'src/added-later.txt'));
+      chmodSync(join(root, 'package.json'), 0o755);
+      chmodSync(join(root, 'bin/run.sh'), 0o644);
+      rmSync(join(root, 'link'));
+      symlinkSync('package.json', join(root, 'link'));
+      write(root, 'staged.txt', 'staged and not committed\n');
+      write(root, 'cache/tracked-later.txt', 'staged edit\n');
+      git(root, 'add', '-f', 'staged.txt', 'cache/tracked-later.txt');
+      write(root, 'intended.txt', 'intent to add\n');
+      git(root, 'add', '-N', 'intended.txt');
+      rmSync(join(root, 'folder'), { recursive: true });
+      write(root, 'folder', 'a file where a folder was\n');
+      rmSync(join(root, 'bin/run.sh'));
+      mkdirSync(join(root, 'bin/run.sh'));
+      write(root, 'bin/run.sh/inside.txt', 'a folder where a file was\n');
+    },
+  ],
+  [
+    'an edit that kept its size and both of its times in whole seconds',
+    () => {
+      const before = lstatSync(join(root, 'src/kept.txt'));
+      write(root, 'src/kept.txt', 'SECOND\n');
+      utimesSync(join(root, 'src/kept.txt'), before.atime, before.mtime);
+    },
+  ],
+  [
+    'an index older than the files it lists',
+    () => {
+      write(root, 'src/kept.txt', 'edited and not committed\n');
+      utimesSync(join(root, '.git/index'), new Date('2019-01-01'), new Date('2019-01-01'));
+    },
+  ],
+  [
+    'a merge conflict',
+    () => {
+      git(root, 'checkout', '-q', '-b', 'side', 'HEAD~1');
+      write(root, 'src/kept.txt', 'side\n');
+      git(root, 'commit', '-qam', 'side');
+      git(root, 'checkout', '-q', 'main');
+      write(root, 'src/kept.txt', 'main\n');
+      git(root, 'commit', '-qam', 'main');
+      expect(() => git(root, 'merge', 'side')).toThrow('Command failed');
+      expect(git(root, 'ls-files', '--unmerged')).toContain('src/kept.txt');
+    },
+  ],
+  [
+    'a folder replaced by a relative link to its renamed self',
+    () => {
+      renameSync(join(root, 'src'), join(root, 'moved'));
+      symlinkSync('moved', join(root, 'src'));
+    },
+  ],
+  [
+    'a folder replaced by an absolute link into the source checkout',
+    () => {
+      renameSync(join(root, 'src'), join(root, 'moved'));
+      symlinkSync(join(root, 'moved'), join(root, 'src'));
+    },
+  ],
+  [
+    'an fsmonitor hook that reports no change',
+    () => {
+      write(base, 'fsmonitor.sh', "#!/bin/sh\nprintf 'token\\0'\n");
+      chmodSync(join(base, 'fsmonitor.sh'), 0o755);
+      git(root, 'config', 'core.fsmonitor', join(base, 'fsmonitor.sh'));
+      git(root, 'config', 'core.fsmonitorHookVersion', '2');
+      git(root, 'status');
+      git(root, 'status');
+      expect(git(root, 'ls-files', '-f', 'src/kept.txt')).toBe('h src/kept.txt');
+      write(root, 'src/kept.txt', 'an edit the hook hides\n');
+    },
+  ],
+];
+
+for (const [name, prepare] of changedSources)
+  test.skipIf(!clones)(
+    `a source checkout with ${name} gives exactly the commit, at its own commit and at an older one (APFS clone inodes; darwin only)`,
+    async () => {
+      commitVariety();
+      settle();
+      prepare();
+      const source = tree(root);
+
+      const same = await addCounting(root, ['-b', 'same', '../same']);
+      const older = await addCounting(root, ['-b', 'older', '../older', 'HEAD~2']);
+
+      expect(same.stderr).toContain('as a clone of');
+      expect(older.stderr).toContain('as a clone of');
+      expect(tree(root)).toEqual(source);
+      git(root, 'config', 'core.fsmonitor', 'false');
+      expectExactCheckout(join(base, 'same'));
+      expectExactCheckout(join(base, 'older'));
+      expect(tree(join(base, 'same'))).toEqual(tree(await plain('plain-same')));
+      expect(tree(join(base, 'older'))).toEqual(tree(await plain('plain-older', 'HEAD~2')));
+    },
+    60_000,
+  );
+
+test.skipIf(!clones)(
+  'a SHA-256 repository is cloned and git reads every tracked file (APFS clone inodes; darwin only)',
+  async () => {
+    const other = join(base, 'sha256');
+    mkdirSync(other);
+    git(other, 'init', '-q', '-b', 'main', '--object-format=sha256');
+    git(other, 'config', 'user.name', 'test');
+    git(other, 'config', 'user.email', 'test@example.com');
+    git(other, 'config', 'commit.gpgsign', 'false');
+    git(other, 'config', 'index.skipHash', 'true');
+    write(other, 'src/kept.txt', 'tracked\n');
+    git(other, 'add', '.');
+    git(other, 'commit', '-qm', 'first');
+    write(other, 'src/kept.txt', 'edited and not committed\n');
+
+    const added = await addCounting(other, ['-b', 'added', '../sha256-added']);
+
+    expect(added.stderr).toContain('as a clone of');
+    expect(added.refreshes).toBe(1);
+    expectExactCheckout(join(base, 'sha256-added'));
+  },
+  60_000,
+);
+
+test.skipIf(!clones)(
+  'a file marked assume-unchanged after the checks takes the plain path (APFS clonefile; darwin only)',
+  async () => {
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync(file, args, opts) {
+        if (file === 'git' && args.includes('--no-checkout')) {
+          git(root, 'update-index', '--assume-unchanged', 'src/kept.txt');
+          write(root, 'src/kept.txt', 'hidden edit\n');
+        }
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added']);
+
+    expect(added.code).toBe(0);
+    expect(added.stderr).toContain('with git worktree add, because cloning failed');
+    expect(readFileSync(join(base, 'added/src/kept.txt'), 'utf-8')).toBe('second\n');
+    expect(git(join(base, 'added'), 'ls-files', '-v', 'src/kept.txt')).toBe('H src/kept.txt');
+  },
+  60_000,
+);
 
 test('a source checkout with a split index takes the plain path and gives the same worktree', async () => {
   git(root, 'update-index', '--split-index');
