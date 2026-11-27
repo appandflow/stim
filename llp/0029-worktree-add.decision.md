@@ -146,6 +146,23 @@ created, never a branch that existed before, and runs `git worktree add` again
 with the same arguments. An interrupt does the same removal and stops. The
 output names which path ran and, for the plain one, why.
 
+An interrupt during the plain path's `git worktree add` removes the worktree
+and the branch that call created as well. Stim cancels a child by killing its
+process group, so git never runs its own cleanup and leaves the entry locked
+(`initializing`); `git worktree remove -f -f` removes a locked entry. Stim
+removes the worktree and branch only when the new path's `.git` names an entry
+still locked that way, the mark of an add killed mid-checkout, and keeps both
+when exec cannot verify that git and its children stopped. After an
+interrupt during the clone, the removal moves the worktree's ignored
+directories into `$STIM_HOME/trash` first and deletes them in the background,
+as `stim worktree remove` does, so the command exits without waiting for a
+cloned `node_modules` to be deleted.
+
+A branch the command creates, with `-b` or the one git names after the path,
+is recorded as Stim's, so `stim worktree remove` deletes it when it has no
+unique commits, as the website's worktree page states. A branch that existed
+before stays the user's.
+
 A refusal from `git worktree add` itself, such as an existing branch or path,
 fails the command: the plain path would fail the same way. A failure in the
 warm reports as `worktree warm` reports it and leaves the worktree.
@@ -274,8 +291,6 @@ four calls at a time. On a checkout of 19,021 tracked files the step adds about
 
 ## Not decided
 
-- A branch the command creates is not recorded as Stim's, so
-  `stim worktree remove` keeps it.
 - Writing the clones' stat data into the copied index directly, which would
   remove the refresh. Stat data cannot prove that a clone holds its blob's
   bytes (#6547). Every clone has a new inode and change time, so no subset of

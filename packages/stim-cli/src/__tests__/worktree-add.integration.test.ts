@@ -1210,6 +1210,74 @@ test.skipIf(!clones)(
   60_000,
 );
 
+test.skipIf(process.platform === 'win32')(
+  'an operation cancelled while git worktree add checks out removes what it created and keeps a branch it did not (POSIX filter script; skipped on win32)',
+  async () => {
+    const marker = join(base, 'checking-out');
+    write(root, '.gitattributes', 'slow.txt filter=slow\n');
+    write(root, 'slow.txt', 'slow\n');
+    git(root, 'config', 'filter.slow.clean', 'cat');
+    git(root, 'add', '.gitattributes', 'slow.txt');
+    git(root, 'commit', '-qm', 'slow');
+    git(root, 'config', 'filter.slow.smudge', `sh -c 'touch "${marker}"; sleep 60; cat'`);
+    git(root, 'update-index', '--assume-unchanged', 'package.json');
+    git(root, 'branch', 'existing');
+    const stim = createStim({ projectRoot: root, env: { ...process.env } });
+    const cancelDuringCheckout = async (options: { path: string; branch?: string; commitish?: string }) => {
+      rmSync(marker, { force: true });
+      const controller = new AbortController();
+      const poll = setInterval(() => existsSync(marker) && controller.abort(), 20);
+      try {
+        await expect(stim.addWorktree({ ...options, signal: controller.signal })).rejects.toMatchObject({
+          code: 'STIM_CANCELLED',
+        });
+      } finally {
+        clearInterval(poll);
+      }
+      expect(existsSync(marker)).toBe(true);
+    };
+
+    await cancelDuringCheckout({ path: '../created', branch: 'created' });
+    await cancelDuringCheckout({ path: '../existing', commitish: 'existing' });
+    await cancelDuringCheckout({ path: '../named-by-path' });
+
+    expect(existsSync(join(base, 'created'))).toBe(false);
+    expect(existsSync(join(base, 'existing'))).toBe(false);
+    expect(existsSync(join(base, 'named-by-path'))).toBe(false);
+    expect(existsSync(join(root, '.git/worktrees'))).toBe(false);
+    expect(git(root, 'branch', '--list', 'created', 'named-by-path')).toBe('');
+    expect(git(root, 'rev-parse', 'existing')).toBe(git(root, 'rev-parse', 'HEAD'));
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        return real.runFileAsync(file, args, opts).catch((error: unknown) => {
+          throw error instanceof Error && args.includes('add') ? Object.assign(error, { reportCleanup: true }) : error;
+        });
+      },
+    });
+    await cancelDuringCheckout({ path: '../unverified', branch: 'unverified' }).catch(() => {});
+    resetExecutor();
+    expect(readFileSync(join(root, '.git/worktrees/unverified/locked'), 'utf-8')).toBe('initializing\n');
+    expect(git(root, 'branch', '--list', 'unverified')).toBe('+ unverified');
+    git(root, 'config', '--unset', 'filter.slow.smudge');
+    expect((await stim.addWorktree({ path: '../created', branch: 'created' })).exitCode).toBe(0);
+  },
+  60_000,
+);
+
+test('worktree remove deletes the branch worktree add created and keeps one it checked out', async () => {
+  git(root, 'branch', 'existing');
+
+  expect((await run(addOp, root, ['-b', 'created', '../created'])).code).toBe(0);
+  expect((await run(addOp, root, ['../named-by-path'])).code).toBe(0);
+  expect((await run(addOp, root, ['../existing', 'existing'])).code).toBe(0);
+  for (const name of ['created', 'named-by-path', 'existing'])
+    expect((await run(removeOp, root, [join(base, name)])).code).toBe(0);
+
+  expect(git(root, 'branch', '--list', 'created', 'named-by-path', 'existing')).toBe('existing');
+}, 60_000);
+
 test('addWorktree creates the warmed worktree and returns its path', async () => {
   const stim = createStim({ projectRoot: root, env: { ...process.env } });
 

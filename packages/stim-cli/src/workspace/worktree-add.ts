@@ -213,17 +213,20 @@ export async function discardWorktree({
   git,
 }: {
   cwd: string;
-  target: string;
+  /** Null when git created no worktree. */
+  target: string | null;
   /** Empty when it is not known. */
   gitDir: string;
   created: { ref: string; sha: string } | null;
   /** Options for one git call, with a signal of its own: an interrupted operation still cleans up. */
   git: () => Parameters<typeof gitAsync>[2];
 }): Promise<void> {
-  await gitAsync(cwd, ['worktree', 'remove', '--force', '--', target], git()).catch(async () => {
-    // git-worktree(1) refuses to remove a working tree that holds a submodule, which a cloned checkout can.
-    await removeTemporaryEntryAsync(target);
-    if (gitDir) await removeTemporaryEntryAsync(gitDir);
-  });
+  // git-worktree(1): a second --force also removes a worktree git left locked when its add was killed.
+  if (target)
+    await gitAsync(cwd, ['worktree', 'remove', '--force', '--force', '--', target], git()).catch(async () => {
+      // git-worktree(1) refuses to remove a working tree that holds a submodule, which a cloned checkout can.
+      await removeTemporaryEntryAsync(target);
+      if (gitDir) await removeTemporaryEntryAsync(gitDir);
+    });
   if (created) await gitAsync(cwd, ['update-ref', '-d', created.ref, created.sha], git());
 }
