@@ -654,6 +654,8 @@ export async function clearArtifact(
     recheck?: (keys: readonly string[], worktree: string) => Promise<string | null>;
     /** The pressure level the deletion runs at, which decides what files changed after the install do. */
     level?: PressureLevel;
+    /** The process listing the check before the claim reads instead of a fresh one; the check under it reads fresh. */
+    listing?: () => Promise<RunningProcesses | null>;
     operation?: StimContext;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
@@ -677,7 +679,7 @@ export async function clearArtifact(
     agents,
     reduceOnly: worktree.reduceOnly,
   };
-  const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
+  const running = kind === 'dependencies' ? await (options.listing ?? readRunningProcessesAsync)() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
   const early = keptReason(
     candidate,
@@ -777,6 +779,8 @@ export async function clearSourceTrees(
     recheck: (keys: readonly string[], worktree: string) => Promise<string | null>;
     /** The pressure level the deletion runs at, which decides what files changed after the install do. */
     level: PressureLevel;
+    /** The process listing the checks before the claims read instead of a fresh one; the checks under them read fresh. */
+    listing?: () => Promise<RunningProcesses | null>;
     operation?: StimContext;
   },
 ): Promise<Map<string, TreeOutcome>> {
@@ -809,6 +813,7 @@ export async function clearSourceTrees(
   };
   const checkTree = async (
     path: string,
+    running: RunningProcesses | null,
     held?: readonly string[],
     linked: readonly Pick<ArtifactWorktree, 'path' | 'linked' | 'source'>[] = options.worktrees,
   ): Promise<string | null> => {
@@ -822,7 +827,7 @@ export async function clearSourceTrees(
           windowMs: 0,
           pinned,
           now: Date.now(),
-          running: await readRunningProcessesAsync(),
+          running,
           inUse: await inUseOf(candidate, 'dependencies', signal, operation, held),
           ...(held ? { locked: held } : {}),
         },
@@ -835,7 +840,7 @@ export async function clearSourceTrees(
   let selected: string[] = [];
   let recordFailure: string | null = null;
   for (const path of targets) {
-    const problem = await checkTree(path);
+    const problem = await checkTree(path, await (options.listing ?? readRunningProcessesAsync)());
     if (problem) keepAll([path], problem);
     else selected.push(path);
   }
@@ -854,8 +859,9 @@ export async function clearSourceTrees(
       .filter((entry) => !entry.bare && canonicalPath(entry.path) !== root && !isAbsentPath(entry.path))
       .map((entry) => ({ path: entry.path, linked: true, source: worktree.path }));
     const stillSelected: string[] = [];
+    const running = await readRunningProcessesAsync();
     for (const path of selected) {
-      const problem = await checkTree(path, heldKeys, linked);
+      const problem = await checkTree(path, running, heldKeys, linked);
       if (problem) {
         keepAll([path], problem);
         continue;

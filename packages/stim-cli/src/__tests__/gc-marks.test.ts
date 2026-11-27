@@ -847,6 +847,41 @@ describe('gc marks written by the lane', () => {
   });
 
   describe.skipIf(process.platform === 'win32')('current normal linked dependency authorization', () => {
+    it('keeps a linked tree when a process starts in its worktree after the listing the pass checked before the claim', async () => {
+      const { root, modules, cache } = await normalLinkedDependencies();
+      cache();
+      const read = vi.mocked(readRunningProcessesAsync);
+      const real = read.getMockImplementation();
+      if (!real) throw new Error('fixture process reader missing');
+      let listings = 0;
+      const list = artifacts.artifactWorktreesFor;
+      vi.spyOn(artifacts, 'artifactWorktreesFor').mockImplementation(async (operation) => {
+        read.mockImplementation(async (...args) => {
+          const running = await real(...args);
+          return running && listings++ > 0
+            ? { ...running, cwds: [...running.cwds, { pid: 999_999, path: root }] }
+            : running;
+        });
+        return list(operation);
+      });
+
+      const actions = await runDormantDependencies({
+        config,
+        act: true,
+        marks: true,
+        log: () => {},
+        ...reading,
+        operation: testContext(),
+      });
+      read.mockImplementation(real);
+
+      expect(listings).toBe(2);
+      expect(actions).toContainEqual(
+        expect.objectContaining({ target: modules, outcome: 'kept', detail: 'process 999999 works in it' }),
+      );
+      expect(existsSync(join(modules, 'dependency.js'))).toBe(true);
+    }, 20_000);
+
     it('keeps a former nested app dependency after its registration changes while holder and mark stay intact', async () => {
       const { root, modules, age, old } = await normalLinkedDependencies();
       rmSync(modules, { recursive: true });

@@ -62,6 +62,7 @@ import { warmedFromAt } from '../workspace/source-dependencies.ts';
 import type { Config } from '../workspace/config.ts';
 import { timedStep, type DaemonLog } from './step-timing.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
+import { readRunningProcessesAsync, type RunningProcesses } from '../workspace/running-from.ts';
 
 /**
  * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
@@ -438,6 +439,7 @@ export async function clearDependency(
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
   saved?: (candidate: ArtifactCandidate, fresh?: boolean) => Promise<string | null>,
+  listing?: () => Promise<RunningProcesses | null>,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     const marked = await saved?.(dependency.candidate);
@@ -461,6 +463,7 @@ export async function clearDependency(
           (await saved?.({ ...dependency.candidate, keys: [...keys], worktree }, true)) ??
           (await stillUnused(false, keys, worktree, idleMs, operation)),
         level,
+        ...(listing ? { listing } : {}),
         operation,
       },
     );
@@ -487,6 +490,7 @@ export async function clearSourceCheckouts(
   level: PressureLevel,
   between: () => Promise<void>,
   saved?: (candidate: ArtifactCandidate, fresh?: boolean) => Promise<string | null>,
+  listing?: () => Promise<RunningProcesses | null>,
 ): Promise<Map<RankedDependency, TreeResult>> {
   const groups = new Map<string, RankedDependency[]>();
   for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
@@ -502,6 +506,7 @@ export async function clearSourceCheckouts(
       operation,
       setting,
       saved,
+      listing,
     );
     group.forEach((tree, index) => {
       const outcome = outcomes[index];
@@ -524,6 +529,7 @@ export async function clearSourceDependencies(
   operation?: StimContext,
   setting?: string,
   saved?: (candidate: ArtifactCandidate, fresh?: boolean) => Promise<string | null>,
+  listing?: () => Promise<RunningProcesses | null>,
 ): Promise<TreeResult[]> {
   forgetGitReads(operation);
   try {
@@ -554,6 +560,7 @@ export async function clearSourceDependencies(
           (await markedProblem(true, keys, worktree)) ??
           (await stillUnused(true, keys, worktree, idleMs, operation, setting)),
         level,
+        ...(listing ? { listing } : {}),
         operation,
       },
     );
@@ -829,6 +836,8 @@ async function takeIdleDependencies(
   }
   await between();
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
+  let listed: Promise<RunningProcesses | null> | undefined;
+  const listing = () => (listed ??= readRunningProcessesAsync(operation?.signal));
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
   const sourceResults =
     source && input.act
@@ -842,6 +851,7 @@ async function takeIdleDependencies(
           'normal',
           between,
           saved?.problem,
+          listing,
         )
       : new Map<RankedDependency, TreeResult>();
   for (const dependency of take) {
@@ -864,6 +874,7 @@ async function takeIdleDependencies(
             false,
             'normal',
             saved?.problem,
+            listing,
           )
       : await wouldDelete(
           dependency,
