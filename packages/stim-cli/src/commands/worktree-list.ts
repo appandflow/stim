@@ -237,13 +237,20 @@ async function listedWorktrees(
 
 /**
  * Walks the missing and stale size-cache entries of the linked worktrees of `repositories`, one at a time under the
- * machine-wide walk claim, for at most 30 seconds each and two minutes in all, and stops when another process holds it. `stim worktree list` starts it detached.
+ * machine-wide walk claim, for at most 30 seconds each and two minutes in all, and stops when another process holds it.
+ * The order is random, so a few trees whose walks always time out cannot use every run's budget before the others.
+ * `stim worktree list` starts it detached.
  */
 export async function measureWorktreeSizes(repositories: readonly string[], operation?: StimContext): Promise<void> {
   const listed = await listedWorktrees(repositories, operation);
   const roots = listed.flatMap(({ entries }) => entries.map((entry) => canonicalPath(entry.path)));
   const deadline = Date.now() + BUDGET_MS;
-  for (const { path, options } of dueSizeJobs(roots)) {
+  const due = dueSizeJobs(roots)
+    .map((job) => ({ job, order: Math.random() }))
+    .toSorted((a, b) => a.order - b.order);
+  for (const {
+    job: { path, options },
+  } of due) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) return;
     const { outcome } = await refreshMeasure(path, {
