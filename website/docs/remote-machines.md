@@ -208,13 +208,13 @@ Client and host each apply their own `maintenance.idleStopHours` (6 by default,
 
 ## Permissions
 
-| Approval      | What it allows                                                               |
-| ------------- | ---------------------------------------------------------------------------- |
-| `build`       | Compiling the requesting machine's project as the worker's user.             |
-| `device-host` | Running the client's app on its own hosted simulator, emulator or macOS app. |
-| `read`        | Viewing workspaces, logs and device screens, including workspace text diffs. |
-| `control`     | Device input and Reload/Stop for a paired viewer.                            |
-| `test`        | A separate record that can authorize managed worker updates.                 |
+| Approval      | What it allows                                                                                           |
+| ------------- | -------------------------------------------------------------------------------------------------------- |
+| `build`       | Compiling the requesting machine's project as the worker's user.                                         |
+| `device-host` | Running the client's app on its own hosted simulator, emulator or macOS app. A macOS app is unsandboxed. |
+| `read`        | Viewing workspaces, logs and device screens, including workspace text diffs.                             |
+| `control`     | Device input, clipboard reads and Reload/Stop for a paired viewer.                                       |
+| `test`        | A separate record that can authorize managed worker updates.                                             |
 
 Each approval is separate. Pairing a phone or a viewer never grants `build`,
 `device-host` or `test`.
@@ -397,6 +397,22 @@ stim settings set server.devicesPaused true`} />
   `*.cer` are still sent. Device builds are signed here and never offload.
 - A release offload refuses known configurations that would send signing
   credentials. Review your checkout before offloading one that holds secrets.
+- **A worker you build on can run code on this Mac.** The iOS simulator app or
+  macOS app it returns runs here as your user. An Android emulator app runs
+  inside the emulator. This machine checks only the sha256 the worker declares
+  for the artifact. Build only on workers you trust as much as this Mac.
+- **A release built on a worker is only as trustworthy as that worker.** An
+  Android release offload signs the APK the worker built with your local
+  release key.
+- **Clients that share one build worker must trust each other.** The worker
+  keeps each client's files in its own directory, and nothing else separates
+  them. A build that runs as the worker's user can change another client's
+  files there.
+- **`device-host` runs a hosted macOS app as native code, as the host user.**
+  There is no sandbox. Approve only clients you expect.
+- **A viewer with `control`, including a share link with control, can read the
+  device clipboard.** A simulator or emulator may share its clipboard with the
+  host Mac, so that can include what you copied on the host.
 - Before a client authenticates, a worker answers only the handshake, its
   version, and setup progress named by a ticket. It rate-limits unauthenticated
   connections.
