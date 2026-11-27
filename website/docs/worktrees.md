@@ -67,9 +67,12 @@ lockfile mismatch, run your install command.
 
 - To leave files out, list patterns in the source checkout's
   `.worktreeexclude` or set `worktree.exclude`.
-- `stim worktree warm --refresh` first fast-forwards the source checkout to its
-  upstream and installs what changed. It refuses a dirty or diverged source
-  checkout.
+- `stim worktree warm --refresh` and `stim worktree add --refresh` first
+  fast-forward the source checkout to its upstream and install what changed.
+  They refuse a dirty or diverged source checkout, and `add` then creates no
+  worktree. With no commit, `add --refresh` starts the worktree at the
+  refreshed source checkout's commit, even when you run it from another
+  worktree.
 
 ## Work in parallel
 

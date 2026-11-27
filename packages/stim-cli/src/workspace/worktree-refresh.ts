@@ -41,13 +41,25 @@ const DIRTY_PATHS_SHOWN = 5;
 
 const FETCH_TIMEOUT_MS = 120_000;
 
-export function mainCheckoutRefusal(root: string, state: MainCheckoutState): RefreshFailure | null {
+/** The command a refresh runs for: `stim worktree warm --refresh` or `stim worktree add --refresh`. */
+export type RefreshCommand = 'warm' | 'add';
+
+function runAgain(command: RefreshCommand): string {
+  return command === 'warm' ? 'warm' : '`stim worktree add --refresh`';
+}
+
+export function mainCheckoutRefusal(
+  root: string,
+  state: MainCheckoutState,
+  command: RefreshCommand = 'warm',
+): RefreshFailure | null {
+  const again = runAgain(command);
   if (state.operation) {
     return {
       code: 'STIM_MAIN_DIRTY',
       message: `Refusing to refresh ${root}: a ${state.operation === 'am' ? 'git am' : state.operation} is in progress there.`,
       lines: [],
-      remedy: `Finish it, or run \`git -C ${root} ${state.operation} --abort\`, then run warm again.`,
+      remedy: `Finish it, or run \`git -C ${root} ${state.operation} --abort\`, then run ${again} again.`,
     };
   }
   if (!state.dirtyKnown) {
@@ -55,7 +67,7 @@ export function mainCheckoutRefusal(root: string, state: MainCheckoutState): Ref
       code: 'STIM_MAIN_DIRTY',
       message: `Refusing to refresh ${root}: git could not report whether its tracked files are modified.`,
       lines: [],
-      remedy: `Run \`git -C ${root} status\` to see what it reports, clear it, then run warm again.`,
+      remedy: `Run \`git -C ${root} status\` to see what it reports, clear it, then run ${again} again.`,
     };
   }
   if (state.dirtyTracked.length) {
@@ -63,7 +75,7 @@ export function mainCheckoutRefusal(root: string, state: MainCheckoutState): Ref
       code: 'STIM_MAIN_DIRTY',
       message: `Refusing to refresh ${root}: it has uncommitted changes to tracked files.`,
       lines: state.dirtyTracked.slice(0, DIRTY_PATHS_SHOWN),
-      remedy: `Commit the changes in the main checkout, then retry; or run plain \`stim worktree warm\`.`,
+      remedy: `Commit the changes in the main checkout, then retry; or run plain \`stim worktree ${command}\`.`,
     };
   }
   if (state.branch === null) {
@@ -71,7 +83,7 @@ export function mainCheckoutRefusal(root: string, state: MainCheckoutState): Ref
       code: 'STIM_MAIN_DETACHED',
       message: `Refusing to refresh ${root}: its HEAD is detached, so there is no branch to fast-forward.`,
       lines: [],
-      remedy: `Run \`git -C ${root} checkout <branch>\`, then run warm again.`,
+      remedy: `Run \`git -C ${root} checkout <branch>\`, then run ${again} again.`,
     };
   }
   return null;
@@ -95,12 +107,13 @@ export function divergedRefusal(
   root: string,
   branch: string,
   plan: { ahead: number; behind: number; upstream: string },
+  command: RefreshCommand = 'warm',
 ): RefreshFailure {
   return {
     code: 'STIM_MAIN_DIVERGED',
     message: `Refusing to refresh ${root}: ${branch} is ${plan.ahead} ahead of and ${plan.behind} behind ${plan.upstream}, so it cannot fast-forward.`,
     lines: [],
-    remedy: `Rebase or merge ${branch} yourself, then run warm again. Warm never merges, resets, or switches a branch.`,
+    remedy: `Rebase or merge ${branch} yourself, then run ${runAgain(command)} again. ${command === 'warm' ? 'Warm' : 'The refresh'} never merges, resets, or switches a branch.`,
   };
 }
 
@@ -647,6 +660,7 @@ export interface RefreshOptions {
   heartbeatMs?: number;
   installer?: InstallerClaim;
   inspectOnly?: boolean;
+  command?: RefreshCommand;
 }
 
 export interface RefreshMutation {
@@ -668,13 +682,14 @@ export async function refreshMainCheckout({
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   installer = NO_INSTALLER_CLAIM,
   inspectOnly = false,
+  command = 'warm',
 }: RefreshOptions): Promise<RefreshFailure | RefreshMutation | null> {
   const state = readMainCheckoutState(root);
-  const refusal = mainCheckoutRefusal(root, state);
+  const refusal = mainCheckoutRefusal(root, state, command);
   if (refusal) return refusal;
   const branch = String(state.branch);
   const spawn = installerSpawn(installer, spawnFn);
-  const awaitSpawnedWork = (what: string) => awaitInstallerSettled(installer, root, what, 'warm');
+  const awaitSpawnedWork = (what: string) => awaitInstallerSettled(installer, root, what, runAgain(command));
 
   const before = resolveFullRef(root, 'HEAD') ?? '';
   if (inspectOnly) {
@@ -689,7 +704,7 @@ export async function refreshMainCheckout({
   }
 
   const plan = checkoutPlan(locallyKnownUpstream(root));
-  if (plan.kind === 'diverged') return divergedRefusal(root, branch, plan);
+  if (plan.kind === 'diverged') return divergedRefusal(root, branch, plan, command);
   if (inspectOnly && plan.kind === 'fast-forward') {
     return { mutation: `fast-forward ${plan.behind} commit${plan.behind === 1 ? '' : 's'}` };
   }
@@ -714,7 +729,7 @@ export async function refreshMainCheckout({
         code: 'STIM_MAIN_DIRTY',
         message: `Refusing to refresh ${root}: git could not fast-forward ${branch} to ${plan.upstream}.`,
         lines: merged.lines,
-        remedy: 'Clear what git reports in the source checkout, then run warm again.',
+        remedy: `Clear what git reports in the source checkout, then run ${runAgain(command)} again.`,
       };
     }
     head = resolveFullRef(root, 'HEAD') ?? before;
@@ -768,7 +783,7 @@ export async function refreshMainCheckout({
       now,
       heartbeatMs,
       emit,
-      again: 'warm',
+      again: runAgain(command),
     });
     if (installFailure) return installFailure;
   }

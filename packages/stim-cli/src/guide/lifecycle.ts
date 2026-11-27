@@ -2877,7 +2877,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --dry-run --pressure <normal|high|critical> --json
-  worktree add     -b <branch> <path> [<commit-ish>]
+  worktree add     -b <branch> --refresh <path> [<commit-ish>]
   worktree warm    --refresh; remove [path] --force
 
   DEVICE SLOTS
@@ -2960,6 +2960,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   worktree's ignored files are
   the ones a warm carries, so the warm rules below apply. An interrupt during
   the clone removes the half-made worktree.
+
+  \`--refresh\` first refreshes the source checkout as \`warm --refresh\`
+  does (below), with the same refusals; a refusal creates no worktree. With
+  no commit-ish, git runs from the source checkout, so the worktree starts at
+  the refreshed source HEAD even when invoked from another worktree.
 
   \`stim worktree warm\` takes one flag, \`--refresh\`. Run it anywhere inside
   the current linked worktree to copy missing ignored entries from its source

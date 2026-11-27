@@ -16,8 +16,8 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
-import { warmOp } from '../commands/worktree.ts';
-import { runCli } from '../cli/define-op.ts';
+import { addOp, warmOp } from '../commands/worktree.ts';
+import { runCli, type Op } from '../cli/define-op.ts';
 import { acquireWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
 import {
   exclusiveClaimDir,
@@ -64,6 +64,10 @@ function commit(dir: string, message: string): void {
 }
 
 function runWarm(cwd: string, ...args: string[]) {
+  return runOp(warmOp, cwd, ...args);
+}
+
+function runOp(op: Op, cwd: string, ...args: string[]) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const warm = (async () => {
@@ -76,7 +80,7 @@ function runWarm(cwd: string, ...args: string[]) {
     const previous = process.cwd();
     try {
       process.chdir(cwd);
-      await runCli(warmOp, [...args], { version: '0.0.0' });
+      await runCli(op, [...args], { version: '0.0.0' });
       return { stdout, stderr: stderr.join(''), code: process.exitCode || 0 };
     } finally {
       process.chdir(previous);
@@ -468,6 +472,55 @@ test('--refresh refuses a dirty source checkout and names the path, but a plain 
   expect(plain.stderr).not.toMatch(/checkout|deps|lock/);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe('{"name":"edited-in-main"}\n');
+}, 120_000);
+
+test('worktree add --refresh fast-forwards the source and installs its moved lockfile, then adds at the new source HEAD', async () => {
+  write(root, 'pnpm-lock.yaml', 'lock v1\n');
+  commit(root, 'lockfile');
+  git(root, 'push', '-q', 'origin', 'main');
+  const published = fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' });
+  const real = getExecutor();
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd) {
+      spawned.push(cmd);
+      return makeExitingChild(0);
+    },
+  });
+  const fresh = join(base, 'fresh');
+
+  const result = await runOp(addOp, target, '--refresh', fresh);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toContain(
+    `checkout    main 1 commit behind origin/main -> fast-forwarded to ${published.slice(0, 7)}`,
+  );
+  expect(spawned).toEqual(['pnpm']);
+  expect(git(root, 'rev-parse', 'HEAD')).toBe(published);
+  expect(git(fresh, 'rev-parse', 'HEAD')).toBe(published);
+  expect(git(fresh, 'branch', '--show-current')).toBe('fresh');
+  expect(readFileSync(join(fresh, 'pnpm-lock.yaml'), 'utf-8')).toBe('lock v2\n');
+}, 120_000);
+
+test('worktree add --refresh refuses a dirty source checkout before git registers anything', async () => {
+  fallBehind({ 'src/new.ts': 'upstream work\n' });
+  write(root, 'package.json', '{"name":"edited-in-main"}\n');
+  const before = git(root, 'rev-parse', 'HEAD');
+  const worktrees = git(root, 'worktree', 'list', '--porcelain');
+  const branches = git(root, 'branch', '--list');
+
+  const result = await runOp(addOp, root, '--refresh', '../fresh');
+
+  expect(result.code).toBe(1);
+  expect(result.stderr).toMatch(/uncommitted changes to tracked files/);
+  expect(result.stderr).toContain('or run plain `stim worktree add`');
+  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
+  expect(existsSync(join(base, 'fresh'))).toBe(false);
+  expect(git(root, 'worktree', 'list', '--porcelain')).toBe(worktrees);
+  expect(git(root, 'branch', '--list')).toBe(branches);
+  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
 }, 120_000);
 
 test('--refresh refuses a source checkout with a merge in progress', async () => {
