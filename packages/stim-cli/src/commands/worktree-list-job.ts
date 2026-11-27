@@ -3,11 +3,7 @@ import { configDir } from '@stim-cli/core';
 import { getExecutor, windowsDetachedLaunchArgs } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
-/**
- * Starts `stim __job worktree-sizes <repository>...` detached, so the sizes `stim worktree list` lacks are measured
- * after it returns. Resolves nothing: the job writes the disk-usage cache the next listing reads. False when the
- * process could not be started.
- */
+/** Starts `stim __job worktree-sizes <repository>...` detached; false when it could not be started. */
 export function startWorktreeSizes(repositories: readonly string[], env: NodeJS.ProcessEnv): boolean {
   const entry = spawnEntry('cli');
   const args = [entry, '__job', 'worktree-sizes', ...repositories];

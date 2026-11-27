@@ -3,9 +3,12 @@ import { diskUsageCacheFile } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { measureWorktreeSizes, worktreeListPayload } from '../commands/worktree-list.ts';
+import { listOp, measureWorktreeSizes, worktreeListPayload } from '../commands/worktree-list.ts';
+import { startWorktreeSizes } from '../commands/worktree-list-job.ts';
 import { getExecutor } from '../exec.ts';
 import { measureTree } from '../private-size.ts';
+
+vi.mock('../commands/worktree-list-job.ts', () => ({ startWorktreeSizes: vi.fn<() => boolean>(() => true) }));
 
 vi.mock('../private-size.ts', async (original) => ({
   ...(await original<typeof import('../private-size.ts')>()),
@@ -119,4 +122,19 @@ it('shows a refreshed rest over an older whole-worktree entry while the dependen
   const payload = await listing();
   const entry = payload.repositories[0]?.worktrees.find((candidate) => candidate.path === roots[1]);
   expect(entry).toMatchObject({ realBytes: 500 + 50, measuredAt: new Date(start).toISOString() });
+});
+
+it('does not start measuring a dependency tree past six hours while its clone group is unchanged', async () => {
+  await listing();
+  vi.setSystemTime(start + 7 * 60 * 60_000);
+  await listing();
+  vi.mocked(startWorktreeSizes).mockClear();
+  vi.spyOn(process, 'cwd').mockReturnValue(roots[0]);
+  const output: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((value) => void output.push(String(value)));
+  await listOp.run?.({ options: { json: true }, args: [], parent: {}, version: 'test' });
+  vi.restoreAllMocks();
+  process.exitCode = 0;
+  expect(vi.mocked(startWorktreeSizes)).not.toHaveBeenCalled();
+  expect(JSON.parse(output[0] ?? '').repositories[0].worktrees[0].measuring).toBeUndefined();
 });

@@ -1,11 +1,19 @@
 import type { StimContext } from '@stim-cli/core';
-import { readDiskUsage, readDiskUsagePartial, readGcMark, readGcMarks, type DaemonMode } from '@stim-cli/core/state';
+import {
+  readDiskUsage,
+  readDiskUsageCloneGroup,
+  readDiskUsagePartial,
+  readGcMark,
+  readGcMarks,
+  type DaemonMode,
+} from '@stim-cli/core/state';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
 import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { runProcessOperation } from '../cli-operation.ts';
-import { freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import { dependencyCloneGroup, freshMeasure, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import { treeSignature } from '../private-size.ts';
 import { daemonMode } from '../daemon/mode.ts';
 import { formatLongDuration, plural } from '../command-output.ts';
 import { formatSize } from '../fs-util.ts';
@@ -23,7 +31,8 @@ import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 const DAY = 86_400_000;
 const OLD_DAYS = 30;
 const LARGE_BYTES = 1024 ** 3;
-const WALK_TIMEOUT_MS = 120_000;
+const BUDGET_MS = 120_000;
+const WALK_TIMEOUT_MS = 30_000;
 const MEASURE_OPTIONS = { private: true, maxAgeMs: 60 * 60_000 };
 
 interface ListingEntry {
@@ -192,17 +201,30 @@ interface SizeJob {
  * validity rule; the rest is stale after an hour. A worktree with a project-local .pnpm-store or a linked ios is one
  * whole entry.
  */
-function dueSizeJobs(roots: readonly string[]): SizeJob[] {
-  return roots
-    .flatMap((root) =>
-      wholeWalk(root)
-        ? [{ path: root, root, options: MEASURE_OPTIONS }]
-        : [
-            ...dependencies(root).map((path) => ({ path, root, options: {} })),
-            { path: restKey(root), root, options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
-          ],
-    )
-    .filter(({ path, options }) => !freshMeasure(path, options));
+async function dueSizeJobs(roots: readonly string[], signal?: AbortSignal): Promise<SizeJob[]> {
+  const signatures = new Map<string, string | null>();
+  const signature = async (path: string) => {
+    if (!signatures.has(path)) signatures.set(path, treeSignature(path));
+    return signatures.get(path) ?? null;
+  };
+  const jobs: SizeJob[] = roots.flatMap((root) =>
+    wholeWalk(root)
+      ? [{ path: root, root, options: MEASURE_OPTIONS }]
+      : [
+          ...dependencies(root).map((path) => ({ path, root, options: {} })),
+          { path: restKey(root), root, options: { ...MEASURE_OPTIONS, targets: () => restTargets(root) } },
+        ],
+  );
+  const due: SizeJob[] = [];
+  for (const job of jobs) {
+    if (freshMeasure(job.path, job.options)) continue;
+    if (trustedMeasure(job.path) && readDiskUsageCloneGroup(job.path) !== null) {
+      const cloneGroup = (await dependencyCloneGroup(job.path, signal, signature)) ?? undefined;
+      if (freshMeasure(job.path, { ...job.options, cloneGroup })) continue;
+    }
+    due.push(job);
+  }
+  return due;
 }
 
 async function listedWorktrees(
@@ -222,13 +244,22 @@ async function listedWorktrees(
 
 /**
  * Walks the missing and stale size-cache entries of the linked worktrees of `repositories`, one at a time under the
- * machine-wide walk claim, and stops when another process holds it. `stim worktree list` starts it detached.
+ * machine-wide walk claim, for at most 30 seconds each and two minutes in all, and stops when another process holds it. `stim worktree list` starts it detached.
  */
 export async function measureWorktreeSizes(repositories: readonly string[], operation?: StimContext): Promise<void> {
   const listed = await listedWorktrees(repositories, operation);
   const roots = listed.flatMap(({ entries }) => entries.map((entry) => canonicalPath(entry.path)));
-  for (const { path, options } of dueSizeJobs(roots)) {
-    const { outcome } = await refreshMeasure(path, { ...options, timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
+  const deadline = Date.now() + BUDGET_MS;
+  for (const { path, options } of await dueSizeJobs(roots, operation?.signal)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return;
+    const { outcome } = await refreshMeasure(path, {
+      ...options,
+      timeoutMs: Math.min(WALK_TIMEOUT_MS, remaining),
+      claim: true,
+      operation,
+      admit: () => Date.now() < deadline,
+    });
     if (outcome === 'busy') return;
   }
 }
@@ -375,9 +406,12 @@ export const listOp: Op = defineOp({
         scope: options.all ? 'machine' : 'repository',
       });
       const due = new Set(
-        dueSizeJobs(payload.repositories.flatMap((repo) => repo.worktrees.map((entry) => entry.path))).map(
-          ({ root }) => root,
-        ),
+        (
+          await dueSizeJobs(
+            payload.repositories.flatMap((repo) => repo.worktrees.map((entry) => entry.path)),
+            operation.signal,
+          )
+        ).map(({ root }) => root),
       );
       if (
         due.size &&
