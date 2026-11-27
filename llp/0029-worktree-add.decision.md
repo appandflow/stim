@@ -167,8 +167,9 @@ whole-second modification time, so an edit in the source that keeps both
 survives into the new worktree.
 
 An index the command cannot vouch for is copied as it is and refreshed whole
-before the reset, with `core.fsmonitor` off for both so the copied fsmonitor
-bitmap hides no file: a SHA-256 repository, a version other than 2 to 4, a
+before the reset, with `core.fsmonitor` off and `core.checkStat` at its default
+for both, so neither the copied fsmonitor bitmap nor a size and time match
+hides a file: a SHA-256 repository, a version other than 2 to 4, a
 checksum that does not match, an extension git requires a reader to
 understand, or bytes that do not parse to the end. A split index is not
 copied, because its entries live in a second file.

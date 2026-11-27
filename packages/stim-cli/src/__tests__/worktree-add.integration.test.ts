@@ -584,7 +584,7 @@ test.skipIf(!clones)(
 );
 
 test.skipIf(!clones)(
-  'a SHA-256 repository is cloned and git reads every tracked file, whatever its fsmonitor hook reports (APFS clone inodes; darwin only)',
+  'a SHA-256 repository is cloned and git reads every tracked file, whatever its fsmonitor hook and core.checkStat say (APFS clone inodes; darwin only)',
   async () => {
     const other = join(base, 'sha256');
     mkdirSync(other);
@@ -593,9 +593,16 @@ test.skipIf(!clones)(
     git(other, 'config', 'user.email', 'test@example.com');
     git(other, 'config', 'commit.gpgsign', 'false');
     git(other, 'config', 'index.skipHash', 'true');
+    git(other, 'config', 'core.checkStat', 'minimal');
     write(other, 'src/kept.txt', 'tracked\n');
+    write(other, 'src/same-size.txt', 'tracked\n');
     git(other, 'add', '.');
     git(other, 'commit', '-qm', 'first');
+    const longAgo = new Date('2020-01-01');
+    utimesSync(join(other, 'src/same-size.txt'), longAgo, longAgo);
+    git(other, 'update-index', '--refresh');
+    write(other, 'src/same-size.txt', 'TRACKED\n');
+    utimesSync(join(other, 'src/same-size.txt'), longAgo, longAgo);
     write(base, 'fsmonitor.sh', "#!/bin/sh\nprintf 'token\\0'\n");
     chmodSync(join(base, 'fsmonitor.sh'), 0o755);
     git(other, 'config', 'core.fsmonitor', join(base, 'fsmonitor.sh'));
