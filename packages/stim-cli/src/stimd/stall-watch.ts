@@ -9,8 +9,8 @@ interface Longest {
   next: string | null;
 }
 
-let clock: () => number = () => performance.now();
-let windowStart = clock();
+let clock: (() => number) | null = null;
+let windowStart = 0;
 let current: { label: string; at: number } | null = null;
 let longest: Longest = { segment: null, segmentMs: 0, next: null };
 
@@ -20,8 +20,9 @@ function close(at: number, next: string | null): void {
   if (ms > longest.segmentMs) longest = { segment: current.label, segmentMs: ms, next };
 }
 
-/** Names the main-thread code that starts now, for the `daemon_stall` record of a stall that blocks the loop in it. */
+/** Names the code that starts now, for the `daemon_stall` record of a stall that blocks the loop in it; a no-op until `watchStalls` runs. */
 export function markSegment(label: string): void {
+  if (!clock) return;
   const at = clock();
   close(at, label);
   current = { label, at };
@@ -79,6 +80,6 @@ export function watchStalls(
   timer.unref();
   return () => {
     clearInterval(timer);
-    clock = () => performance.now();
+    clock = null;
   };
 }
