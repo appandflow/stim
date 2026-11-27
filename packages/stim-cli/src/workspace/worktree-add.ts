@@ -7,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import { clonePairs, describeCloneFailure } from '../clone.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { getExecutor } from '../exec.ts';
-import { cloneAsCheckout } from './clone-as-checkout.ts';
+import { cloneAsCheckout, readCheckout } from './clone-as-checkout.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { childEnvironment } from './git-read.ts';
@@ -128,15 +128,23 @@ export async function cloneCheckout({
   const gitDir = async (dir: string) => (await gitAsync(dir, ['rev-parse', '--absolute-git-dir'], read)).trim();
   const index = join(await gitDir(target), 'index');
   await rm(index, { force: true });
-  const failure = (
-    await clonePairs(operation, [
-      ...whole.map((rel) => [join(root, rel), join(target, rel)] as const),
-      [join(await gitDir(root), 'index'), index],
-    ])
-  ).find((result) => result !== null);
+  const [copied] = await clonePairs(operation, [[join(await gitDir(root), 'index'), index]]);
+  if (copied) throw new Error(describeCloneFailure(copied));
+  // git check-attr reads the index, and ioctl(FICLONE) on Linux fills a destination that already exists, so the index
+  // is cloned before the checkout reads start beside the other clones.
+  const [cloned, checkout] = await Promise.allSettled([
+    clonePairs(
+      operation,
+      whole.map((rel) => [join(root, rel), join(target, rel)] as const),
+    ),
+    readCheckout(target, operation),
+  ]);
+  if (cloned.status === 'rejected') throw cloned.reason;
+  const failure = cloned.value.find((result) => result !== null);
   if (failure) throw new Error(describeCloneFailure(failure));
+  if (checkout.status === 'rejected') throw checkout.reason;
   // @ref LLP 0029#the-index-is-refreshed-before-the-reset -- reset rewrites every file whose stat data it cannot trust
-  await cloneAsCheckout(target, operation);
+  await cloneAsCheckout(target, checkout.value, operation);
   // git(1): --attr-source reads .gitattributes from that commit instead of the working tree, where the clone put the
   // source checkout's files, untracked ones included. git-config(1): under core.checkStat=minimal a clone matches
   // its source's entry by size and whole-second time, and git-update-index(1): the copied index's fsmonitor bitmap

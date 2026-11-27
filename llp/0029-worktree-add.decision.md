@@ -194,8 +194,11 @@ saves disk, not time. On a clone of this repository with 18 `node_modules`
 folders (3.9 GB), a worktree 50 commits behind took about the same time as
 `git worktree add` then `stim worktree warm`, a `clonefile` of the dependency
 folders being about 2 s of both, and held 9 MB of private disk against 113 MB,
-or 0 MB against 113 MB at the source's own commit. Git work started beside the
-`clonefile` call waits for it, so the two do not overlap.
+or 0 MB against 113 MB at the source's own commit. The refresh reads the
+clones, so it starts after the `clonefile` call. The configuration checks,
+`git ls-tree -l` and `git check-attr --source=HEAD` read only the
+configuration and the object database, so they run beside it; the index is
+cloned first, because `check-attr` reads it.
 
 ## A clone is kept only as a checkout writes it
 
@@ -268,4 +271,7 @@ four calls at a time. On a checkout of 19,021 tracked files the step adds about
   `stim worktree remove` keeps it.
 - Writing the clones' stat data into the copied index directly, which would
   remove the refresh. Stat data cannot prove that a clone holds its blob's
-  bytes (#6547).
+  bytes (#6547). Every clone has a new inode and change time, so no subset of
+  the entries matches its stat data without that. The refresh is the hashing:
+  on 19,021 tracked files it took 2.7 s, against 2.4 s for
+  `git hash-object --stdin-paths` over the same files (#6562).

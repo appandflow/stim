@@ -308,26 +308,36 @@ test.skipIf(!clones)(
   60_000,
 );
 
-test('a worktree added inside the source checkout carries no other worktree', async () => {
-  const other = join(root, '.worktrees/other');
-  git(root, 'worktree', 'add', '-q', '-b', 'other', other);
-  write(other, 'in-progress.txt', 'work in another worktree\n');
-  write(root, '.worktrees/notes.txt', 'beside the worktrees\n');
+test.each([
+  ['carries no other worktree', true],
+  ['does not carry the folder that holds it when no worktree was there before', false],
+])(
+  'a worktree added inside the source checkout %s',
+  async (_, another) => {
+    const other = join(root, '.worktrees/other');
+    if (another) {
+      git(root, 'worktree', 'add', '-q', '-b', 'other', other);
+      write(other, 'in-progress.txt', 'work in another worktree\n');
+    }
+    write(root, '.worktrees/notes.txt', 'beside the worktrees\n');
 
-  const added = await run(addOp, root, ['-b', 'added', '.worktrees/added']);
-  const path = join(root, '.worktrees/added');
+    const added = await run(addOp, root, ['-b', 'added', '.worktrees/added']);
+    const path = join(root, '.worktrees/added');
 
-  expect(added.code).toBe(0);
-  expect(added.stderr).toContain(clones ? 'as a clone of' : 'with git worktree add');
-  expect(existsSync(join(path, '.worktrees'))).toBe(false);
-  expect(texts(path, 'node_modules/pkg/index.js', 'src/kept.txt')).toEqual({
-    'node_modules/pkg/index.js': 'package\n',
-    'src/kept.txt': 'second\n',
-  });
-  expect(git(path, 'status', '--porcelain')).toBe('');
-  expect(readFileSync(join(other, 'in-progress.txt'), 'utf-8')).toBe('work in another worktree\n');
-  expect(git(other, 'branch', '--show-current')).toBe('other');
-}, 60_000);
+    expect(added.code).toBe(0);
+    expect(added.stderr).toContain(clones ? 'as a clone of' : 'with git worktree add');
+    expect(existsSync(join(path, '.worktrees'))).toBe(false);
+    expect(texts(path, 'node_modules/pkg/index.js', 'src/kept.txt')).toEqual({
+      'node_modules/pkg/index.js': 'package\n',
+      'src/kept.txt': 'second\n',
+    });
+    expect(git(path, 'status', '--porcelain')).toBe('');
+    if (!another) return;
+    expect(readFileSync(join(other, 'in-progress.txt'), 'utf-8')).toBe('work in another worktree\n');
+    expect(git(other, 'branch', '--show-current')).toBe('other');
+  },
+  60_000,
+);
 
 test.skipIf(!clones)(
   'a directory the warm leaves out is never cloned, at the top level or inside a tracked folder (needs a volume that clones)',
