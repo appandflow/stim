@@ -321,6 +321,7 @@ app; Stim never uninstalls it.
 ```bash
 stim worktree add -b <branch> <path> [<commit-ish>]
 stim worktree add <path> [<commit-ish>]
+stim worktree add --refresh -b <branch> <path> [<commit-ish>]
 ```
 
 Creates a linked worktree and warms it. It takes three arguments of
@@ -340,7 +341,13 @@ does. The files are the same either way, and the command prints which way it
 took and why: `unsupported` for a file system that cannot clone, such as
 ext4, `cross-device` for another volume, or `failed` with the error. On
 Windows Git always creates the worktree, and the warm clones the ignored
-folders on ReFS or a Dev Drive ([#6554](https://github.com/appandflow/stim/issues/6554)). See [worktrees](./worktrees.md).
+folders on ReFS or a Dev Drive ([#6554](https://github.com/appandflow/stim/issues/6554)).
+
+`--refresh` first fast-forwards the source checkout and reinstalls
+dependencies when its lockfiles moved, as `worktree warm --refresh` does, with
+the same refusals. A refusal creates no worktree. With no commit-ish, the
+worktree starts at the refreshed source checkout's `HEAD`, even when you run
+the command from another worktree. See [worktrees](./worktrees.md).
 
 ### `worktree warm`
 

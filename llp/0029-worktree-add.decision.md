@@ -8,8 +8,8 @@
 
 ## One command creates a warmed worktree
 
-`stim worktree add [-b <branch>] <path> [<commit-ish>]` creates a linked
-worktree and warms it. It takes the path, `-b <branch>` and commit of
+`stim worktree add [--refresh] [-b <branch>] <path> [<commit-ish>]` creates a
+linked worktree and warms it. It takes the path, `-b <branch>` and commit of
 `git worktree add`, no other option of it, and runs `git worktree add` with
 them from the current directory, so a relative path, a default `HEAD` and Git's branch
 guessing behave as they do in Git, and the result is an ordinary Git worktree.
@@ -22,6 +22,31 @@ Maintainer decision: "I would create stim worktree add, and keep warm only if a 
 Maintainer decision: "Yea I think we should keep using source checkout as template", 2026-11-26 (#6542).
 
 Maintainer decision: "Everything sounds good so lets impl it and delay 2.0 a bit", 2026-11-26 (#6542).
+
+## Refresh runs first
+
+`--refresh` runs the refresh of `stim worktree warm --refresh` on the source
+checkout before anything else: the same code, claims, facts and refusals
+(`STIM_MAIN_DIRTY`, `STIM_MAIN_DETACHED`, `STIM_MAIN_DIVERGED`), with remedies
+that name `stim worktree add`. A refusal or a failed install prints the
+remedy, exits 1 and creates nothing: git has not registered the worktree or
+created a branch. The refresh releases its claims before the add takes its
+own on the source checkout, so a refresh by another command can land between
+the two; the add then clones the newer source.
+
+With no commit-ish, `git worktree add` runs from the source checkout instead of
+the current directory, so the default `HEAD` is the refreshed source `HEAD` and
+Git's branch guessing still names the branch after the path. Run from the
+source checkout this is what plain `add` does; from another worktree, plain
+`add` starts from that worktree's `HEAD`. Reason: a refresh whose new commits
+the worktree did not start from would only have updated the dependencies it
+carries. A commit-ish keeps the current directory, as without `--refresh`.
+
+The JavaScript API's `addWorktree` has no `refresh`, as `warmWorktree` has none.
+
+Maintainer decision: "Just realized we're missing the --refresh flag on worktree add", 2026-11-27 (#6596).
+
+Maintainer decision: "hold 2.0 for it", 2026-11-27 (#6596).
 
 ## The source checkout is cloned when it can be
 

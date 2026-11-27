@@ -74,7 +74,12 @@ import {
   type BuildAreaRecord,
 } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
-import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
+import {
+  incompleteInstallRefusal,
+  refreshMainCheckout,
+  type RefreshCommand,
+  type RefreshFailure,
+} from '../workspace/worktree-refresh.ts';
 import { readRemoteSession } from '../stimd/metro/state.ts';
 import { workspaceManagedTunnel } from '../daemon/client.ts';
 import {
@@ -394,6 +399,104 @@ export const warmOp: Op = defineOp({
   },
 });
 
+function readWarmSettings(root: string, common: string, out: (line: string) => void): SettingsObject | null {
+  const settings = resolveSettings({
+    gitCommonDir: common,
+    repoRoot: root,
+  });
+  const shapeErrors = settingShapeErrors(settings);
+  if (shapeErrors.length) {
+    for (const message of shapeErrors) out(chalk.red(message));
+    out(chalk.dim(SETTING_SHAPE_REMEDY));
+    return null;
+  }
+  for (const key of unknownSettingKeys(settings)) {
+    out(chalk.yellow(inertSettingWarning(key)));
+  }
+  return settings;
+}
+
+/**
+ * The `--refresh` of `stim worktree warm` and `stim worktree add`: fast-forwards the source checkout `root` and
+ * installs what the new commits moved. `whileCurrent` runs under the shared claim when there is nothing to change.
+ * A refusal or failure is reported before it returns `failed`.
+ */
+async function refreshSourceCheckout(opts: {
+  root: string;
+  appDir: () => string;
+  readSettings: () => SettingsObject | null;
+  operation: StimContext;
+  out: (line: string) => void;
+  command: RefreshCommand;
+  whileCurrent?: () => Promise<void>;
+}): Promise<'failed' | 'current' | 'refreshed'> {
+  const { root, readSettings, operation, out, command } = opts;
+  const mutation = await withWarmClaim(
+    {
+      repositoryRoot: root,
+      phase: 'refresh',
+      mode: 'shared',
+      signal: operation.signal,
+      declareSpawnsFor: operation,
+      out,
+    },
+    async (hold) => {
+      const settings = readSettings();
+      if (!settings) return 'failed' as const;
+      const lines: string[] = [];
+      const result = await refreshMainCheckout({
+        root,
+        appDir: opts.appDir(),
+        settings,
+        iosProject: appIosProjectDir(opts.appDir()),
+        emit: (line) => lines.push(line),
+        inspectOnly: true,
+        command,
+      });
+      if (!result || !('mutation' in result)) {
+        out(warmClaimAcquiredLine(hold.wait, result ? 'shared' : 'shared (seed current)'));
+        for (const line of lines) out(line);
+        if (result) {
+          reportRefreshFailure(result, out);
+          return 'failed' as const;
+        }
+        await opts.whileCurrent?.();
+        return 'current' as const;
+      }
+      return result.mutation;
+    },
+  );
+  if (mutation === 'failed' || mutation === 'current') return mutation;
+  const failure = await withWarmClaim(
+    {
+      repositoryRoot: root,
+      phase: 'refresh',
+      out,
+      signal: operation.signal,
+    },
+    async (hold) => {
+      out(warmClaimAcquiredLine(hold.wait, `exclusive (${mutation})`));
+      const settings = readSettings();
+      if (!settings) return 'failed' as const;
+      return refreshMainCheckout({
+        root,
+        appDir: opts.appDir(),
+        settings,
+        iosProject: appIosProjectDir(opts.appDir()),
+        emit: (line) => out(line),
+        installer: hold.installer,
+        command,
+      });
+    },
+  );
+  if (failure === 'failed') return 'failed';
+  if (failure) {
+    reportRefreshFailure(failure, out);
+    return 'failed';
+  }
+  return 'refreshed';
+}
+
 export async function warmWorktreeTarget(opts: {
   cwd: string;
   refresh?: boolean;
@@ -441,22 +544,7 @@ export async function warmWorktreeTarget(opts: {
         note: (line) => out(chalk.yellow(line)),
       });
     }
-    const readSettings = (): SettingsObject | null => {
-      const settings = resolveSettings({
-        gitCommonDir: common,
-        repoRoot: root,
-      });
-      const shapeErrors = settingShapeErrors(settings);
-      if (shapeErrors.length) {
-        for (const message of shapeErrors) out(chalk.red(message));
-        out(chalk.dim(SETTING_SHAPE_REMEDY));
-        return null;
-      }
-      for (const key of unknownSettingKeys(settings)) {
-        out(chalk.yellow(inertSettingWarning(key)));
-      }
-      return settings;
-    };
+    const readSettings = () => readWarmSettings(root, common, out);
     const copy = async (wait: WarmClaimWait | null): Promise<void> => {
       const state = operationState(operation);
       const wasDraining = state.draining;
@@ -589,73 +677,17 @@ export async function warmWorktreeTarget(opts: {
       }
     };
     if (opts.refresh) {
-      const mutation = await withWarmClaim(
-        {
-          repositoryRoot: root,
-          phase: 'refresh',
-          mode: 'shared',
-          signal: operation.signal,
-          declareSpawnsFor: operation,
-          out,
-        },
-        async (hold) => {
-          const settings = readSettings();
-          if (!settings) {
-            exitCode = 1;
-            return null;
-          }
-          const lines: string[] = [];
-          const result = await refreshMainCheckout({
-            root,
-            appDir: mainCheckoutAppDir(root, target, opts.cwd),
-            settings,
-            iosProject: appIosProjectDir(mainCheckoutAppDir(root, target, opts.cwd)),
-            emit: (line) => lines.push(line),
-            inspectOnly: true,
-          });
-          if (!result || !('mutation' in result)) {
-            out(warmClaimAcquiredLine(hold.wait, result ? 'shared' : 'shared (seed current)'));
-            for (const line of lines) out(line);
-            if (result) {
-              reportRefreshFailure(result, out);
-              exitCode = 1;
-            } else await copy(null);
-            return null;
-          }
-          return result.mutation;
-        },
-      );
-      if (mutation === null) return { exitCode };
-      const failure = await withWarmClaim(
-        {
-          repositoryRoot: root,
-          phase: 'refresh',
-          out,
-          signal: operation.signal,
-        },
-        async (hold) => {
-          out(warmClaimAcquiredLine(hold.wait, `exclusive (${mutation})`));
-          const settings = readSettings();
-          if (!settings) {
-            exitCode = 1;
-            return null;
-          }
-          return refreshMainCheckout({
-            root,
-            appDir: mainCheckoutAppDir(root, target, opts.cwd),
-            settings,
-            iosProject: appIosProjectDir(mainCheckoutAppDir(root, target, opts.cwd)),
-            emit: (line) => out(line),
-            installer: hold.installer,
-          });
-        },
-      );
-      if (failure) {
-        reportRefreshFailure(failure, out);
-        exitCode = 1;
-        return { exitCode };
-      }
-      if (exitCode) return { exitCode };
+      const refreshed = await refreshSourceCheckout({
+        root,
+        appDir: () => mainCheckoutAppDir(root, target, opts.cwd),
+        readSettings,
+        operation,
+        out,
+        command: 'warm',
+        whileCurrent: () => copy(null),
+      });
+      if (refreshed === 'failed') exitCode = 1;
+      if (refreshed !== 'refreshed') return { exitCode };
     }
     if (opts.precloned) await copy(null);
     else
@@ -726,6 +758,7 @@ export async function addWorktreeTarget(opts: {
   path: string;
   branch?: string;
   commitish?: string;
+  refresh?: boolean;
   operation: StimContext;
 }): Promise<{ exitCode: 0 | 1; path: string }> {
   const operation = opts.operation;
@@ -737,6 +770,21 @@ export async function addWorktreeTarget(opts: {
   if ('refusal' in checkout) throw new Error(checkout.refusal);
   const root = realpathSync(checkout.path);
   const path = resolve(opts.cwd, opts.path);
+  if (opts.refresh) {
+    const common = await gitCommonDirAsync(root, reads);
+    if (!common) throw new Error('Could not find the git directory of the source checkout.');
+    const refreshed = await refreshSourceCheckout({
+      root,
+      appDir: () => mainCheckoutAppDir(root, realpathSync(current), opts.cwd),
+      readSettings: () => readWarmSettings(root, realpathSync(common), out),
+      operation,
+      out,
+      command: 'add',
+    });
+    if (refreshed === 'failed') return { exitCode: 1, path };
+  }
+  // @ref LLP 0029#refresh-runs-first -- with no commit-ish, the worktree starts from the refreshed source HEAD
+  const addFrom = opts.refresh && !opts.commitish ? root : opts.cwd;
   const git: NonNullable<Parameters<typeof gitAsync>[2]> = {
     ...childEnvironment(operation.env),
     declareFor: operation,
@@ -745,7 +793,7 @@ export async function addWorktreeTarget(opts: {
   };
   const add = (flags: string[], onSpawn?: ReturnType<typeof showOutput>) =>
     gitAsync(
-      opts.cwd,
+      addFrom,
       [
         'worktree',
         'add',
@@ -2509,17 +2557,29 @@ export const addOp: Op = defineOp({
       flags: '-b, --branch <branch>',
       description: 'create this branch at the commit-ish and check it out in the new worktree',
     },
+    refresh: {
+      flags: '--refresh',
+      description:
+        'Before adding, fast-forward the source checkout to its upstream and install what the new commits moved, as worktree warm --refresh does. With no commit-ish, the worktree starts from the refreshed source HEAD.',
+    },
   },
   run: async ({ args: [path, commitish], options: opts }) => {
     const { value, interrupted } = await runProcessOperation(process.cwd(), async (operation) => {
       try {
-        return await addWorktreeTarget({ cwd: operation.cwd, path, branch: opts.branch, commitish, operation });
+        return await addWorktreeTarget({
+          cwd: operation.cwd,
+          path,
+          branch: opts.branch,
+          commitish,
+          refresh: opts.refresh,
+          operation,
+        });
       } catch (error) {
         if (!operation.signal.aborted || error instanceof WorkspaceProcessCleanupError) {
           const failure = error instanceof Error ? error : new Error(String(error));
           const code = 'code' in failure ? failure.code : undefined;
           console.error(chalk.red(`Could not add the worktree: ${failure.message}`));
-          const claim = claimFailure(error, 'stim worktree add');
+          const claim = claimFailure(error, `stim worktree add${opts.refresh ? ' --refresh' : ''}`);
           if (claim) console.error(chalk.dim(claim.remedy));
           if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
         }
