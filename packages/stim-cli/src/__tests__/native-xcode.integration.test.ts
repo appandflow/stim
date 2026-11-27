@@ -702,20 +702,18 @@ test('an idle native iOS build checks peers before taking a compile slot, then s
     maxBuilds: 1,
     maxLoadPerCore: 2,
   });
-  vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-    localEnabled: true,
-    machines: [
-      {
-        machine: 'mini',
-        transport: 'tailscale',
-        address: 'mini.tail.ts.net',
-        deviceId: 'builder',
-        serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
-        state: 'approved',
-        requestedAt: '2026-10-12T00:00:00.000Z',
-      },
-    ],
-  });
+  const mini = {
+    machine: 'mini',
+    transport: 'tailscale',
+    address: 'mini.tail.ts.net',
+    deviceId: 'builder',
+    serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+    state: 'approved',
+    requestedAt: '2026-10-12T00:00:00.000Z',
+  } as const;
+  mkdirSync(dirname(sharedState.buildMachinesFile()), { recursive: true });
+  writeFileSync(sharedState.buildMachinesFile(), JSON.stringify({ version: 2, machines: [mini] }));
+  vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({ localEnabled: true, machines: [mini] });
   const compile = vi.spyOn(xcode, 'buildXcode').mockRejectedValue(new Error('Must reuse without compiling'));
   const choose = vi.spyOn(offload, 'chooseBuildMachine').mockImplementation(async (options) => {
     expect(options.cacheOnly).toBe(true);
@@ -740,7 +738,7 @@ test('an idle native iOS build checks peers before taking a compile slot, then s
       machine: 'mini',
       cacheHit: true,
       artifactPath,
-      serverKey: 'w'.repeat(43),
+      serverKey: mini.serverKey,
       compilationCache: xcode.COMPILATION_CACHE_NOT_RUN,
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
       timings: {
