@@ -1,8 +1,18 @@
 import type { StimContext } from '@stim-cli/core';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, lchmodSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lchmodSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { getExecutor } from '../exec.ts';
 import { childEnvironment } from './git-read.ts';
@@ -53,8 +63,29 @@ async function refuseCheckoutConfig(target: string, operation: StimContext): Pro
     throw new Error('attr.tree or GIT_ATTR_SOURCE names another source of attributes');
   // git-config(1), core.attributesFile: read beside the commit's attributes, so one inside the worktree is a file
   // the clone brought from the source checkout.
-  if (attributesFile && (!isAbsolute(attributesFile) || isPathPrefix(target.toLowerCase(), attributesFile)))
+  if (
+    attributesFile &&
+    (!isAbsolute(attributesFile) ||
+      [attributesFile, throughLinks(attributesFile)].some((path) =>
+        isPathPrefix(target.toLowerCase(), path.toLowerCase()),
+      ))
+  )
     throw new Error('core.attributesFile names a file in the worktree');
+}
+
+/** `path` with its deepest existing folder resolved through links, so a link into the worktree is seen as one. */
+function throughLinks(path: string): string {
+  for (let dir = dirname(path); ; dir = dirname(dir)) {
+    const real = (() => {
+      try {
+        return realpathSync.native(dir);
+      } catch {
+        return null;
+      }
+    })();
+    if (real) return join(real, relative(dir, path));
+    if (dirname(dir) === dir) return path;
+  }
 }
 
 interface CheckoutPlan {
