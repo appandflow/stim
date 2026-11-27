@@ -2,7 +2,7 @@ import { listOp } from './worktree-list.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { existsSync, realpathSync, rmSync, statSync } from 'fs';
+import { existsSync, lstatSync, realpathSync, rmSync, statSync } from 'fs';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { exactOwnedEntry } from '../workspace/cargo-target.ts';
@@ -83,6 +83,7 @@ import {
   depsOutOfSync,
   deleteBranchAsync,
   cloneIgnoredEntries,
+  listCarryableIgnoredEntries,
   listGitignoredEntries,
   dirtyPathsAsync,
   gitCommonDirAsync,
@@ -673,6 +674,31 @@ export async function warmWorktreeTarget(opts: {
 
 const CLEANUP_TIMEOUT_MS = 30_000;
 
+/**
+ * The ignored directories of the source checkout `root` that a warm leaves out or checks before carrying. A wrong
+ * answer costs time only: the warm copies what is missing and the prune removes what it did not carry.
+ */
+async function uncarriedDirectories(root: string, operation: StimContext): Promise<Set<string>> {
+  const reads = { env: operation.env, signal: operation.signal, declareFor: operation };
+  const common = await gitCommonDirAsync(root, reads);
+  let settings: WorktreeSettings = {};
+  try {
+    if (common) settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
+  } catch {}
+  const excluded = readWorktreeExclude(root);
+  const patterns = excluded?.length ? excluded : settings.worktree?.exclude || [];
+  const carried = new Set(await listCarryableIgnoredEntries(root, patterns, reads));
+  const expoNative = (rel: string) =>
+    ['ios', 'android'].includes(basename(rel)) && detectIsExpo(join(root, dirname(rel)));
+  return new Set(
+    (await listGitignoredEntries(root, reads)).filter(
+      (rel) =>
+        (!carried.has(rel) || expoNative(rel) || exactTargetWithheld(root, rel) !== null) &&
+        lstatSync(join(root, rel), { throwIfNoEntry: false })?.isDirectory(),
+    ),
+  );
+}
+
 function lastLine(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).trim().split('\n').at(-1) ?? '';
 }
@@ -789,6 +815,7 @@ export async function addWorktreeTarget(opts: {
               })
             ).split('\n'),
           );
+          const skipped = await uncarriedDirectories(root, operation);
           await add(['--no-checkout']);
           let gitDir = '';
           let ref = '';
@@ -800,7 +827,7 @@ export async function addWorktreeTarget(opts: {
                 bounded(),
               )
             ).split('\n');
-            await cloneCheckout({ root, target: realpathSync(path), helper: source.helper, operation });
+            await cloneCheckout({ root, target: realpathSync(path), helper: source.helper, skipped, operation });
           } catch (error) {
             await discardWorktree({
               cwd: opts.cwd,

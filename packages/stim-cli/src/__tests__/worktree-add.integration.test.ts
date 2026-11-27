@@ -244,6 +244,37 @@ test('a worktree added inside the source checkout carries no other worktree', as
   expect(git(other, 'branch', '--show-current')).toBe('other');
 }, 60_000);
 
+test.skipIf(!clones)(
+  'a directory the warm leaves out is never cloned, at the top level or inside a tracked folder (APFS clonefile; darwin only)',
+  async () => {
+    write(root, '.worktreeexclude', 'build\n');
+    write(root, 'build/large/output.bin', 'left out at the top level\n');
+    write(root, 'src/.idea/workspace.xml', 'left out inside a tracked folder\n');
+    write(root, 'src/node_modules/nested/index.js', 'carried inside a tracked folder\n');
+    write(root, '.git/info/exclude', '.idea/\n');
+    const real = getExecutor();
+    const cloned: string[] = [];
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file.includes('stim-clonefile')) cloned.push(...args.filter((_: string, index: number) => index % 2 === 0));
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+
+    const added = await run(addOp, root, ['-b', 'added', '../added']);
+    resetExecutor();
+
+    expect(added.stderr).toContain('as a clone of');
+    expect(cloned).toContain(join(root, 'node_modules'));
+    expect(cloned).toContain(join(root, 'src/node_modules'));
+    expect(cloned).toContain(join(root, 'src/kept.txt'));
+    expect(cloned.filter((path) => /\/(build|\.idea|src)$/.test(path))).toEqual([]);
+    expect(tree(join(base, 'added'))).toEqual(tree(await plain('plain')));
+  },
+  60_000,
+);
+
 test('an edit git hides in the source checkout does not reach the new worktree', async () => {
   git(root, 'update-index', '--assume-unchanged', 'src/kept.txt');
   write(root, 'src/kept.txt', 'hidden edit\n');

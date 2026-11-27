@@ -30,8 +30,10 @@ helper available, the command does not check files out:
 
 1. `git worktree add --no-checkout` registers the worktree.
 2. One `clonefile(2)` call per top-level entry of the source checkout clones
-   the tracked and the ignored files together, skipping `.git` and every entry
-   that is or holds another worktree. One more clones the source's index.
+   the tracked and the ignored files together, skipping `.git`, every entry
+   that is or holds another worktree, and every ignored directory the warm
+   leaves out or checks before carrying. An entry that holds such a directory
+   is cloned child by child around it. One more call clones the source's index.
 3. `git -c core.checkStat=minimal reset --hard` rewrites only the tracked files
    that differ from the target commit, which restores files the source had
    edited or deleted.
@@ -76,6 +78,14 @@ An entry the warm checks under a claim before carrying it, such as an Expo
 claim, is deleted and copied again under that claim. The first clone ran
 outside it, so a prebuild in the source checkout could have been rewriting the
 folder.
+
+The directories the warm will not carry are worked out before the clone and
+never cloned; the removal afterwards is the safety net for what that misses,
+such as files. Reason: cloning a large folder only to delete it costs more than
+the checkout it replaces. On a checkout with an ignored `.pnpm-store` of 88,000
+files and another ignored folder of 154,000, the command took 20 s against 6 s
+for the plain path until those were skipped. A wrong guess costs time only: the
+warm copies what is missing and the removal takes what it did not carry.
 
 A submodule folder is emptied by removing files, and no git command runs inside
 it. Submodules are supported, not refused.
@@ -134,7 +144,9 @@ commits behind took about the same time as `git worktree add` then
 `stim worktree warm`: a median 3.4 s against 3.2 s over six alternating runs
 on a loaded machine, a `clonefile` of the dependency folders being about 2 s of
 both. The new worktree held 9 MB of private disk against 113 MB, and 0 MB
-against 113 MB at the source's own commit. Git work started beside the
+against 113 MB at the source's own commit. On a working checkout of this
+repository with 56 worktrees, three alternating runs at load average 40 took
+10.2 to 15.9 s against 11.7 to 15.9 s. Git work started beside the
 `clonefile` call waited for it, so the two do not overlap.
 
 ## Not decided

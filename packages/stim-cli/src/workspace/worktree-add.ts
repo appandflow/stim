@@ -61,7 +61,7 @@ export async function cloneSource(
 
 /**
  * Fills `target`, a worktree made with `git worktree add --no-checkout`, from the source checkout `root`: one
- * clonefile(2) call per top-level entry and one for the index, then git writes only the tracked files that differ
+ * clonefile(2) call per top-level entry, or per child where the entry holds a skipped directory, and one for the index, then git writes only the tracked files that differ
  * from the target commit and removes what is neither tracked nor ignored there. Submodule paths end empty, as
  * `git worktree add` leaves them.
  */
@@ -69,11 +69,14 @@ export async function cloneCheckout({
   root,
   target,
   helper,
+  skipped,
   operation,
 }: {
   root: string;
   target: string;
   helper: string;
+  /** Directories of `root` the warm will not carry, which are never cloned: deleting a large one costs more than a checkout. */
+  skipped: ReadonlySet<string>;
   operation: StimContext;
 }): Promise<void> {
   const read = gitOptions(operation);
@@ -83,7 +86,15 @@ export async function cloneCheckout({
     signal: operation.signal,
     declareFor: operation,
   });
-  const names = (await readdir(root)).filter((name) => name !== '.git' && !overlapsNestedWorktree(name, nested));
+  const whole: string[] = [];
+  const plan = async (rel: string): Promise<void> => {
+    if (skipped.has(rel)) return;
+    if (![...skipped].some((entry) => entry.startsWith(`${rel}/`))) return void whole.push(rel);
+    await mkdir(join(target, rel));
+    for (const name of await readdir(join(root, rel))) await plan(`${rel}/${name}`);
+  };
+  for (const name of await readdir(root))
+    if (name !== '.git' && !overlapsNestedWorktree(name, nested)) await plan(name);
   const gitDir = async (dir: string) => (await gitAsync(dir, ['rev-parse', '--absolute-git-dir'], read)).trim();
   const index = join(await gitDir(target), 'index');
   await rm(index, { force: true });
@@ -91,7 +102,7 @@ export async function cloneCheckout({
     operation,
     getExecutor(),
     helper,
-    [...names.flatMap((name) => [join(root, name), join(target, name)]), join(await gitDir(root), 'index'), index],
+    [...whole.flatMap((rel) => [join(root, rel), join(target, rel)]), join(await gitDir(root), 'index'), index],
     { timeoutMs: 'unbounded', cwd: target },
   );
   // git-config(1): core.checkStat=minimal compares only size and whole-second mtime, which a clone keeps; the inode
