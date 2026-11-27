@@ -90,40 +90,52 @@ export function startHistoryFeed({
     });
     return serial;
   };
-  const accept = async (text: string) => {
+  let received: string[] = [];
+  const accept = async () => {
+    const batch = received;
+    received = [];
     if (failed || closing) return;
-    const message: unknown = JSON.parse(text);
-    if (!isJsonObject(message)) throw new Error('the FSEvents helper sent a malformed record');
-    if (message.generation !== generation) return;
-    const dev = Number(message.dev);
-    const watched = byDevice.get(dev);
-    if (!watched || !Number.isSafeInteger(message.eventId) || Number(message.eventId) < 0)
-      throw new Error('the FSEvents helper sent an invalid device or event id');
-    let changed: string[] = [];
-    if (typeof message.purged === 'string') changed = watched;
-    else if (Array.isArray(message.dirty)) {
-      changed = message.dirty.map((index: unknown) => {
-        const root = typeof index === 'number' ? watched[index] : undefined;
-        if (!Number.isSafeInteger(index) || root === undefined)
-          throw new Error('the FSEvents helper sent an invalid root index');
-        return root;
-      });
-    } else if (message.historyDone !== true) throw new Error('the FSEvents helper sent an unknown record');
-    if (changed.length) await dirty(changed, Date.now());
-    const previous = checkpoints[String(dev)];
-    const eventId = Number(message.eventId);
-    const last = lastEvent.get(dev);
-    if (last !== undefined && eventId < last) throw new Error('the FSEvents helper event id went backwards');
-    lastEvent.set(dev, eventId);
-    const uuid = message.uuid === null || typeof message.uuid === 'string' ? message.uuid : previous?.uuid;
-    if (uuid === undefined) return;
-    const next = {
-      ...checkpoints,
-      [String(dev)]: { uuid, eventId, sinceAt: Math.floor(Date.now() / 1000), roots: watched },
-    };
-    writeHistoryCheckpoints(next);
-    checkpoints = next;
-    if (message.purged === 'fd-limit') {
+    const changed = new Set<string>();
+    let next = checkpoints;
+    let fdLimit = false;
+    for (const text of batch) {
+      const message: unknown = JSON.parse(text);
+      if (!isJsonObject(message)) throw new Error('the FSEvents helper sent a malformed record');
+      if (message.generation !== generation) continue;
+      const dev = Number(message.dev);
+      const watched = byDevice.get(dev);
+      if (!watched || !Number.isSafeInteger(message.eventId) || Number(message.eventId) < 0)
+        throw new Error('the FSEvents helper sent an invalid device or event id');
+      let named: string[] = [];
+      if (typeof message.purged === 'string') named = watched;
+      else if (Array.isArray(message.dirty)) {
+        named = message.dirty.map((index: unknown) => {
+          const root = typeof index === 'number' ? watched[index] : undefined;
+          if (!Number.isSafeInteger(index) || root === undefined)
+            throw new Error('the FSEvents helper sent an invalid root index');
+          return root;
+        });
+      } else if (message.historyDone !== true) throw new Error('the FSEvents helper sent an unknown record');
+      for (const root of named) changed.add(root);
+      const previous = next[String(dev)];
+      const eventId = Number(message.eventId);
+      const last = lastEvent.get(dev);
+      if (last !== undefined && eventId < last) throw new Error('the FSEvents helper event id went backwards');
+      lastEvent.set(dev, eventId);
+      const uuid = message.uuid === null || typeof message.uuid === 'string' ? message.uuid : previous?.uuid;
+      if (uuid !== undefined)
+        next = { ...next, [String(dev)]: { uuid, eventId, sinceAt: Math.floor(Date.now() / 1000), roots: watched } };
+      if (message.purged === 'fd-limit') {
+        fdLimit = true;
+        break;
+      }
+    }
+    if (changed.size) await dirty([...changed], Date.now());
+    if (next !== checkpoints) {
+      writeHistoryCheckpoints(next);
+      checkpoints = next;
+    }
+    if (fdLimit) {
       for (const root of changed) invalidated.add(root);
       await fallback('the FSEvents watch exceeds the helper descriptor limit');
     }
@@ -153,7 +165,11 @@ export function startHistoryFeed({
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-4096);
     });
-    if (child.stdout) createInterface({ input: child.stdout }).on('line', (line) => void enqueue(() => accept(line)));
+    if (child.stdout)
+      createInterface({ input: child.stdout }).on('line', (line) => {
+        received.push(line);
+        if (received.length === 1) void enqueue(accept);
+      });
   };
   return {
     update(nextRoots) {

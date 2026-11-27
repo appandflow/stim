@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { GC_MARK_VERSION, gcMarkFile, readGcMark } from '@stim-cli/core/state';
 import { startHistoryFeed, type HistoryFeed } from '../fsevents-helper.ts';
+import * as historyState from '../fsevents-state.ts';
 import { dirtyGcMarks, readHistoryCheckpoints } from '../fsevents-state.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { writeCacheFile } from '../cache-file.ts';
@@ -106,6 +107,26 @@ test('replacement watches replay from the durable cursor and ignore old root ind
   expect(dirty).toHaveBeenCalledTimes(1);
   expect(dirty.mock.calls[0]?.[0]).toEqual(['/projects/b']);
   expect(readHistoryCheckpoints()['1']?.eventId).toBe(12);
+});
+
+test('the lines of one flush cost one dirty acknowledgement and one checkpoint write', async () => {
+  const roots = [...ROOTS, { root: '/projects/b', device: 1 }];
+  const dirty = vi.fn<(roots: readonly string[], at: number) => Promise<void>>(async () => {});
+  feed = startHistoryFeed({ binary, sha256, dirty, log: vi.fn<(reason: string) => void>(), platform: 'darwin' });
+  await feed.update(roots);
+  dirty.mockClear();
+  const write = vi.spyOn(historyState, 'writeHistoryCheckpoints');
+  const flush = Array.from(
+    { length: 38 },
+    (_, index) =>
+      `${JSON.stringify({ generation: 1, dev: 1, dirty: [index % 2], uuid: 'uuid', eventId: 100 + index })}\n`,
+  );
+  output.emit('data', Buffer.from(flush.join('')));
+  await feed.changed([]);
+  expect(dirty).toHaveBeenCalledTimes(1);
+  expect(dirty.mock.calls[0]?.[0]).toEqual(['/projects/a', '/projects/b']);
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(readHistoryCheckpoints()['1']).toMatchObject({ uuid: 'uuid', eventId: 137 });
 });
 
 test('a dirty-write failure retains the prior checkpoint', async () => {
