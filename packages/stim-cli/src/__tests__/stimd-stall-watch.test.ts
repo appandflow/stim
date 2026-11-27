@@ -34,4 +34,18 @@ describe('stimd stall watch', () => {
       ],
     ]);
   });
+
+  test('a stall record that takes long to write does not count as the next stall', () => {
+    let clock = 0;
+    const log = vi.fn<DaemonLog>(() => {
+      clock += 1500;
+    });
+    stop = watchStalls(log, { thresholdMs: 1000, intervalMs: 100, now: () => clock, threadCpuMs: () => null });
+    clock = 1200;
+    vi.advanceTimersByTime(100);
+    clock += 100;
+    vi.advanceTimersByTime(100);
+
+    expect(log).toHaveBeenCalledOnce();
+  });
 });

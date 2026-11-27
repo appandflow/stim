@@ -57,7 +57,7 @@ export function watchStalls(
   let cpuAt = threadCpuMs();
   const timer = setInterval(() => {
     const at = now();
-    const cpu = threadCpuMs();
+    let cpu = threadCpuMs();
     const stallMs = Math.round(at - windowStart - intervalMs);
     if (stallMs >= thresholdMs) {
       close(at, null);
@@ -72,8 +72,9 @@ export function watchStalls(
           segmentMs: Math.round(longest.segmentMs),
         },
       );
+      cpu = threadCpuMs();
     }
-    windowStart = at;
+    windowStart = now();
     longest = { segment: null, segmentMs: 0, next: null };
     cpuAt = cpu;
   }, intervalMs);
