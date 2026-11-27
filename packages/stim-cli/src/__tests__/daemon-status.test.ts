@@ -279,7 +279,7 @@ describe('an exclusive holder of the daemon claim', () => {
       'a stim-daemon record',
       () => ({ socket: legacyDaemonSocket(), mode: 'on' }),
       true,
-      `stimd does not stop it, so run ${legacyDaemonStop(process.pid)}`,
+      'the next command that starts stimd stops it',
     ],
     [
       'another record',
