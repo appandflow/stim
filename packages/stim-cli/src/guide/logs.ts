@@ -391,7 +391,7 @@ waits on) and is forced. With daemon.mode off, each loop while stimd stays up
 writes daemon_tick_off.
 Each daemon_tick has phases (ms per pass) and tail, the ms of the work after
 the passes: stateMs, pendingMs, pacerMs, snapshotMs, engineDirsMs,
-engineCheckMs, updateMs; a part under 1 ms is absent. A main-thread stall of
+engineCheckMs, updateMs; a part that rounds to 0 ms is absent. A main-thread stall of
 1 s or more writes daemon_stall (info): stallMs, segment and segmentMs (the
 marked code that held the loop longest, and for how long), next (the mark
 after it), and cpuMs (the main thread's CPU meanwhile; near 0 means blocked in
