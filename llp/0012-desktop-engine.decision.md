@@ -154,9 +154,17 @@ once only for a subscriber, and one that arrives during a sweep never aborts
 it but makes one more sweep follow. `refreshing` is set while a sweep runs, and
 `error` carries the last failed sweep's reason while none does; a failure keeps
 the last good report, and the next sweep waits 5 minutes unless fresh is asked
-for. The sweep has a 15 minute budget instead of the API's 60
-seconds, and it saves its result to `$STIM_HOME/gc/report-cache.json` (written
-by the CLI's gc read, read by core), so a restarted stimd answers from it.
+for. The sweep runs on stimd's report thread, beside the passes thread, not
+in the net thread: stim-server asks stimd for it over the CLI socket
+(`gc.report`), as `stim gc --dry-run --refresh` does, so one sweep at a time
+serves every reader, and an ask after an invalidation gets a sweep that
+started after it. The sweep has a 15 minute budget instead of the API's 60
+seconds, and stimd saves its result to `$STIM_HOME/gc/report-cache.json`, the
+one writer of that file (read by core), so a restarted stimd answers from it
+and stim-server takes a newer sweep another reader caused from it. The file
+holds when the sweep and each of its parts started. Only without a stimd, as
+in tests, does stim-server read the report in its own thread, and then it
+writes nothing.
 Phone machine details read the same entry. Desktop reads without invalidating
 on its polls, every 15 seconds while a sweep runs or no report exists (backing
 off to 5 minutes after failures) and every 5 minutes otherwise, and asks for
@@ -177,4 +185,4 @@ bound (about three of the slowest sweeps seen), the 15 minute sweep budget, the
 - [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [machine engine paths](../apps/desktop/Sources/StimKit/EngineState.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).
 - [Failing a command whose stimd went away](../packages/stim-cli/src/daemon/client.ts).
 - [stimd socket](../packages/stim-cli/src/stimd/main.ts) and [Desktop bootstrap proof](../packages/server/src/desktop-bootstrap.ts).
-- [The cached gc report](../packages/server/src/desktop-reports.ts) and [Desktop's polls](../apps/desktop/Sources/StimStores/GcReportStore.swift).
+- [The cached gc report](../packages/server/src/desktop-reports.ts), [stimd's sweeps](../packages/stim-cli/src/stimd/gc-report.ts) and [Desktop's polls](../apps/desktop/Sources/StimStores/GcReportStore.swift).

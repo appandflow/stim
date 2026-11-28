@@ -1,5 +1,5 @@
 import { hkdfSync } from 'node:crypto';
-import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, mkdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -34,6 +34,7 @@ import {
   shareLinkKey,
   shareRouteClaimRoot,
   readGcReportCache,
+  gcReportCacheFile,
 } from '@stim-cli/core/state';
 import { createRequestLog } from './request-log.ts';
 import { loadAudit } from './actions.ts';
@@ -76,7 +77,7 @@ import {
   type DoctorTarget,
 } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
-import { DesktopReports, GC_REPORT_BUDGET_MS } from './desktop-reports.ts';
+import { DesktopReports, GC_REPORT_BUDGET_MS, type CachedReport } from './desktop-reports.ts';
 import {
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
@@ -89,7 +90,7 @@ import {
   type VideoCodec,
 } from './protocol.ts';
 import { StimError } from 'stim';
-import { createLocalStim } from 'stim/internal/api-self';
+import { createLocalStim, readGcReportThroughStimd } from 'stim/internal/api-self';
 import { worktreePullRequests } from 'stim/internal/pull-requests';
 import { pauseShareLinkAsync } from 'stim/internal/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
@@ -650,6 +651,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     cwd = homedir(),
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
+    fresh = false,
   ): Promise<DetailsRead> => {
     const abort = new AbortController();
     if (signal?.aborted) abort.abort();
@@ -661,8 +663,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       await task;
     };
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
+    let measuredAt: number | undefined;
     task = Promise.resolve()
       .then(async () => {
+        if (method === 'gc') {
+          // @ref LLP 0012#the-gc-report-answers-from-its-cache -- stimd's shared sweep reads and caches the gc report
+          const shared = await readGcReportThroughStimd({ fresh }, abort.signal);
+          if (shared && shared !== 'started') {
+            measuredAt = Date.parse(shared.measuredAt);
+            return shared.report;
+          }
+        }
         const stim = createLocalStim({ projectRoot: cwd, env: options.env, admission: 'none' });
         if (method === 'gc-history' || method === 'builds')
           return {
@@ -675,14 +686,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
         if (method === 'remote') return await stim.remoteMachines({ signal: abort.signal });
         return method === 'gc'
-          ? await stim.gc({ signal: abort.signal, measureBuildState: false, budgetMs: timeoutMs, record: true })
+          ? await stim.gc({ signal: abort.signal, measureBuildState: false, budgetMs: timeoutMs })
           : await stim.stats({ signal: abort.signal });
       })
       .then(
         (report): DetailsRead => {
           if (method !== 'stats' && Buffer.byteLength(JSON.stringify(report)) > commandLimits.maxOutputBytes)
             return { ok: false, message: `stim ${method} printed more than ${commandLimits.maxOutputBytes} bytes.` };
-          return { ok: true, report: { ...report } };
+          return { ok: true, report: { ...report }, ...(measuredAt === undefined ? {} : { measuredAt }) };
         },
         (cause: unknown): DetailsRead => ({
           ok: false,
@@ -699,19 +710,30 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(cancel);
     return task;
   };
+  let seededGc: { mtimeMs: number; report: CachedReport | null } | undefined;
   const desktopReports = new DesktopReports(
-    (target, signal) =>
+    (target, signal, fresh) =>
       readDetailsReport(
         target.report,
         target.report === 'doctor' ? target.cwd : undefined,
         target.report === 'doctor' ? target.platform : undefined,
         signal,
+        fresh,
       ),
     undefined,
     undefined,
     () => {
-      const cache = readGcReportCache();
-      return cache && { value: cache.report, at: Date.parse(cache.measuredAt) };
+      let mtimeMs: number;
+      try {
+        mtimeMs = statSync(gcReportCacheFile()).mtimeMs;
+      } catch {
+        return null;
+      }
+      if (seededGc?.mtimeMs !== mtimeMs) {
+        const cache = readGcReportCache();
+        seededGc = { mtimeMs, report: cache && { value: cache.report, at: Date.parse(cache.measuredAt) } };
+      }
+      return seededGc.report;
     },
   );
   const machineDetails = new MachineDetailsCache(() =>

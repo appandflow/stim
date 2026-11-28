@@ -388,7 +388,7 @@ Ask the user before these actions:
   you run it from: an app you are not driving right now stops. It never
   touches a workspace that is building, driven, leased, shared with stim
   share, hosted or pinned by maintenance.keep. Run stim gc --dry-run first
-  (add --json for the sections) and show the user what it would delete
+  (--json adds sections; --refresh after worktree changes) and show the user what it would delete
   (guide facts gc); stim gc deletes, and --pressure <normal|high|critical>
   picks the level. The CLI has no flag that picks one cache or item; Stim
   Desktop does.

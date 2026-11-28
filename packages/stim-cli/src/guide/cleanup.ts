@@ -54,7 +54,8 @@ maintenance pass in its own process, and start, ios and android run it, the
 idle stage for owned devices whose workspace has no running dev server, and the
 pressure ladder from rung 2 before they build; no other command starts one, and
 with daemon.mode off none runs. gc --dry-run prints what an acting gc would
-delete at the measured level, or at the --pressure level.
+delete at the measured level from stimd's cached report (--refresh measures
+again), or at the --pressure level from a scan in its own process.
 Normal volumes run high cleanup toward disk.minFreeGb plus
 5-minute fill rate × (first measured reclaim time + next tick). Status prints rates; doctor flags an uncleared target after an hour. Trash estimates never
 train it; pressure/refusals stay unchanged.
@@ -282,7 +283,8 @@ DISK PRESSURE
   stim status                     last checks, plan and running pass
   stim status --json              maintenance observations and recent records
   stim logs --source maintenance  this workspace's maintenance records
-  stim gc --dry-run               what gc would delete now, live pressure, cached sizes
+  stim gc --dry-run               what gc would delete, from stimd's cached report
+  stim gc --dry-run --refresh     the same, measured again now
   stim settings set daemon.mode off --scope machine     turn automatic cleanup off
   stim settings set daemon.mode report --scope machine  plan and log, delete nothing
 
@@ -534,11 +536,25 @@ After updating Stim Host, unregister and register the helper again.`,
   stim gc                       one maintenance pass now at the level the machine
                                 measures; deletes
   stim gc --dry-run             reports what that run would delete; deletes nothing
+  stim gc --dry-run --refresh   has stimd measure again now instead of answering
+                                from its cached report
   stim gc --pressure <level>    runs at normal, high or critical instead of the
                                 measured level (add --dry-run to preview it)
   stim gc --json                one payload (\`guide facts gc\`)
   Agents suggest \`stim gc --dry-run\` first and run \`stim gc\` only when the
-  user asks to free space. The CLI cannot pick one item to delete. Single
+  user asks to free space. Pass --refresh right after adding or removing
+  worktrees or after an acting gc, when the cached report predates the change.
+
+  A dry run answers from stimd's cached report ($STIM_HOME/gc/report-cache.json),
+  the one Stim Desktop shows, and prints when it was measured; JSON adds
+  measured {from, at, parts}, each part's time no older than its rows. stimd's
+  sweep is its only writer. A cached report older than 15 minutes still answers,
+  says so, and asks stimd to measure again in the background. With no cached
+  report the dry run waits for stimd's sweep; with no stimd, or with --pressure,
+  it scans in its own process (measured.from scan) and leaves the cache as it
+  is. The cached sweep reads build-state sizes only from the disk-usage cache,
+  so a stale one is unmeasured. An acting \`stim gc\` never reads the cache: it
+  reads every candidate fresh before it deletes. The CLI cannot pick one item to delete. Single
   items (one cache, the build outputs of idle workspaces, one archive or one
   part of it, watchman, Gradle daemons) are deleted from Stim Desktop, which
   asks stim-server for them (desktop.gc.item.subscribe on its Unix-socket

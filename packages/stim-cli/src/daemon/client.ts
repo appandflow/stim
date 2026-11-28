@@ -35,6 +35,8 @@ import {
   stimdSocket,
   userHome,
   type DaemonMode,
+  type GcReportCache,
+  parseGcReportCache,
   UPGRADE_GUIDE_URL,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
@@ -2294,4 +2296,47 @@ export async function runGcThroughStimd(
       () => {},
     );
   return terminal;
+}
+
+/**
+ * Asks this home's running stimd for its shared gc report sweep, which writes `$STIM_HOME/gc/report-cache.json`: with
+ * `fresh`, one that starts no earlier than this request; otherwise the one under way or a new one. `background` returns
+ * once the sweep is under way. Resolves with null when no stimd runs or it closes without answering, as a stimd of an
+ * older build does, so the caller reads in its own process; it never starts a stimd.
+ */
+export function readGcReportThroughStimd(
+  { fresh = false, background = false }: { fresh?: boolean; background?: boolean },
+  signal?: AbortSignal,
+): Promise<GcReportCache | 'started' | null> {
+  if (!stimdLive()) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error: Error | null, answer: GcReportCache | 'started' | null = null) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(answer);
+    };
+    const socket = openStimd([{ op: 'gc.report', params: { fresh, background } }], (message) => {
+      if (message.op === 'gc.report.started') return finish(null, 'started');
+      const cache = message.op === 'gc.report.done' ? parseGcReportCache(message.cache) : null;
+      if (cache) return finish(null, cache);
+      finish(
+        Object.assign(
+          new Error(typeof message.message === 'string' ? message.message : 'stimd refused the gc report'),
+          {
+            code: typeof message.code === 'string' ? message.code : 'STIM_RUN_FAILED',
+            remedy: typeof message.remedy === 'string' ? message.remedy : 'Run the command again.',
+          },
+        ),
+      );
+    });
+    const abort = () =>
+      finish(signal?.reason instanceof Error ? signal.reason : new Error('The gc report was cancelled.'));
+    if (signal?.aborted) return abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    socket.once('close', () => finish(null, null));
+  });
 }

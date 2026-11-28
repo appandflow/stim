@@ -1,9 +1,8 @@
 import type { DesktopReportSnapshot, DesktopReportTarget } from './protocol.ts';
 import type { DetailsRead } from './machine-details.ts';
+import { GC_REPORT_STALE_MS } from '@stim-cli/core/state';
 
 const MAX_REPORT_READS = 4;
-/** A cached gc report older than this starts a background refresh; about three of the slowest sweeps seen (#6606). */
-export const GC_REPORT_STALE_MS: number = 15 * 60_000;
 /** The gc report's read budget in the background, instead of the API's 60 seconds that a large machine exceeds. */
 export const GC_REPORT_BUDGET_MS: number = 15 * 60_000;
 /** How long a failed gc refresh with no earlier report waits before a read starts another. */
@@ -44,13 +43,13 @@ export class DesktopReports {
   private activeLoads = 0;
   /** An invalidation reached the gc report before its entry existed, so the seeded report is stale. */
   private gcInvalidated = false;
-  private readonly load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>;
+  private readonly load: (target: DesktopReportTarget, signal: AbortSignal, fresh: boolean) => Promise<DetailsRead>;
   private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly seed: (target: DesktopReportTarget) => CachedReport | null;
 
   constructor(
-    load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>,
+    load: (target: DesktopReportTarget, signal: AbortSignal, fresh: boolean) => Promise<DetailsRead>,
     ttlMs = 60_000,
     now: () => number = Date.now,
     seed: (target: DesktopReportTarget) => CachedReport | null = () => null,
@@ -66,6 +65,7 @@ export class DesktopReports {
     if (this.closed) return { pending: false, value: null, error: 'The server is closing.' };
     const entry = this.entry(target);
     if (entry.cached) {
+      if (!entry.pending) this.reseed(entry);
       if (!entry.pending && this.refreshAt(entry) <= this.now()) this.start(entry);
       return this.snapshot(entry);
     }
@@ -175,6 +175,15 @@ export class DesktopReports {
     return entry;
   }
 
+  /** Takes a newer report another reader of stimd's shared sweep left in the cache, such as `stim gc --dry-run --refresh`. */
+  private reseed(entry: Entry): void {
+    const cached = entry.cached;
+    const seeded = cached && this.seed(entry.target);
+    if (!cached || !seeded || seeded.at <= (cached.good?.at ?? -Infinity)) return;
+    cached.good = seeded;
+    if (cached.failure && cached.failure.at <= seeded.at) delete cached.failure;
+  }
+
   /** When `entry` should read again: its settled read's expiry, or for the gc report its staleness or retry time. */
   private refreshAt(entry: Entry): number {
     if (entry.cached) {
@@ -203,6 +212,7 @@ export class DesktopReports {
     if (admitted) this.activeLoads++;
     const generation = entry.generation;
     const startedAt = this.now();
+    const fresh = Boolean(entry.cached?.stale);
     if (entry.cached) delete entry.cached.stale;
     const abort = new AbortController();
     const promise = Promise.resolve()
@@ -213,7 +223,7 @@ export class DesktopReports {
             ok: false,
             message: `The server is already running ${MAX_REPORT_READS} shared reports. Try again after a report finishes.`,
           };
-        return this.load(entry.target, abort.signal);
+        return this.load(entry.target, abort.signal, fresh);
       })
       .catch((cause: unknown): DetailsRead => ({
         ok: false,
@@ -227,7 +237,7 @@ export class DesktopReports {
         if (entry.cached) {
           const { stale } = entry.cached;
           entry.cached = result.ok
-            ? { good: { value: result.report, at: startedAt } }
+            ? { good: { value: result.report, at: result.measuredAt ?? startedAt } }
             : { ...entry.cached, failure: { message: result.message, at: this.now() } };
           if (stale) entry.cached.stale = stale;
           entry.settled = { result, at: this.now(), generation };

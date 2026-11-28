@@ -1211,6 +1211,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
         marks: () => ({ result: Promise.resolve({ marks: true as const }), leave() {} }),
         drainTrash: async () => {},
+        report: () => ({ result: new Promise(() => {}), leave: () => {} }),
         run: async () => [],
         abort: () => {},
         settle: () => {},
@@ -1303,6 +1304,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
         marks: () => ({ result: Promise.resolve({ marks: true as const }), leave() {} }),
         drainTrash: async () => {},
+        report: () => ({ result: new Promise(() => {}), leave: () => {} }),
         run: async (name) => {
           if (name !== worker) return [];
           if (failed) return [];
@@ -1375,6 +1377,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
       marks: () => ({ result: Promise.resolve({ marks: true as const }), leave() {} }),
       drainTrash: async () => {},
+      report: () => ({ result: new Promise(() => {}), leave: () => {} }),
       run: async (name) => {
         if (name !== 'measure') return [];
         throw Object.assign(new Error('Report child 4242 did not close within the cleanup budget.'), {
@@ -1450,6 +1453,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
         marks: () => ({ result: Promise.resolve({ marks: true as const }), leave() {} }),
         drainTrash: async () => {},
+        report: () => ({ result: new Promise(() => {}), leave: () => {} }),
         run: async (name) => {
           if (worker === 'measure' && name === 'measure') throw failure;
           return [];
