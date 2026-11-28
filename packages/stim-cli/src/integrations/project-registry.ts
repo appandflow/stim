@@ -20,6 +20,8 @@ interface ProjectProblem {
 interface ProjectMatch {
   root: 'explicit' | 'candidate' | false;
   application: boolean;
+  // @ref LLP 0023#frozen-and-experimental-plugin-kinds -- a yielding match serves an operation only when no other match does
+  yields?: boolean;
   ownedRoots?: readonly string[];
   platforms(resolved: ResolvedProjectSettings): ProjectPlatform[];
   android?(resolved: ResolvedProjectSettings): Promise<AndroidProject>;
@@ -79,7 +81,9 @@ function operationSelection(
   });
   const unreadable = results.find(({ problem }) => problem?.kind === 'unreadable');
   if (unreadable?.problem) return { problem: unreadable.problem };
-  const providers = results.filter(({ problem }) => problem === null);
+  const serving = results.filter(({ problem }) => problem === null);
+  const bundled = serving.filter(({ match }) => !match.yields);
+  const providers = bundled.length ? bundled : serving;
   if (providers.length > 1)
     return {
       problem: {

@@ -34,6 +34,8 @@ export interface AndroidSourcePreparation {
 export interface AndroidArtifactRecipe {
   /** The APK carries its builder's JS bundle, so a copy built elsewhere is never installed as-is. */
   embedsJs?: boolean;
+  /** What compiles the APK, as the build phase names it. Gradle when absent. */
+  compiler?: string;
   providerCache?(provider: CacheProvider): BuildCacheCapability | undefined;
   identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */

@@ -17,13 +17,13 @@ async function digest(path: string, signal?: AbortSignal): Promise<string> {
   return hash.digest('hex');
 }
 
-async function inspectApk(
+export async function inspectApk(
   path: string,
   sdk: string,
   abi: string | null,
   operation?: StimContext,
   signal?: AbortSignal,
-) {
+): Promise<{ androidPackage: string; signers: string[]; abis: string[]; sha256: string }> {
   signal?.throwIfAborted();
   if (!(await stat(path)).isFile()) throw new Error('The native APK is not a regular file.');
   const signer = findBuildTool(['apksigner'], { home: sdk });

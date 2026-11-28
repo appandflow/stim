@@ -864,7 +864,7 @@ export async function acquireAndroidArtifact(
     }
     requireLocalBuild(buildMachine);
     record.builtOn = 'here';
-    phase('build', `compiling ${variant || 'debug'} with Gradle`);
+    phase('build', `compiling ${variant || 'debug'} with ${recipe.compiler ?? 'Gradle'}`);
     const built = await recipe.compile();
     ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
     phase('cache', `compilation cache ${ccacheActivityLine(ccacheActivity)}`);

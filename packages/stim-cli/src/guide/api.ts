@@ -352,13 +352,27 @@ directories by absolute path (a leading ~ is the home folder):
   stim settings set plugins '["~/src/stim-plugin-godot"]' --scope machine
 
 A folder holding every marker as a file is a project root of that type:
-worktree add and warm register it and status names it. It has no platform, so
-ios, android, macos and start refuse with STIM_NO_PROJECT naming the type; a
-root a bundled integration builds keeps its build and run. id is lowercase
-letters, digits and hyphens, not a bundled integration's or an earlier
-plugin's; name is one line; markers are 1 to 16 file names, no path separator
-or glob. Stim never imports the plugin's code and rereads the list when
-config.json or a named package.json changes, so stimd needs no restart.
+worktree add and warm register it and status names it. Without targets it has
+no platform, so ios, android, macos and start refuse with STIM_NO_PROJECT
+naming the type; a root a bundled integration builds keeps its build and run.
+id is lowercase letters, digits and hyphens, not a bundled integration's or an
+earlier plugin's; name is one line; markers are 1 to 16 file names, no path
+separator or glob. Stim never imports the plugin's code and rereads the list
+when config.json or a named package.json changes, so stimd needs no restart.
+
+project.targets.android declares the one build Stim runs for the type:
+
+  "targets": { "android": { "build": { "output": "apk",
+    "debug": ["godot", "--headless", "--path", "{root}",
+      "--export-debug", "Android", "{output}"] } } }
+
+stim android runs that list in the project root with no shell, installs the
+APK written at {output} on the workspace's emulator and launches it as a
+native process. The executable is an absolute path or a bare name on PATH,
+and a .exe on Windows. {root} and {output} are whole arguments and the only
+placeholders; {output} appears once. An optional release list serves
+--variant release. No cache, no offload, and no physical or hosted device.
+An unknown target key or field rejects the manifest.
 
   stim plugin list [--json]
   stim plugin test <plugin> [--json]

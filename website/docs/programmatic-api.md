@@ -129,7 +129,8 @@ in `stim guide api`.
 
 A `project` plugin teaches Stim to recognise a project type it does not
 bundle, such as a Godot game. It has no code: its `package.json` names the
-type and the files that mark a project root.
+type and the files that mark a project root, and can declare the command that
+builds the project for Android.
 
 ```json
 {
@@ -150,10 +151,63 @@ type:
 
 - `stim worktree add` and `stim worktree warm` register it like any project,
   and `stim status` names the type.
-- It has no platform. `stim ios`, `stim android`, `stim macos` and `stim start`
-  refuse with `STIM_NO_PROJECT` and name the type; build and run the project
-  with its own tools. `stim web` still opens a `web.url` you configure.
+- Without `targets` it has no platform. `stim ios`, `stim android`,
+  `stim macos` and `stim start` refuse with `STIM_NO_PROJECT` and name the
+  type; build and run the project with its own tools. `stim web` still opens a
+  `web.url` you configure.
 - A folder that is also an app Stim builds keeps its build and run.
+
+#### An Android build
+
+`targets.android` declares the one build Stim runs for the type. This is the
+Godot plugin's:
+
+```json
+"project": {
+  "id": "godot",
+  "name": "Godot",
+  "markers": ["project.godot"],
+  "targets": {
+    "android": {
+      "build": {
+        "debug": ["godot", "--headless", "--path", "{root}", "--export-debug", "Android", "{output}"],
+        "release": ["godot", "--headless", "--path", "{root}", "--export-release", "Android", "{output}"],
+        "output": "apk"
+      }
+    }
+  }
+}
+```
+
+`stim android` in such a project runs the `debug` list, takes the APK the
+command wrote, installs it on the workspace's own emulator and launches it as
+a native process with no Metro. `stim android --variant release` runs the
+`release` list when the plugin declares one.
+
+- Each list is the executable and its arguments. Stim runs it in the project
+  root as written, with no shell.
+- The executable is an absolute path or a bare command name that Stim finds
+  on `PATH`. A relative path rejects the manifest, so the program comes from
+  the project folder only if your own `PATH` names that folder. A project
+  still chooses the variant with its `android.variant` setting, and the
+  program reads the project's files.
+- On Windows the file Stim finds must be a `.exe`. A script, a `.cmd` or a
+  `.bat` file fails the build: each starts through an interpreter or `cmd.exe`
+  that looks in the project folder first.
+- An argument that is exactly `{root}` becomes the project root, and one that
+  is exactly `{output}` becomes a file in Stim's state for the workspace, not
+  in the project. `{output}` appears exactly once, and no other argument
+  contains a `{name}`.
+- The command writes one signed, standalone APK there. Stim reads the package
+  name from the APK.
+- The build is never cached and never runs on a build machine, and a physical
+  or hosted device refuses. `stim ios`, `stim macos` and `stim start` still
+  refuse.
+- The executable needs whatever it builds with on the machine: for
+  Godot, the export templates of its version and the Android SDK path and
+  keystore in its editor settings. A Godot export also writes `.import` and
+  `.uid` files next to new assets in the project.
+- A target or field this Stim does not know rejects the manifest.
 
 The rules for the manifest:
 

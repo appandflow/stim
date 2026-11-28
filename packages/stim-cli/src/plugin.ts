@@ -67,6 +67,8 @@ export {
   runProjectContract,
   type ProjectContractOptions,
   type ProjectContractResult,
+  type ProjectPluginAndroidTarget,
+  type ProjectPluginCommand,
   type ProjectPluginManifest,
 } from './project-plugin.ts';
 export * from './agent-driver-kit.ts';

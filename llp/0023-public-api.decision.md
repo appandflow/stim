@@ -87,9 +87,9 @@ The `@stim-cli/cache-s3` peer range tracks the published Stim version so the
 The `project` kind is experimental as well, and it is the one experimental kind
 that loads from outside the package. A project plugin is a directory whose
 `package.json` declares `stimPlugin.kinds.project` and a `stimPlugin.project`
-block (`ProjectPluginManifest`: `id`, `name`, `markers`). The block is the whole
-contract, so the kind exposes no host internals, and its integer may change in a
-minor release like the other two.
+block (`ProjectPluginManifest`: `id`, `name`, `markers` and the optional
+`targets`). The block is the whole contract, so the kind exposes no host
+internals, and its integer may change in a minor release like the other two.
 
 - Stim reads the manifest and imports no module of the plugin. Project
   detection is synchronous and runs in `status`, `stop`, `logs`, discovery and
@@ -99,9 +99,30 @@ minor release like the other two.
   repository of another framework does not have. An entry is an absolute
   directory; a package name is not accepted, because no install location for
   one is decided.
-- A match has no platform and answers every operation with a problem, so it
-  never competes with a bundled integration for the same root, and a plugin
-  cannot declare a bundled integration's id or one an earlier entry holds.
+- A match with no `targets` has no platform and answers every operation with
+  a problem. A plugin cannot declare a bundled integration's id or one an
+  earlier entry holds.
+- `targets.android.build` declares the Android build: a `debug` argument list,
+  an optional `release` one, and `"output": "apk"`. `stim android` runs the
+  list in the project root with no shell
+  ([LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations)),
+  installs the APK it wrote at `{output}` on the workspace's owned emulator
+  and launches it as a native process. The executable is an absolute path or
+  a bare name found on `PATH`, never a relative path, and on Windows a native
+  `.exe`. `{root}` and `{output}`
+  are whole arguments and the only placeholders. The build is never cached or
+  offloaded, and a physical or hosted device refuses.
+- A match that serves an operation yields it to a bundled integration that
+  serves the same operation in the same root, so a plugin never takes a build
+  Stim already runs and never makes a root ambiguous.
+- A target key or field this Stim does not know rejects the manifest. A
+  command that Stim would run while ignoring part of its declaration is worse
+  than an entry `stim plugin list` reports as rejected.
+- Maintainer decision: "Sure", 2026-11-28
+  ([comment](https://github.com/appandflow/stim/issues/6599#issuecomment-7236966014)).
+  It answered whether to build the Android target first. The field name
+  `targets`, the command shape and the yield rule are choices of the pull
+  request that added them, not the maintainer's words.
 - The list is read again when `config.json` or a named `package.json` changes
   on disk, so stimd follows `stim settings set plugins` without a restart.
 
