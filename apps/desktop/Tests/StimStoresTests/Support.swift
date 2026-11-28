@@ -34,3 +34,14 @@ func until(_ condition: @MainActor () -> Bool) async -> Bool {
 func settle() async {
   try? await Task.sleep(nanoseconds: 150_000_000)
 }
+
+final class Locked<Value>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Value
+
+  init(_ value: Value) { stored = value }
+
+  var value: Value { lock.withLock { stored } }
+
+  func update(_ change: (inout Value) -> Void) { lock.withLock { change(&stored) } }
+}
