@@ -66,7 +66,7 @@ describe('a discovered checkout in the idle stages', () => {
       utimesSync(path, old, old);
     utimesSync(join(app, 'android', 'app', 'build'), old, old);
     const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
-    const probe = vi.spyOn(gitCommands, 'gitQuietAsync');
+    const probe = vi.spyOn(gitCommands, 'gitAsync');
     const walks = () => probe.mock.calls.filter(([cwd, args]) => cwd === app && args[0] === 'check-ignore').length;
     const operation = testContext();
     const close = openGitReads(operation);

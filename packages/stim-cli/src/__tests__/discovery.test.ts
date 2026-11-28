@@ -136,7 +136,7 @@ describe('scanSourceWrites', () => {
     return root;
   };
   const slowIgnoreProbe = () =>
-    vi.spyOn(gitCommands, 'gitQuietAsync').mockImplementation(async () => {
+    vi.spyOn(gitCommands, 'gitAsync').mockImplementation(async () => {
       vi.advanceTimersByTime(20_000);
       return '';
     });

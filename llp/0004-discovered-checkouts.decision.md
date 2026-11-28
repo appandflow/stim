@@ -569,8 +569,10 @@ the scan (`scanSourceWrites`) visits every entry outside dependency, build and
 `.git` folders within 15 seconds and finds no recent write. A scan that runs out
 of time reports the activity as unknown, so the checkout is kept and listed
 under Needs a person, and Stim reuses that verdict for an hour without walking
-again. Each folder read, entry read and `git check-ignore` probe gets only the time
-left, a read that does not answer counts as running out of time (it takes the
+again. The scan reads one depth of the tree at a time and asks `git check-ignore`
+once for every build-named folder at that depth; when git refuses the whole list,
+as one path inside a submodule makes it do, it asks again folder by folder. Each
+folder read, entry read and `git check-ignore` probe gets only the time left, a read that does not answer counts as running out of time (it takes the
 one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
 never reports idle. While another read holds that slot, the scan waits for it to
 settle within the time left in its own budget and then walks on; when the budget

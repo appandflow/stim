@@ -526,7 +526,7 @@ test('a discovered checkout whose source scan ran out of time is listed as kept 
   mkdirSync(join(other, 'ios', 'App.xcodeproj'), { recursive: true });
   writeFileSync(join(other, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
   mkdirSync(join(other, 'build'));
-  const probe = vi.spyOn(gitCommands, 'gitQuietAsync').mockImplementation(async () => {
+  const probe = vi.spyOn(gitCommands, 'gitAsync').mockImplementation(async () => {
     vi.advanceTimersByTime(20_000);
     return '';
   });

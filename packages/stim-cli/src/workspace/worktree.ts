@@ -26,6 +26,7 @@ import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { clonePairs } from '../clone.ts';
 import { gitReadsOpen, sharedRead } from './git-reads.ts';
+import { answered, READ_TIMEOUT_MS, Unanswered } from './bounded-read.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -1134,14 +1135,46 @@ async function commonDirOf(entry: WorktreeEntry): Promise<string | null> {
 }
 
 /**
- * The worktrees git lists from `cwd`. In an open `git-reads` scope the answer also serves every listed worktree whose
- * `.git` still leads to the repository's common directory: git prints the same list from any worktree of a repository.
+ * The worktrees git lists from `cwd`. In an open `git-reads` scope the answer also serves every checkout whose `.git`
+ * leads to the same common directory, and every listed worktree whose `.git` still leads there: git prints the same
+ * list from any worktree of a repository.
  */
 export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
   if (options.removal || options.cache === false) {
     const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
     return out ? parseWorktrees(out) : [];
   }
+  const repository = gitReadsOpen(options.declareFor)
+    ? await answered(cwd, () => gitCommonDirOnDiskAsync(cwd), READ_TIMEOUT_MS, options.signal).catch(
+        (error: unknown) => {
+          if (!(error instanceof Unanswered)) throw error;
+          return null;
+        },
+      )
+    : null;
+  if (repository === null) return listedFrom(cwd, options);
+  let listed: WorktreeEntry[];
+  try {
+    listed = await sharedRead(options.declareFor, readKey(repository, ['worktree-list-of'], options), async () => {
+      const entries = await listedFrom(cwd, options);
+      if (!entries.length) throw UNLISTED;
+      return entries;
+    });
+  } catch (error) {
+    if (error !== UNLISTED) throw error;
+    return listedFrom(cwd, options);
+  }
+  const here = canonicalPath(cwd);
+  const holder = listed
+    .map((entry) => ({ entry, path: canonicalPath(entry.path) }))
+    .filter(({ path }) => here === path || here.startsWith(`${path}${sep}`))
+    .toSorted((a, b) => b.path.length - a.path.length)[0];
+  return holder && !holder.entry.prunable ? [...listed] : listedFrom(cwd, options);
+}
+
+const UNLISTED = new Error('git listed no worktrees');
+
+async function listedFrom(cwd: string, options: AsyncReadOptions): Promise<WorktreeEntry[]> {
   const entries = await sharedRead(options.declareFor, readKey(cwd, LIST_WORKTREES, options), async (share) => {
     const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
     const listed = out ? parseWorktrees(out) : [];

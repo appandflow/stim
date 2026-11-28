@@ -1,9 +1,12 @@
+import type { Dirent } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
-import { gitQuietAsync } from './git.ts';
+import { gitAsync, gitQuietAsync } from './git.ts';
+import { isTimeoutError } from '../exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { sharedRead } from './git-reads.ts';
 import { answered, hungRead, pendingRead, Unanswered } from './bounded-read.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
@@ -33,6 +36,8 @@ export const SKIPPED_WHERE_IGNORED: ReadonlySet<string> = new Set([
 const SCAN_BUDGET_MS = 15_000;
 const OVER_BUDGET_KEEP_MS = 60 * 60_000;
 const OVER_BUDGET = `it could not check every source entry within ${SCAN_BUDGET_MS / 1000} s`;
+
+const slashed = (path: string): string => path.replaceAll('\\', '/');
 
 /** The newest modification time seen under each checkout: a lower bound, so it can prove activity and never idleness. */
 const newestSeen = new Map<string, number>();
@@ -84,10 +89,38 @@ async function waiting(
 }
 
 /**
+ * Which of `paths`, relative to `root`, git ignores, with `/` separators; exit 1 is none. Null when git fails, which a
+ * single path inside a submodule causes for the whole list (git-check-ignore(1) refuses pathspecs in a submodule).
+ */
+async function ignoredAmong(
+  root: string,
+  paths: readonly string[],
+  left: () => number,
+  signal?: AbortSignal,
+): Promise<Set<string> | null> {
+  try {
+    const answer = await gitAsync(root, ['check-ignore', '-z', '--stdin'], {
+      signal,
+      timeoutMs: Math.max(1, left()),
+      input: paths.join('\0'),
+      untrimmed: true,
+    });
+    return new Set(answer.split('\0').filter(Boolean).map(slashed));
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    signal?.throwIfAborted();
+    return error instanceof Error && 'status' in error && error.status === 1 && !isTimeoutError(error)
+      ? new Set()
+      : null;
+  }
+}
+
+/**
  * The newest modification time of a file or folder under `root`, outside dependency and build folders, never through a
  * link. It stops at once on a write newer than `activeSince`, which proves activity, and reports unknown when it meets
  * an unreadable folder or runs past SCAN_BUDGET_MS, a read that does not answer in time included, since an unseen file
- * could be newer.
+ * could be newer. It walks one depth at a time and asks `git check-ignore` once per depth.
  */
 export async function scanSourceWrites(
   root: string,
@@ -111,56 +144,57 @@ export async function scanSourceWrites(
     signal?.throwIfAborted();
     return error instanceof Unanswered ? outOfTime() : { unknown: `${path} cannot be read` };
   };
-  const queue = [root];
-  for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
-    signal?.throwIfAborted();
-    if (left() < 0) return outOfTime();
-    const blocked = pendingRead() && (await waiting(left, signal, waitedOut));
-    if (blocked) return blocked;
-    let entries;
-    try {
-      const at = dir;
-      entries = await answered(at, () => readdir(at, { withFileTypes: true }), Math.max(1, left()), signal);
-    } catch (error) {
-      return unreadable(dir, error);
+  for (let level = [root]; level.length;) {
+    const listed: { dir: string; at: string; entries: Dirent[] }[] = [];
+    for (const dir of level) {
+      signal?.throwIfAborted();
+      if (left() < 0) return outOfTime();
+      const blocked = pendingRead() && (await waiting(left, signal, waitedOut));
+      if (blocked) return blocked;
+      try {
+        const entries = await answered(dir, () => readdir(dir, { withFileTypes: true }), Math.max(1, left()), signal);
+        listed.push({ dir, at: relative(root, dir), entries });
+      } catch (error) {
+        return unreadable(dir, error);
+      }
     }
-    const outputs = entries.filter((entry) => SKIPPED_WHERE_IGNORED.has(entry.name)).map((entry) => entry.name);
+    const outputsOf = ({ at, entries }: (typeof listed)[number]) =>
+      entries.filter((entry) => SKIPPED_WHERE_IGNORED.has(entry.name)).map((entry) => join(at, entry.name));
+    const outputs = listed.flatMap(outputsOf);
     let ignored = new Set<string>();
     if (outputs.length) {
       if (left() < 0) return outOfTime();
-      const at = relative(root, dir);
-      const listed = await gitQuietAsync(root, ['check-ignore', '-z', '--stdin'], {
-        signal,
-        timeoutMs: Math.max(1, left()),
-        input: outputs.map((name) => join(at, name)).join('\0'),
-        untrimmed: true,
-      });
-      ignored = new Set(
-        (listed ?? '')
-          .split('\0')
-          .filter(Boolean)
-          .map((path) => path.split(/[\\/]/).pop() ?? ''),
-      );
+      const answer = await ignoredAmong(root, outputs, left, signal);
+      const holders = listed.filter((each) => outputsOf(each).length);
+      if (answer) ignored = answer;
+      else
+        for (const each of holders.length > 1 ? holders : []) {
+          if (left() < 0) return outOfTime();
+          for (const path of (await ignoredAmong(root, outputsOf(each), left, signal)) ?? []) ignored.add(path);
+        }
     }
-    for (const entry of entries) {
-      if (ALWAYS_SKIPPED.has(entry.name)) continue;
-      const path = join(dir, entry.name);
-      if (ignored.has(entry.name)) continue;
-      const busy = pendingRead() && (await waiting(left, signal, waitedOut));
-      if (busy) return busy;
-      let mtime: number;
-      try {
-        mtime = (await answered(path, () => lstat(path), Math.max(1, left()), signal)).mtimeMs;
-      } catch (error) {
-        return unreadable(path, error);
+    level = [];
+    for (const { dir, at, entries } of listed) {
+      for (const entry of entries) {
+        if (ALWAYS_SKIPPED.has(entry.name)) continue;
+        if (ignored.has(slashed(join(at, entry.name)))) continue;
+        const path = join(dir, entry.name);
+        const busy = pendingRead() && (await waiting(left, signal, waitedOut));
+        if (busy) return busy;
+        let mtime: number;
+        try {
+          mtime = (await answered(path, () => lstat(path), Math.max(1, left()), signal)).mtimeMs;
+        } catch (error) {
+          return unreadable(path, error);
+        }
+        if (mtime > newest) newest = mtime;
+        if (newest > activeSince) {
+          newestSeen.set(root, newest);
+          return { newest };
+        }
+        if (left() < 0) return outOfTime();
+        if (entry.isDirectory() && !entry.isSymbolicLink()) level.push(path);
       }
-      if (mtime > newest) newest = mtime;
-      if (newest > activeSince) {
-        newestSeen.set(root, newest);
-        return { newest };
-      }
-      if (left() < 0) return outOfTime();
-      if (entry.isDirectory() && !entry.isSymbolicLink()) queue.push(path);
     }
   }
   if (left() < 0) return outOfTime();

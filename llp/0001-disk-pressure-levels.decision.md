@@ -1461,3 +1461,22 @@ Code: [helper](../packages/server/host/stim-host-helper.c),
 [ServiceManagement bridge](../packages/server/host/helper-service.m),
 [CLI and reporting](../packages/stim-cli/src/apple-services.ts),
 [Desktop preferences](../apps/desktop/Sources/StimDesktop/Views/AppPreferencesView.swift).
+
+## A report asks git each question once
+
+A gc run or daemon pass that only reports keeps its shared git reads for the
+whole run: the dependency pass lists worktrees without dropping them, so the
+plan's worktree sweep and the report's second sweep share every answer. Within
+that scope one `git worktree list` serves every checkout whose `.git` leads to
+the same repository, a worktree's merge state is read once for its HEAD and the
+default branch's commit (a moved branch is read again), and the source walk asks
+`git check-ignore` once per depth (LLP 0004). An acting run still drops the
+reads before and after every action and under every workspace lock, so the
+checks a deletion relies on are read fresh at delete time.
+
+Maintainer decision: "can scan like stream in, and is it possible to further reduce git calls", 2026-11-27 ([#6615 comment](https://github.com/appandflow/stim/issues/6615#issuecomment-7235268076)).
+
+Reason: on the maintainer's MacBook (258 projects) `stim gc --dry-run --json`
+ran 6,617 git commands in 225 s, about 4,200 of them with the same folder and
+arguments as an earlier one, because the dependency pass dropped the scope between the two
+sweeps. The keys and the per-depth batch are the implementer's choices.
