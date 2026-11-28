@@ -133,7 +133,7 @@ struct AppPreferencesView: View {
         .disabled(helperBusy)
         Text("Helper: \(helperState)").foregroundStyle(Palette.secondary)
         Text(
-          "Restarts only PerfPowerServices, mds_stores, mdworker_shared, photoanalysisd and mediaanalysisd after 10 minutes above 150% CPU or 2 GB RSS, at most once per service per hour."
+          "Restarts only PerfPowerServices, mds_stores, mdworker_shared, photoanalysisd, mediaanalysisd and fseventsd after 10 minutes above 150% CPU or 2 GB of memory, at most once per service per hour."
         )
         .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
         if helperState == "requires approval" {
