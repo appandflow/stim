@@ -1,4 +1,4 @@
-import { DesktopReports } from '../src/desktop-reports.ts';
+import { DesktopReports, GC_REPORT_STALE_MS } from '../src/desktop-reports.ts';
 import type { DetailsRead } from '../src/machine-details.ts';
 import type { DesktopReportSnapshot, DesktopReportTarget } from '../src/protocol.ts';
 
@@ -17,6 +17,7 @@ function deferred<T>() {
 }
 
 const TARGET: DesktopReportTarget = { report: 'doctor', cwd: '/app' };
+const GC: DesktopReportTarget = { report: 'gc' };
 
 test('invalidation joins a fresh read and never publishes an obsolete completion', async () => {
   const old = deferred<DetailsRead>();
@@ -140,4 +141,62 @@ test('invalidation aborts the stale load so a waiting get takes only the fresh o
   await vi.waitFor(() => expect(signals).toHaveLength(2));
   fresh.resolve({ ok: true, report: { version: 2 } });
   expect((await waiting).value).toEqual({ version: 2 });
+});
+
+test('the gc report answers from its cache at once, refreshes when stale, and an invalidation joins the read', async () => {
+  vi.useFakeTimers({ now: 10 * GC_REPORT_STALE_MS });
+  const loads: { load: ReturnType<typeof deferred<DetailsRead>>; signal: AbortSignal }[] = [];
+  const seededAt = Date.now() - GC_REPORT_STALE_MS;
+  const cache = new DesktopReports(
+    (_target, signal) => {
+      const load = deferred<DetailsRead>();
+      loads.push({ load, signal });
+      return load.promise;
+    },
+    undefined,
+    undefined,
+    () => ({ value: { version: 1 }, at: seededAt }),
+  );
+  caches.push(cache);
+  expect(await cache.get(GC)).toEqual({
+    pending: false,
+    value: { version: 1 },
+    measuredAt: new Date(seededAt).toISOString(),
+    refreshing: true,
+  });
+  cache.invalidate(GC);
+  cache.invalidate();
+  expect(loads).toHaveLength(1);
+  expect(loads[0]?.signal.aborted).toBe(false);
+  const startedAt = Date.now();
+  await vi.advanceTimersByTimeAsync(60_000);
+  loads[0]?.load.resolve({ ok: true, report: { version: 2 } });
+  await vi.waitFor(async () => expect((await cache.get(GC)).value).toEqual({ version: 2 }));
+  expect(await cache.get(GC)).toEqual({
+    pending: false,
+    value: { version: 2 },
+    measuredAt: new Date(startedAt).toISOString(),
+  });
+  expect(loads).toHaveLength(1);
+  cache.invalidate(GC);
+  await vi.waitFor(() => expect(loads).toHaveLength(2));
+});
+
+test('a failed gc refresh keeps the last good report, and with none says it is not measured yet', async () => {
+  vi.useFakeTimers({ now: 10 * GC_REPORT_STALE_MS });
+  const replies: DetailsRead[] = [
+    { ok: false, message: 'first failed' },
+    { ok: true, report: { version: 1 } },
+    { ok: false, message: 'later failed' },
+  ];
+  const cache = new DesktopReports(async () => replies.shift()!);
+  caches.push(cache);
+  expect(await cache.get(GC)).toEqual({ pending: true, value: null, refreshing: true });
+  await vi.waitFor(async () => expect((await cache.get(GC)).error).toBe('first failed'));
+  expect(await cache.get(GC)).toEqual({ pending: true, value: null, error: 'first failed' });
+  cache.invalidate(GC);
+  await vi.waitFor(async () => expect((await cache.get(GC)).value).toEqual({ version: 1 }));
+  cache.invalidate(GC);
+  await vi.waitFor(async () => expect((await cache.get(GC)).error).toBe('later failed'));
+  expect((await cache.get(GC)).value).toEqual({ version: 1 });
 });

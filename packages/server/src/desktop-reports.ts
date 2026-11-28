@@ -2,6 +2,21 @@ import type { DesktopReportSnapshot, DesktopReportTarget } from './protocol.ts';
 import type { DetailsRead } from './machine-details.ts';
 
 const MAX_REPORT_READS = 4;
+/** A cached gc report older than this starts a background refresh; about three of the slowest sweeps seen (#6606). */
+export const GC_REPORT_STALE_MS: number = 15 * 60_000;
+/** The gc report's read budget in the background, instead of the API's 60 seconds that a large machine exceeds. */
+export const GC_REPORT_BUDGET_MS: number = 15 * 60_000;
+/** How long a failed gc refresh with no earlier report waits before a read starts another. */
+const GC_REPORT_RETRY_MS = 5 * 60_000;
+
+/** The gc report answers from its last good result at once and refreshes in the background; others wait for a read. */
+const cachedReport = (target: DesktopReportTarget) => target.report === 'gc';
+
+export interface CachedReport {
+  value: Record<string, unknown>;
+  /** When the read that produced `value` started, in epoch milliseconds. */
+  at: number;
+}
 
 const reportKey = (target: DesktopReportTarget) =>
   target.report === 'doctor' ? `doctor:${target.platform ?? 'all'}:${target.cwd}` : target.report;
@@ -15,6 +30,7 @@ interface Entry {
   listeners: Set<(snapshot: DesktopReportSnapshot) => void>;
   published?: string;
   timer?: ReturnType<typeof setTimeout>;
+  cached?: { good?: CachedReport; failure?: { message: string; at: number } };
 }
 
 export class DesktopReports {
@@ -24,21 +40,28 @@ export class DesktopReports {
   private readonly load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>;
   private readonly ttlMs: number;
   private readonly now: () => number;
+  private readonly seed: (target: DesktopReportTarget) => CachedReport | null;
 
   constructor(
     load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>,
     ttlMs = 60_000,
     now: () => number = Date.now,
+    seed: (target: DesktopReportTarget) => CachedReport | null = () => null,
   ) {
     this.load = load;
     this.ttlMs = ttlMs;
     this.now = now;
+    this.seed = seed;
   }
 
   async get(target: DesktopReportTarget, signal?: AbortSignal): Promise<DesktopReportSnapshot> {
     signal?.throwIfAborted();
     if (this.closed) return { pending: false, value: null, error: 'The server is closing.' };
     const entry = this.entry(target);
+    if (entry.cached) {
+      if (!entry.pending && this.refreshAt(entry) <= this.now()) this.start(entry);
+      return this.snapshot(entry);
+    }
     entry.readers++;
     let stopWaiting: (() => void) | undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
@@ -88,6 +111,10 @@ export class DesktopReports {
     const only = target && this.entries.get(reportKey(target));
     if (target && !only) return;
     for (const entry of only ? [only] : this.entries.values()) {
+      if (entry.cached) {
+        if (!entry.pending) this.start(entry);
+        continue;
+      }
       entry.generation++;
       entry.pending?.abort.abort();
       clearTimeout(entry.timer);
@@ -108,6 +135,7 @@ export class DesktopReports {
   private entry(target: DesktopReportTarget): Entry {
     for (const [key, entry] of this.entries) {
       if (
+        !entry.cached &&
         !entry.readers &&
         !entry.listeners.size &&
         !entry.pending &&
@@ -119,12 +147,26 @@ export class DesktopReports {
     let entry = this.entries.get(key);
     if (!entry) {
       entry = { target, generation: 0, readers: 0, listeners: new Set() };
+      if (cachedReport(target)) {
+        const good = this.seed(target);
+        entry.cached = good ? { good } : {};
+      }
       this.entries.set(key, entry);
     }
     return entry;
   }
 
+  /** When `entry` should read again: its settled read's expiry, or for the gc report its staleness or retry time. */
+  private refreshAt(entry: Entry): number {
+    if (entry.cached)
+      return entry.cached.good
+        ? entry.cached.good.at + GC_REPORT_STALE_MS
+        : (entry.cached.failure?.at ?? -Infinity) + GC_REPORT_RETRY_MS;
+    return entry.settled ? entry.settled.at + this.ttlMs : -Infinity;
+  }
+
   private fresh(entry: Entry): boolean {
+    if (entry.cached) return this.refreshAt(entry) > this.now();
     return Boolean(
       entry.settled && entry.settled.generation === entry.generation && this.now() - entry.settled.at < this.ttlMs,
     );
@@ -137,6 +179,7 @@ export class DesktopReports {
     const admitted = this.activeLoads < MAX_REPORT_READS;
     if (admitted) this.activeLoads++;
     const generation = entry.generation;
+    const startedAt = this.now();
     const abort = new AbortController();
     const promise = Promise.resolve()
       .then((): DetailsRead | Promise<DetailsRead> => {
@@ -157,6 +200,14 @@ export class DesktopReports {
         if (entry.pending !== pending) return undefined;
         entry.pending = undefined;
         if (this.closed) return undefined;
+        if (entry.cached) {
+          if (result.ok) entry.cached = { good: { value: result.report, at: startedAt } };
+          else entry.cached.failure = { message: result.message, at: this.now() };
+          entry.settled = { result, at: this.now(), generation };
+          this.publish(entry);
+          this.schedule(entry);
+          return undefined;
+        }
         if (generation !== entry.generation) {
           if (entry.listeners.size) this.start(entry);
           return undefined;
@@ -173,6 +224,15 @@ export class DesktopReports {
   }
 
   private snapshot(entry: Entry): DesktopReportSnapshot {
+    if (entry.cached) {
+      const { good, failure } = entry.cached;
+      return {
+        pending: !good,
+        value: good?.value ?? null,
+        ...(good ? { measuredAt: new Date(good.at).toISOString() } : {}),
+        ...(entry.pending ? { refreshing: true } : failure ? { error: failure.message } : {}),
+      };
+    }
     const result = entry.settled?.result;
     return {
       pending: entry.pending !== undefined || entry.settled?.generation !== entry.generation,
@@ -201,7 +261,7 @@ export class DesktopReports {
         entry.generation++;
         this.start(entry);
       },
-      Math.max(0, this.ttlMs - (this.now() - entry.settled.at)),
+      Math.max(0, this.refreshAt(entry) - this.now()),
     );
     entry.timer.unref();
   }

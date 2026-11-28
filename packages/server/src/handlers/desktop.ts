@@ -543,7 +543,7 @@ function desktopReport(ctx: ConnectionContext, id: RequestId, method: string, pa
       `stim ${target.report}`,
       async (signal) => {
         const snapshot = await ctx.desktopReports.get(target, signal);
-        if (snapshot.error) throw new Error(snapshot.error);
+        if (snapshot.error && snapshot.value === null && !snapshot.pending) throw new Error(snapshot.error);
         return snapshot;
       },
       ctx.options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,

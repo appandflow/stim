@@ -487,11 +487,17 @@ export type DesktopReportTarget =
   | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
   | { report: 'gc' | 'gc-history' | 'builds' | 'remote' };
 
+/**
+ * A Desktop report. `pending` means no value has been read yet. The gc report answers from its last good value at
+ * once: `measuredAt` is when that read started, `refreshing` is set while a newer read runs, and `error` is the last
+ * failed read's reason while none runs.
+ */
 export interface DesktopReportSnapshot {
   pending: boolean;
   value: Record<string, unknown> | null;
   error?: string;
   measuredAt?: string;
+  refreshing?: true;
 }
 
 export interface DesktopReportEvent {

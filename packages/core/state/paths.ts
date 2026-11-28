@@ -281,6 +281,11 @@ export function gcReportFile(): string {
   return join(gcLogDir(), 'last-report.txt');
 }
 
+/** The last gc report stimd's background refresh measured, which Stim Desktop reads before a new one finishes. */
+export function gcReportCacheFile(): string {
+  return join(gcLogDir(), 'report-cache.json');
+}
+
 export function buildLedgerDir(): string {
   return join(configDir(), 'builds');
 }

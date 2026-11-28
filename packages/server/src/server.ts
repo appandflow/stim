@@ -33,6 +33,7 @@ import {
   readShareLinks,
   shareLinkKey,
   shareRouteClaimRoot,
+  readGcReportCache,
 } from '@stim-cli/core/state';
 import { createRequestLog } from './request-log.ts';
 import { loadAudit } from './actions.ts';
@@ -75,7 +76,7 @@ import {
   type DoctorTarget,
 } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
-import { DesktopReports } from './desktop-reports.ts';
+import { DesktopReports, GC_REPORT_BUDGET_MS } from './desktop-reports.ts';
 import {
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
@@ -653,7 +654,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const abort = new AbortController();
     if (signal?.aborted) abort.abort();
     else signal?.addEventListener('abort', () => abort.abort(), { once: true });
-    const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
+    const timeoutMs = options.commandLimits?.timeoutMs ?? (method === 'gc' ? GC_REPORT_BUDGET_MS : DETAILS_TIMEOUT_MS);
     let task: Promise<DetailsRead>;
     const cancel = async () => {
       abort.abort();
@@ -674,7 +675,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
         if (method === 'remote') return await stim.remoteMachines({ signal: abort.signal });
         return method === 'gc'
-          ? await stim.gc({ signal: abort.signal, measureBuildState: false })
+          ? await stim.gc({ signal: abort.signal, measureBuildState: false, budgetMs: timeoutMs, record: true })
           : await stim.stats({ signal: abort.signal });
       })
       .then(
@@ -698,17 +699,29 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(cancel);
     return task;
   };
-  const desktopReports = new DesktopReports((target, signal) =>
-    readDetailsReport(
-      target.report,
-      target.report === 'doctor' ? target.cwd : undefined,
-      target.report === 'doctor' ? target.platform : undefined,
-      signal,
-    ),
+  const desktopReports = new DesktopReports(
+    (target, signal) =>
+      readDetailsReport(
+        target.report,
+        target.report === 'doctor' ? target.cwd : undefined,
+        target.report === 'doctor' ? target.platform : undefined,
+        signal,
+      ),
+    undefined,
+    undefined,
+    () => {
+      const cache = readGcReportCache();
+      return cache && { value: cache.report, at: Date.parse(cache.measuredAt) };
+    },
   );
   const machineDetails = new MachineDetailsCache(() =>
     loadMachineDetails(
-      () => readDetailsReport('gc'),
+      async (): Promise<DetailsRead> => {
+        const snapshot = await desktopReports.get({ report: 'gc' });
+        return snapshot.value
+          ? { ok: true, report: snapshot.value }
+          : { ok: false, message: snapshot.error ?? 'Stim is measuring storage for the first time.' };
+      },
       loadAudit,
       () => readDetailsReport('stats'),
     ),
