@@ -221,8 +221,8 @@ release on its channel by itself when Stim Desktop or a service installed it.
 
 On macOS, `stim service install --helper` registers an optional root helper in
 Stim Host. It restarts only PerfPowerServices, mds_stores, mdworker_shared,
-photoanalysisd, mediaanalysisd and fseventsd when one uses more than 150% CPU or
-2 GiB of memory for 10 minutes, at most once per hour. It needs administrator approval
+photoanalysisd and mediaanalysisd when one uses more than 150% CPU or 2 GiB of
+memory for 10 minutes, at most once per hour. It needs administrator approval
 in **System Settings > General > Login Items & Extensions**.
 `stim service uninstall --helper` removes it.
 

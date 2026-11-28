@@ -26,7 +26,7 @@ test.skipIf(process.platform !== 'darwin')(
     finish(TOP_FSEVENTSD);
     await vi.waitFor(() => expect(emitted).toHaveLength(1));
     expect(emitted[0]).toContain('fseventsd (pid 76886) uses');
-    expect(emitted[0]).toContain('stim service install --helper');
+    expect(emitted[0]).toContain('sudo killall fseventsd');
   },
 );
 

@@ -35,8 +35,8 @@ const RESTARTABLE: readonly Restartable[] = [
     name: 'fseventsd',
     matches: ({ name }) => name === 'fseventsd',
     bytes: 2 * GIB,
-    command: 'stim service install --helper',
-    note: "Stim Host's helper then restarts it after 10 minutes over 2 GiB; launchd starts it again at once, and file watchers rescan their folders once.",
+    command: 'sudo killall fseventsd',
+    note: 'launchd restarts it at once, and file watchers rescan their folders once.',
   },
   {
     name: 'Watchman',
