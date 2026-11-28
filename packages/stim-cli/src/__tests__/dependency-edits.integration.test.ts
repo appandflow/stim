@@ -122,6 +122,56 @@ test("pnpm's .package-map.json from an install Stim did not run after its record
   expect(await checkDependencyEdits(tree, { level: 'high', worktree })).toEqual({ delete: true });
 });
 
+const UUID_PLIST = '8B1F0C8F-70C5-35B0-BCCD-2038C46648EA.plist';
+const DSYM = 'ExpoFont/ExpoFont.xcframework/ios-arm64/dSYMs/ExpoFont.framework.dSYM/Contents/Resources';
+
+test.each([
+  [
+    'Pods',
+    [
+      'React-Core-prebuilt/.last_build_configuration',
+      'ExpoFont/artifacts/.last_build_configuration',
+      'ExpoImage/artifacts/SDWebImage.last_config',
+      `${DSYM}/${UUID_PLIST}`,
+    ],
+    `${DSYM}/Info.plist`,
+  ],
+  [
+    'node_modules',
+    [
+      'expo-modules-jsi/apple/.DerivedData/info.plist',
+      '.pnpm/expo-modules-jsi@58.0.17/node_modules/expo-modules-jsi/apple/Products/ExpoModulesJSI.xcframework/Info.plist',
+    ],
+    'expo-modules-jsi/apple/Sources/ExpoModulesJSI.swift',
+  ],
+])(
+  'iOS build output in %s does not keep the tree, also when recorded as edits, and a file beside it does',
+  async (kind, outputs, edited) => {
+    const target = join(worktree, kind);
+    const stamp = join(target, kind === 'Pods' ? 'Manifest.lock' : '.package-lock.json');
+    write(stamp, '{}', ago(HOUR));
+    recordDependencyInstall([target], Date.now() - HOUR);
+    for (const rel of outputs) write(join(target, rel));
+    const recorded = outputs.map((rel) => {
+      const stat = lstatSync(join(target, rel));
+      return { rel, mtimeMs: stat.mtimeMs, size: stat.size };
+    });
+    const signature = treeSignature(target);
+    if (signature === null) throw new Error('the tree has no install signature');
+    updateDependencyInstall(target, (record) => ({
+      ...record,
+      edits: { signature, files: recorded, complete: true, at: new Date().toISOString() },
+    }));
+
+    expect(await checkDependencyEdits(target, { level: 'high', worktree })).toEqual({ delete: true });
+
+    write(join(target, edited), 'patched by hand');
+    expect(await checkDependencyEdits(target, { level: 'critical', worktree })).toMatchObject({
+      keep: expect.stringContaining(`1 file in it changed after its install (${edited})`),
+    });
+  },
+);
+
 test('a file edited after the install keeps the tree at critical too', async () => {
   installAt(ago(HOUR));
   write(join(tree, 'pkg', 'index.js'), 'patched by hand');

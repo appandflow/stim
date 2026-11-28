@@ -55,6 +55,8 @@ export const TREE_DOT_DIRS: readonly string[] = ['.pnpm', '.bun', '.deno'];
 const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
 /** What Gradle writes inside its `build` directory; a JS `build` directory holds none of them. */
 const GRADLE_BUILD_ENTRIES = ['intermediates', 'generated', 'outputs', 'tmp', '.transforms', 'kotlin', 'classes'];
+const JSI_BUILD_DIRS = ['.DerivedData', '.build', '.generated', '.swiftpm', 'Products'];
+const DSYM_UUID_PLIST = /^[\dA-F]{8}(-[\dA-F]{4}){3}-[\dA-F]{12}\.plist$/;
 const PACKAGE_ENTRY_FIELDS = ['main', 'module', 'types', 'typings', 'react-native', 'browser', 'source'];
 
 function kindOf(tree: string): TreeKind {
@@ -126,12 +128,49 @@ function packageManagerState(kind: TreeKind, segments: readonly string[]): boole
   return kind === 'node_modules' && segments.length === 2 && segments[0] === '.pnpm' && name === 'lock.yaml';
 }
 
+/**
+ * Whether the file at `segments` in a Pods tree is one an iOS build writes: the configuration markers of React
+ * Native's `replace-*-version.js` and expo-modules-autolinking's `replace-xcframework.js`, and the per-UUID plists of
+ * its `resolve-dsym-sourcemaps.js`.
+ */
+function podBuildFile(segments: readonly string[]): boolean {
+  const name = segments.at(-1) ?? '';
+  if (name === '.last_build_configuration')
+    return segments.length === 2 || (segments.length === 3 && segments[1] === 'artifacts');
+  if (name.endsWith('.last_config')) return segments.length === 3 && segments[1] === 'artifacts';
+  return (
+    DSYM_UUID_PLIST.test(name) &&
+    segments.at(-2) === 'Resources' &&
+    segments.at(-3) === 'Contents' &&
+    (segments.at(-4)?.endsWith('.dSYM') ?? false)
+  );
+}
+
+/**
+ * Whether the directory at `segments` holds what expo-modules-jsi's `build-xcframework.sh` and
+ * `generate-modulemap.sh` write.
+ */
+function jsiBuildDir(segments: readonly string[]): boolean {
+  return (
+    segments.at(-3) === 'expo-modules-jsi' &&
+    segments.at(-2) === 'apple' &&
+    JSI_BUILD_DIRS.includes(segments.at(-1) ?? '')
+  );
+}
+
+function notAnEdit(kind: TreeKind, segments: readonly string[]): boolean {
+  if (packageManagerState(kind, segments)) return true;
+  if (kind === 'Pods') return podBuildFile(segments);
+  return inBinDir(segments) || segments.some((_, i) => jsiBuildDir(segments.slice(0, i + 1)));
+}
+
 // @ref LLP 0002#edits-inside-dependency-folders -- what tools write inside a dependency folder is not an edit
 /**
  * Whether the entry at `segments`, relative to a dependency tree of `kind`, holds what package managers and native
  * builds write after an install rather than an edit. Directories: `node_modules/.cache`; `.gradle`, `.kotlin` and
  * `.cxx` in a package's `android` directory or beside a Gradle build script, and `build` there when Gradle wrote it;
- * a package's `ios/build`; `.bin` at the root or in any nested node_modules; `xcuserdata` in Pods. Files: the package manager's own state at the tree's root.
+ * a package's `ios/build`; expo-modules-jsi's build directories; `.bin` at the root or in any nested node_modules;
+ * `xcuserdata` in Pods. Files: the package manager's own state at the tree's root, and `podBuildFile`.
  */
 function excludedFromEdits(
   kind: TreeKind,
@@ -142,9 +181,9 @@ function excludedFromEdits(
 ): boolean {
   const name = segments.at(-1) ?? '';
   const parent = segments.at(-2);
-  if (!directory) return packageManagerState(kind, segments);
+  if (!directory) return packageManagerState(kind, segments) || (kind === 'Pods' && podBuildFile(segments));
   if (kind === 'Pods') return name === 'xcuserdata';
-  if (inBinDir(segments)) return true;
+  if (inBinDir(segments) || jsiBuildDir(segments)) return true;
   if (segments.length === 1 && name.startsWith('.') && !TREE_DOT_DIRS.includes(name)) return true;
   if (parent === 'ios' && name === 'build') return true;
   const gradleSide = parent === 'android' || siblings.some((sibling) => GRADLE_SCRIPTS.includes(sibling));
@@ -396,14 +435,9 @@ async function recordedEdits(
   const tree = canonicalOr(path);
   const record = readDependencyInstall(tree);
   const signature = treeSignature(tree);
-  const known = (record?.edits?.files ?? []).filter((file) => {
-    const segments = file.rel.split('/');
-    return (
-      unchanged(tree, file) &&
-      !(kindOf(tree) === 'node_modules' && inBinDir(segments)) &&
-      !packageManagerState(kindOf(tree), segments)
-    );
-  });
+  const known = (record?.edits?.files ?? []).filter(
+    (file) => unchanged(tree, file) && !notAnEdit(kindOf(tree), file.rel.split('/')),
+  );
   if (
     level !== 'critical' &&
     known.length &&

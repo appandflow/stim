@@ -154,6 +154,13 @@ deletes the worktree with its dependency folders.
   `android` directory or beside a Gradle build script, a `build` directory
   there that holds Gradle output and that the package's `package.json` points
   nothing into, a package's `ios/build`, and `xcuserdata` in Pods.
+- Also not counted, because an iOS build writes them: in Pods, a pod's
+  `.last_build_configuration` and its `artifacts/.last_build_configuration`
+  and `artifacts/*.last_config` (React Native and expo-modules-autolinking
+  swap the prebuilt frameworks), and a dSYM's `Contents/Resources/<UUID>.plist`
+  (Expo's source path mappings); in node_modules, `.DerivedData`, `.build`,
+  `.generated`, `.swiftpm` and `Products` in `expo-modules-jsi/apple`
+  ([#6616](https://github.com/appandflow/stim/issues/6616)).
 
 Known misses, accepted as best effort: an edit that keeps an older
 modification time (`cp -p`, `rsync -t`, a tar extract); a file deleted by
