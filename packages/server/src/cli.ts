@@ -38,7 +38,7 @@ import {
 } from './registry.ts';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from './stim-host.ts';
-export { installHostApp } from './stim-host.ts';
+export { installHostApp, updateInstalledHostApp } from './stim-host.ts';
 import { defaultSetupDeps, runSetup } from './setup.ts';
 import { startServer, type RunningServer } from './server.ts';
 import { DesktopBootstrap } from './desktop-bootstrap.ts';

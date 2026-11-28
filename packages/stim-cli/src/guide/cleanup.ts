@@ -440,7 +440,10 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
 stim service install --helper installs or updates the pinned Developer
 ID-signed, notarized Stim Host.app in ~/Applications (a download when the
-installed version differs), then registers only its root helper. Approve Stim Host in System Settings > General > Login Items & Extensions with
+installed version differs), then registers only its root helper. stimd also
+installs it at start over an older Stim Host in ~/Applications unless
+engine.autoUpdate is off; the helper then exits so launchd starts the new
+binary (a 0.2.0 helper keeps its old one until a reboot). Approve Stim Host in System Settings > General > Login Items & Extensions with
 an administrator password. Desktop preferences has the same toggle and a button
 opening that pane. stim service status (--json too) reports registered,
 requires approval, not registered, unavailable on this OS, Stim Host missing,

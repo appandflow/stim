@@ -156,6 +156,7 @@ import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { serviceJob, unitSuccessorLabel } from './service-unit.ts';
 import { followEngine } from './engine-follow.ts';
+import { keepHostCurrent } from './host-update.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
 import {
@@ -1037,6 +1038,7 @@ async function runStimdInner(
   startupRetention = retention;
   startup.signal.throwIfAborted();
   process.title = 'stimd';
+  void keepHostCurrent(log);
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   /** The offloads, hosted device sessions and workspace actions under way in the net thread, which a takeback waits for. */

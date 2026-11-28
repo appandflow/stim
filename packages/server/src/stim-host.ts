@@ -13,8 +13,9 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withDirLockTransaction } from '@stim-cli/core';
 import { isJsonObject, permissionPanes } from '@stim-cli/core/state';
-import { ServiceError } from './service-plist.ts';
+import { compareVersions, ServiceError } from './service-plist.ts';
 
 const FLAVORS = {
   release: { name: 'Stim Host', bundleId: 'dev.stim.host' },
@@ -232,6 +233,30 @@ export async function installHostApp(
   } finally {
     if (cleanup) rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+/**
+ * Installs the pinned `release` over an older Stim Host in `~/Applications`, under a machine-wide lock so stimds of
+ * several Stim homes do not swap the bundle at once. Resolves to null when no Stim Host is installed there, or when the
+ * installed one is the pinned version or newer.
+ */
+// @ref LLP 0001#opt-in-apple-service-restarts -- stimd only upgrades a Stim Host that is already installed
+export async function updateInstalledHostApp(release: HostRelease | null = RELEASE): Promise<HostApp | null> {
+  const app = join(homedir(), 'Applications', `${FLAVORS.release.name}.app`);
+  const current = () =>
+    bundleIdOf(app) === FLAVORS.release.bundleId ? infoValue(app, 'CFBundleShortVersionString') : null;
+  const before = current();
+  if (!release || !before || compareVersions(before, release.version) >= 0) return null;
+  const lock = join(homedir(), '.stim', 'machine', 'host', 'install');
+  return withDirLockTransaction(
+    lock,
+    async () => {
+      const installed = current();
+      if (!installed || compareVersions(installed, release.version) >= 0) return null;
+      return installHostApp(SOURCES, release);
+    },
+    { waitMs: 300_000, pollMs: 1000, ensureParent: () => mkdirSync(dirname(lock), { recursive: true }) },
+  );
 }
 
 /** The host app a server runs under, from the `STIM_HOST_EXECUTABLE` its launcher set, or undefined. */
