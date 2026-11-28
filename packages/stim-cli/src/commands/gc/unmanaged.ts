@@ -250,15 +250,22 @@ async function swapFiles(scan: Scan): Promise<UnmanagedEntry[]> {
   }
   for (const dir of ['/System/Volumes/VM', '/private/var/vm']) {
     if (!(await scan.onShortVolume(dir))) continue;
+    const swap = { files: 0, bytes: 0 };
     for (const name of (await scan.read(dir, () => readdir(dir))) ?? []) {
       if (!/^swapfile\d*$|^sleepimage$/.test(name)) continue;
       const size = (await scan.read(join(dir, name), () => stat(join(dir, name))))?.size;
-      if (size)
-        entries.push({
-          label: `${name === 'sleepimage' ? 'sleep image' : 'swap file'} ${join(dir, name)}`,
-          bytes: size,
-        });
+      if (!size) continue;
+      if (name === 'sleepimage') entries.push({ label: `sleep image ${join(dir, name)}`, bytes: size });
+      else {
+        swap.files += 1;
+        swap.bytes += size;
+      }
     }
+    if (swap.files)
+      entries.push({
+        label: `swap, ${swap.files} ${swap.files === 1 ? 'file' : 'files'} in ${dir}`,
+        bytes: swap.bytes,
+      });
   }
   return entries;
 }

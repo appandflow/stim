@@ -19,7 +19,8 @@ const hooks: {
   du: ((dir: string, signal?: AbortSignal) => Promise<string> | null) | null;
   dev: Record<string, number> | null;
   statDev: ((path: string) => number) | null;
-} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null, dev: null, statDev: null }));
+  vm: Record<string, number> | null;
+} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null, dev: null, statDev: null, vm: null }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -42,8 +43,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     },
     realpath: (path: string) => hooks.realpath?.(path) ?? actual.realpath(path),
     readdir: (path: string, ...rest: []) =>
-      path === '/dev' && hooks.dev ? Promise.resolve(Object.keys(hooks.dev)) : actual.readdir(path, ...rest),
+      path === '/dev' && hooks.dev
+        ? Promise.resolve(Object.keys(hooks.dev))
+        : path === '/System/Volumes/VM' && hooks.vm
+          ? Promise.resolve(Object.keys(hooks.vm))
+          : actual.readdir(path, ...rest),
     stat: async (path: string) => {
+      const vmSize = path.startsWith('/System/Volumes/VM/') ? hooks.vm?.[path.slice(19)] : undefined;
+      if (vmSize !== undefined) return { size: vmSize };
       const rdev = path.startsWith('/dev/') ? hooks.dev?.[path.slice(5)] : undefined;
       if (rdev !== undefined) return { rdev };
       const stats = await actual.stat(path);
@@ -126,6 +133,7 @@ beforeEach(() => {
   hooks.du = null;
   hooks.dev = null;
   hooks.statDev = null;
+  hooks.vm = null;
   docker = null;
   slow = null;
   dockerOutput = DOCKER_DF;
@@ -617,6 +625,26 @@ test.skipIf(process.platform === 'win32')(
     };
     expect(await tempOn(424_242)).toContain(join(temp, 'scratch'));
     expect(await tempOn(515_151)).not.toContain(join(temp, 'scratch'));
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'on macOS lists the swap files of a short volume as one entry and the sleep image as its own',
+  async () => {
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    onTestFinished(() => {
+      Object.defineProperty(process, 'platform', { value: platform });
+    });
+    const GiB = 1024 ** 3;
+    hooks.vm = { swapfile0: GiB, swapfile1: GiB, swapfile2: GiB, sleepimage: 2 * GiB, 'swapfile.lock': 1 };
+    const device = statSync(home).dev;
+    hooks.volume = (path) => (path === '/System/Volumes/VM' ? { volume: path, freeMb: 512, device } : null);
+
+    const entries = (await unmanagedUsage(levelRun({}), false))?.entries ?? [];
+    expect(entries).toContainEqual({ label: 'swap, 3 files in /System/Volumes/VM', bytes: 3 * GiB });
+    expect(entries).toContainEqual({ label: 'sleep image /System/Volumes/VM/sleepimage', bytes: 2 * GiB });
+    expect(entries.filter((entry) => entry.label.includes('swap'))).toHaveLength(1);
   },
 );
 
