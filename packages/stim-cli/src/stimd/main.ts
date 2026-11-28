@@ -1139,7 +1139,7 @@ async function runStimdInner(
     },
   );
   const gcReports = createGcReportSweeps(
-    () => threads.report(),
+    (onPart) => threads.report(onPart),
     (cache) => writeCacheFile(gcReportCacheFile(), cache),
     (error) => {
       if (isUnverifiedCleanup(error) && !contain(error))
@@ -1657,8 +1657,14 @@ async function runStimdInner(
       .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
   };
   const requestGcReport = (socket: Socket, params: Record<string, unknown>) => {
-    const asked = gcReports.sweep(params.fresh === true ? Date.now() : undefined);
-    if (params.background === true) {
+    const background = params.background === true;
+    const asked = gcReports.sweep(
+      params.fresh === true ? Date.now() : undefined,
+      background
+        ? undefined
+        : (part) => socket.destroyed || socket.write(`${JSON.stringify({ op: 'gc.report.part', part })}\n`),
+    );
+    if (background) {
       asked.catch((error: unknown) => log('warn', 'gc_report_failed', errorText(error)));
       socket.end(`${JSON.stringify({ op: 'gc.report.started' })}\n`);
       return;

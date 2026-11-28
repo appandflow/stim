@@ -1,6 +1,6 @@
 import type { DesktopReportSnapshot, DesktopReportTarget } from './protocol.ts';
 import type { DetailsRead } from './machine-details.ts';
-import { GC_REPORT_STALE_MS } from '@stim-cli/core/state';
+import { GC_REPORT_STALE_MS, type GcReportPartial } from '@stim-cli/core/state';
 
 const MAX_REPORT_READS = 4;
 /** The gc report's read budget in the background, instead of the API's 60 seconds that a large machine exceeds. */
@@ -34,6 +34,8 @@ interface Entry {
     failure?: { message: string; at: number };
     /** A reader asked for fresh: the next read starts a sweep, or one starts after the sweep under way. */
     stale?: true;
+    /** What the sweep under way has read so far. */
+    partial?: NonNullable<DesktopReportSnapshot['partial']>;
   };
 }
 
@@ -43,13 +45,23 @@ export class DesktopReports {
   private activeLoads = 0;
   /** An invalidation reached the gc report before its entry existed, so the seeded report is stale. */
   private gcInvalidated = false;
-  private readonly load: (target: DesktopReportTarget, signal: AbortSignal, fresh: boolean) => Promise<DetailsRead>;
+  private readonly load: (
+    target: DesktopReportTarget,
+    signal: AbortSignal,
+    fresh: boolean,
+    onPartial: (part: GcReportPartial) => void,
+  ) => Promise<DetailsRead>;
   private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly seed: (target: DesktopReportTarget) => CachedReport | null;
 
   constructor(
-    load: (target: DesktopReportTarget, signal: AbortSignal, fresh: boolean) => Promise<DetailsRead>,
+    load: (
+      target: DesktopReportTarget,
+      signal: AbortSignal,
+      fresh: boolean,
+      onPartial: (part: GcReportPartial) => void,
+    ) => Promise<DetailsRead>,
     ttlMs = 60_000,
     now: () => number = Date.now,
     seed: (target: DesktopReportTarget) => CachedReport | null = () => null,
@@ -225,7 +237,17 @@ export class DesktopReports {
             ok: false,
             message: `The server is already running ${MAX_REPORT_READS} shared reports. Try again after a report finishes.`,
           };
-        return this.load(entry.target, abort.signal, fresh);
+        return this.load(entry.target, abort.signal, fresh, (part) => {
+          const cached = entry.cached;
+          if (!cached || entry.pending !== pending || this.closed) return;
+          const partial = cached.partial?.measuredAt === part.measuredAt ? cached.partial : undefined;
+          cached.partial = {
+            measuredAt: part.measuredAt,
+            parts: { ...partial?.parts, [part.part]: part.at },
+            value: { ...partial?.value, ...part.value },
+          };
+          this.publish(entry);
+        });
       })
       .catch((cause: unknown): DetailsRead => ({
         ok: false,
@@ -237,6 +259,7 @@ export class DesktopReports {
         entry.pending = undefined;
         if (this.closed) return undefined;
         if (entry.cached) {
+          delete entry.cached.partial;
           const { stale } = entry.cached;
           entry.cached = result.ok
             ? { good: { value: result.report, at: result.measuredAt ?? startedAt } }
@@ -271,6 +294,7 @@ export class DesktopReports {
         value: good?.value ?? null,
         ...(good ? { measuredAt: new Date(good.at).toISOString() } : {}),
         ...(entry.pending ? { refreshing: true } : failure ? { error: failure.message } : {}),
+        ...(entry.pending && entry.cached.partial ? { partial: entry.cached.partial } : {}),
       };
     }
     const result = entry.settled?.result;

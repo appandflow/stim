@@ -1230,6 +1230,48 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
   }
 
+  @Test func aGcReadDuringASweepLaysThePartsItHasReadOverTheLastReport() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let environment = try statsEnvironment(in: directory)
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
+    let sections: [String: JSONValue] = ["mode": .string("dry-run"), "sections": .object(["caches": .array([])])]
+    let partsAt: [String: JSONValue] = [
+      "plan": .string("2026-11-27T10:00:00.250Z"), "sections": .string("2026-11-27T10:00:01.250Z"),
+    ]
+    let partial = { (value: JSONValue, pending: Bool) -> JSONValue in
+      .object([
+        "pending": .bool(pending), "value": value, "refreshing": .bool(true),
+        "measuredAt": .string("2026-11-27T09:00:00.250Z"),
+        "partial": .object([
+          "measuredAt": .string("2026-11-27T10:00:00.250Z"), "parts": .object(partsAt), "value": .object(sections),
+        ]),
+      ])
+    }
+    let first = Task { try await reader.refresh(fresh: false) }
+    await settle()
+    socket.answer("desktop.reports.get", partial(.null, true))
+    let measuring = try await first.value
+    #expect(measuring.report == nil && measuring.refreshing)
+    #expect(measuring.parts["sections"] == Date(timeIntervalSince1970: 1_795_773_601.25))
+
+    let again = Task { try await reader.refresh(fresh: false) }
+    await settle()
+    let last: JSONValue = .object([
+      "sections": .object(["caches": .array([.object(["name": .string("old"), "dir": .string("/old")])])]),
+      "inventory": .object([
+        "devices": .array([]), "runtimes": .array([]), "systemImages": .array([]), "notices": .array([]),
+      ]),
+    ])
+    socket.answer("desktop.reports.get", partial(last, false))
+    let read = try await again.value
+    #expect(read.report?.sections.caches == [] && read.report?.inventory != nil && read.refreshing)
+    #expect(read.measuredAt == Date(timeIntervalSince1970: 1_795_770_000.25))
+    #expect(read.parts["plan"] == Date(timeIntervalSince1970: 1_795_773_600.25))
+  }
+
   @Test func refusedOrCancelledGcInvalidationDoesNotReadOrDisconnectTheSession() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }

@@ -132,9 +132,25 @@ test.each([
   rmSync(gcReportCacheFile());
   vi.mocked(readGcReportThroughStimd).mockResolvedValue(swept);
   await runGc({ dryRun: true, json: true, ...options });
-  expect(readGcReportThroughStimd).toHaveBeenCalledWith(asked, undefined);
+  expect(readGcReportThroughStimd).toHaveBeenCalledWith(asked, undefined, expect.any(Function));
   expect(JSON.parse(out[0] ?? '')).toMatchObject({ measured: { from: 'stimd', at: swept.measuredAt } });
   expect(runMaintenanceAtLevel).not.toHaveBeenCalled();
+});
+
+test('a refreshing dry run names each part stimd has read on stderr and keeps stdout to one payload', async () => {
+  vi.mocked(stimdLive).mockReturnValue(true);
+  const swept = cache(new Date().toISOString());
+  vi.mocked(readGcReportThroughStimd).mockImplementation(async (_options, _signal, onPart) => {
+    onPart?.({ measuredAt: swept.measuredAt, part: 'plan', at: swept.parts.plan, value: {} });
+    onPart?.({ measuredAt: swept.measuredAt, part: 'sections', at: swept.parts.sections, value: {} });
+    return swept;
+  });
+  await runGc({ dryRun: true, refresh: true, json: true });
+  expect(out).toHaveLength(1);
+  expect(err.filter((line) => line.includes('stimd measured the'))).toEqual([
+    `Stim: stimd measured the maintenance plan (started ${swept.parts.plan}).`,
+    `Stim: stimd measured the storage sections (started ${swept.parts.sections}).`,
+  ]);
 });
 
 test('a dry run whose stimd refuses the report scans in this process and says why', async () => {

@@ -11,12 +11,17 @@ const report = (measuredAt: string): GcReportCache => ({
 });
 
 function sweeps(settlesOnLeave = true) {
-  const runs: { resolve: (cache: GcReportCache) => void; reject: (error: Error) => void; leave: () => void }[] = [];
+  const runs: {
+    resolve: (cache: GcReportCache) => void;
+    reject: (error: Error) => void;
+    leave: () => void;
+    part: (part: unknown) => void;
+  }[] = [];
   const written: GcReportCache[] = [];
   const failures: unknown[] = [];
   let clock = 0;
   const owner = createGcReportSweeps(
-    () => {
+    (part) => {
       let resolve!: (cache: GcReportCache) => void;
       let reject!: (error: Error) => void;
       const result = new Promise<GcReportCache>((done, fail) => {
@@ -26,7 +31,7 @@ function sweeps(settlesOnLeave = true) {
       const leave = vi.fn<() => void>(() => {
         if (settlesOnLeave) reject(new Error('aborted'));
       });
-      runs.push({ resolve, reject, leave });
+      runs.push({ resolve, reject, leave, part });
       return { result, leave };
     },
     (cache) => written.push(cache),
@@ -101,4 +106,27 @@ test('after a sweep passes its budget, no other sweep starts until its thread jo
     void owner.sweep().catch(() => {});
     expect(runs).toHaveLength(2);
   });
+});
+
+test('each ask gets the parts of its sweep as they land, a late joiner the earlier ones first', async () => {
+  const { owner, runs, tick } = sweeps();
+  const part = (name: string, at: string) => ({ measuredAt: '2026-11-28T00:00:00.000Z', part: name, at, value: {} });
+  const first: string[] = [];
+  const late: string[] = [];
+  const next: string[] = [];
+  void owner.sweep(undefined, (landed) => first.push(landed.part));
+  runs[0]?.part(part('plan', '2026-11-28T00:00:00.000Z'));
+  runs[0]?.part({ part: 'not a part' });
+  void owner.sweep(undefined, (landed) => late.push(landed.part));
+  runs[0]?.part(part('sections', '2026-11-28T00:01:00.000Z'));
+  tick(10);
+  const fresh = owner.sweep(tick(0), (landed) => next.push(landed.part));
+  runs[0]?.resolve(report('2026-11-28T00:00:00.000Z'));
+  await vi.waitFor(() => expect(runs).toHaveLength(2));
+  runs[1]?.part(part('plan', '2026-11-28T00:05:00.000Z'));
+  runs[1]?.resolve(report('2026-11-28T00:05:00.000Z'));
+  await fresh;
+  expect(first).toEqual(['plan', 'sections']);
+  expect(late).toEqual(['plan', 'sections']);
+  expect(next).toEqual(['plan']);
 });

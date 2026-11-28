@@ -35,6 +35,7 @@ import {
   shareRouteClaimRoot,
   readGcReportCache,
   gcReportCacheFile,
+  type GcReportPartial,
 } from '@stim-cli/core/state';
 import { createRequestLog } from './request-log.ts';
 import { loadAudit } from './actions.ts';
@@ -652,6 +653,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
     fresh = false,
+    onPartial?: (part: GcReportPartial) => void,
   ): Promise<DetailsRead> => {
     const abort = new AbortController();
     if (signal?.aborted) abort.abort();
@@ -670,7 +672,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       .then(async () => {
         if (method === 'gc') {
           // @ref LLP 0012#the-gc-report-answers-from-its-cache -- stimd's shared sweep reads and caches the gc report
-          const shared = await readGcReportThroughStimd({ fresh }, abort.signal);
+          const shared = await readGcReportThroughStimd({ fresh }, abort.signal, onPartial);
           if (shared && shared !== 'started') {
             measuredAt = Date.parse(shared.measuredAt);
             return shared.report;
@@ -714,13 +716,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let seededGc: { mtimeMs: number; report: CachedReport | null } | undefined;
   const desktopReports = new DesktopReports(
-    (target, signal, fresh) =>
+    (target, signal, fresh, onPartial) =>
       readDetailsReport(
         target.report,
         target.report === 'doctor' ? target.cwd : undefined,
         target.report === 'doctor' ? target.platform : undefined,
         signal,
         fresh,
+        onPartial,
       ),
     undefined,
     undefined,

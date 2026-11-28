@@ -37,6 +37,8 @@ import {
   type DaemonMode,
   type GcReportCache,
   parseGcReportCache,
+  parseGcReportPartial,
+  type GcReportPartial,
   UPGRADE_GUIDE_URL,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
@@ -2300,13 +2302,16 @@ export async function runGcThroughStimd(
 
 /**
  * Asks this home's running stimd for its shared gc report sweep, which writes `$STIM_HOME/gc/report-cache.json`: with
- * `fresh`, one that starts no earlier than this request; otherwise the one under way or a new one. `background` returns
- * once the sweep is under way, or with null when stimd does not say so at once. Resolves with null when no stimd runs or it closes without answering, as a stimd of an
+ * `fresh`, one that starts no earlier than this request; otherwise the one under way or a new one. Each part of that
+ * sweep reaches `onPart` as stimd reads it, the parts read before the request first. `background` returns once the
+ * sweep is under way, or with null when stimd does not say so at once. Resolves with null when no stimd runs or it
+ * closes without answering, as a stimd of an
  * older build does, so the caller reads in its own process; it never starts a stimd.
  */
 export function readGcReportThroughStimd(
   { fresh = false, background = false }: { fresh?: boolean; background?: boolean },
   signal?: AbortSignal,
+  onPart?: (part: GcReportPartial) => void,
 ): Promise<GcReportCache | 'started' | null> {
   if (!stimdLive()) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
@@ -2322,6 +2327,11 @@ export function readGcReportThroughStimd(
       else resolve(answer);
     };
     const socket = openStimd([{ op: 'gc.report', params: { fresh, background } }], (message) => {
+      if (message.op === 'gc.report.part') {
+        const part = parseGcReportPartial(message.part);
+        if (part) onPart?.(part);
+        return;
+      }
       if (message.op === 'gc.report.started') return finish(null, 'started');
       const cache = message.op === 'gc.report.done' ? parseGcReportCache(message.cache) : null;
       if (cache) return finish(null, cache);

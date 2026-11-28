@@ -1318,6 +1318,20 @@ export function protocolJsonSchema(): JsonSchema {
           error: { type: 'string' },
           measuredAt: { type: 'string' },
           refreshing: { const: true },
+          partial: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['measuredAt', 'parts', 'value'],
+            properties: {
+              measuredAt: { type: 'string' },
+              parts: {
+                type: 'object',
+                additionalProperties: false,
+                properties: { plan: { type: 'string' }, sections: { type: 'string' }, inventory: { type: 'string' } },
+              },
+              value: { type: 'object' },
+            },
+          },
         },
       },
       MachineDetails: {

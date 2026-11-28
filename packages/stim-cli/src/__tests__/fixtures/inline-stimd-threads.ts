@@ -27,10 +27,10 @@ export function createThreadTable(log: Log = () => {}): ThreadTable {
       };
     },
     drainTrash: async () => {},
-    report() {
+    report(onPart) {
       const stop = new AbortController();
       return {
-        result: sweepGcReport(processContext(process.cwd(), AbortSignal.any([stop.signal, controller.signal]))),
+        result: sweepGcReport(processContext(process.cwd(), AbortSignal.any([stop.signal, controller.signal])), onPart),
         leave: () => stop.abort(),
       };
     },

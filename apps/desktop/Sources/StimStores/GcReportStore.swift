@@ -8,8 +8,10 @@ import StimKit
 @MainActor @Observable
 public final class GcReportStore {
   public private(set) var latest = Fetched<GcReport>()
-  /// When the shown report was measured.
+  /// When the shown report was measured; parts a measurement under way already replaced started at `partsAt`.
   public private(set) var at: Date?
+  /// While a measurement runs, when each part it has already read started: `plan`, `sections`, `inventory`.
+  public private(set) var partsAt: [String: Date] = [:]
   public private(set) var running = false
 
   private let run: @Sendable (_ fresh: Bool) async throws -> GcReportRead
@@ -120,6 +122,7 @@ public final class GcReportStore {
     case .success(let read):
       failures = 0
       refreshing = read.refreshing
+      partsAt = read.parts
       if let report = read.report {
         latest.record(.success(report))
         at = read.measuredAt ?? startedAt

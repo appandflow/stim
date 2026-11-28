@@ -549,7 +549,8 @@ After updating Stim Host, unregister and register the helper again.`,
   the one Stim Desktop shows, and prints when it was measured; JSON adds
   measured {from, at, parts}, each part's time no older than its rows. stimd's
   sweep is its only writer. A cached report older than 15 minutes still answers,
-  says so, and asks stimd to measure again in the background. With no cached
+  says so, and asks stimd to measure again in the background. A dry run
+  waiting on stimd names each part (plan, sections, inventory) on stderr. With no cached
   report the dry run waits for stimd's sweep; with no stimd, or with --pressure,
   it scans in its own process (measured.from scan) and leaves the cache as it
   is. The cached sweep reads build-state sizes only from the disk-usage cache,
