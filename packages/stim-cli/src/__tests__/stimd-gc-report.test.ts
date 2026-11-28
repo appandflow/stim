@@ -66,11 +66,13 @@ test('a failed sweep writes nothing, and one past its budget fails even when its
   expect(runs[1]?.leave).toHaveBeenCalled();
   expect(await slow).toMatchObject({ message: expect.stringContaining('did not finish within 15 minutes') });
   expect(written).toEqual([]);
-  const next = owner.sweep();
-  expect(runs).toHaveLength(3);
   runs[1]?.resolve(report('2026-11-28T00:00:00.000Z'));
+  await vi.waitFor(async () => {
+    void owner.sweep().catch(() => {});
+    expect(runs).toHaveLength(3);
+  });
   runs[2]?.resolve(report('2026-11-28T00:20:00.000Z'));
-  await next;
+  await vi.waitFor(() => expect(written).toHaveLength(1));
   expect(written.map((cache) => cache.measuredAt)).toEqual(['2026-11-28T00:20:00.000Z']);
 });
 
@@ -83,4 +85,20 @@ test('a cleanup failure that lands after the budget failed the sweep still reach
   const cleanup = Object.assign(new Error('Report child 4242 did not close'), { reportCleanup: true });
   runs[0]?.reject(cleanup);
   await vi.waitFor(() => expect(failures).toContain(cleanup));
+});
+
+test('after a sweep passes its budget, no other sweep starts until its thread job settles', async () => {
+  vi.useFakeTimers();
+  const { owner, runs } = sweeps(false);
+  const slow = owner.sweep().catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(GC_REPORT_BUDGET_MS);
+  await slow;
+  await expect(owner.sweep()).rejects.toThrow('still stopping');
+  await expect(owner.sweep(Date.now())).rejects.toThrow('still stopping');
+  expect(runs).toHaveLength(1);
+  runs[0]?.reject(new Error('aborted'));
+  await vi.waitFor(async () => {
+    void owner.sweep().catch(() => {});
+    expect(runs).toHaveLength(2);
+  });
 });

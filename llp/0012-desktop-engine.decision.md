@@ -159,7 +159,8 @@ in the net thread: stim-server asks stimd for it over the CLI socket
 (`gc.report`), as `stim gc --dry-run --refresh` does, so one sweep at a time
 serves every reader, and an ask after an invalidation gets a sweep that
 started after it. The sweep has a 15 minute budget instead of the API's 60
-seconds, and stimd saves its result to `$STIM_HOME/gc/report-cache.json`, the
+seconds; one past it fails its readers at once, and no sweep starts until its
+thread job has settled, and stimd saves its result to `$STIM_HOME/gc/report-cache.json`, the
 one writer of that file (read by core), so a restarted stimd answers from it
 and stim-server takes a newer sweep another reader caused from it. The file
 holds when the sweep and each of its parts started. Only without a stimd, as
