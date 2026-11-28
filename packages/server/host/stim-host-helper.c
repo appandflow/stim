@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -143,6 +144,8 @@ int main(void) {
       struct proc_taskinfo task;
       if (proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &bsd, sizeof bsd) != sizeof bsd ||
           proc_pidinfo(pids[i], PROC_PIDTASKINFO, 0, &task, sizeof task) != sizeof task) continue;
+      struct rusage_info_v2 usage;
+      uint64_t footprint = proc_pid_rusage(pids[i], RUSAGE_INFO_V2, (rusage_info_t *)&usage) == 0 ? usage.ri_phys_footprint : 0;
       struct observation row = {.pid = pids[i], .service = service, .start_sec = bsd.pbi_start_tvsec,
         .start_usec = bsd.pbi_start_tvusec, .cpu_ns = helper_ticks_to_ns(task.pti_total_user + task.pti_total_system, timebase.numer, timebase.denom), .at = monotonic};
       double cpu = 0;
@@ -154,24 +157,25 @@ int main(void) {
         row.window = old.window;
         break;
       }
-      row.window = helper_observe(row.window, monotonic, cpu, task.pti_resident_size);
+      row.window = helper_observe(row.window, monotonic, cpu,
+        footprint > task.pti_resident_size ? footprint : task.pti_resident_size);
       const char *name = strrchr(path, '/') + 1;
       error = "sample log write failed";
-      if (dprintf(log, "{\"event\":\"sample\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f,\"decision\":\"%s\"}\n",
-        now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic),
+      if (dprintf(log, "{\"event\":\"sample\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"footprint\":%llu,\"seconds\":%.0f,\"decision\":\"%s\"}\n",
+        now, service, name, row.pid, cpu, task.pti_resident_size, footprint, helper_duration(row.window, monotonic),
         helper_restart_due(row.window, monotonic, last_monotonic[service]) ? "restart" : "observe") < 0) goto retry;
       if (helper_restart_due(row.window, monotonic, last_monotonic[service]) && identity(row.pid, service, &bsd)) {
         /* @ref LLP 0001#opt-in-apple-service-restarts -- durable attempts preserve the hourly limit */
         last[service] = now;
         last_monotonic[service] = monotonic;
         error = "restart attempt write or sync failed";
-        if (dprintf(log, "{\"event\":\"restart\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f}\n",
-          now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic)) < 0 || fsync(log) != 0) goto retry;
+        if (dprintf(log, "{\"event\":\"restart\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"footprint\":%llu,\"seconds\":%.0f}\n",
+          now, service, name, row.pid, cpu, task.pti_resident_size, footprint, helper_duration(row.window, monotonic)) < 0 || fsync(log) != 0) goto retry;
         int signal_error = ESRCH;
         if (identity(row.pid, service, &bsd)) signal_error = kill(row.pid, SIGTERM) == 0 ? 0 : errno;
         error = "restart result write failed";
-        if (dprintf(log, "{\"event\":\"result\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f,\"error\":%d}\n",
-          now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic), signal_error) < 0) goto retry;
+        if (dprintf(log, "{\"event\":\"result\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"footprint\":%llu,\"seconds\":%.0f,\"error\":%d}\n",
+          now, service, name, row.pid, cpu, task.pti_resident_size, footprint, helper_duration(row.window, monotonic), signal_error) < 0) goto retry;
         row.window = (struct helper_window){0};
       }
       current[kept++] = row;
