@@ -37,13 +37,10 @@ import Foundation
     }
     var value: [String: JSONValue]?
     if snapshot["pending"] == .bool(false), case .object(let settled)? = snapshot["value"] { value = settled }
-    var measuredAt = value == nil ? nil : date(snapshot["measuredAt"])
+    let measuredAt = value == nil ? nil : date(snapshot["measuredAt"])
     var parts: [String: Date] = [:]
     if refreshing, case .object(let partial)? = snapshot["partial"], case .object(let read)? = partial["value"] {
-      if read["sections"] != nil || value != nil {
-        value = (value ?? [:]).merging(read) { _, new in new }
-        measuredAt = measuredAt ?? date(partial["measuredAt"])
-      }
+      if value != nil { value = value?.merging(read) { _, new in new } }
       if case .object(let started)? = partial["parts"] { parts = started.compactMapValues { date($0) } }
     }
     guard let value else {
@@ -62,7 +59,9 @@ import Foundation
 
 /// One answer of the server's gc report: no report while it measures for the first time, and `error` when its last
 /// measurement failed after the one `report` comes from. While a measurement runs, `report` already holds the parts it
-/// has read over the last report, and `parts` says when each of those parts started.
+/// has read laid over the last report, `measuredAt` stays that report's time, and `parts` says when each new part
+/// started. A first measurement shows nothing until it finishes, since the page reads a missing inventory as an old
+/// stim.
 public struct GcReportRead: Sendable {
   public let report: GcReport?
   public let measuredAt: Date?
