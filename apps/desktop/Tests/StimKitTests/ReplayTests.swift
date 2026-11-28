@@ -1230,6 +1230,43 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
   }
 
+  @Test func aGcReadDuringASweepShowsThePartsItHasReadAndWhenEachStarted() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let environment = try statsEnvironment(in: directory)
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
+    let partial = { (value: [String: JSONValue], parts: [String: JSONValue]) -> JSONValue in
+      .object([
+        "pending": .bool(true), "value": .null, "refreshing": .bool(true),
+        "partial": .object([
+          "measuredAt": .string("2026-11-27T10:00:00.250Z"), "parts": .object(parts), "value": .object(value),
+        ]),
+      ])
+    }
+    let planned = Task { try await reader.refresh(fresh: false) }
+    await settle()
+    socket.answer(
+      "desktop.reports.get",
+      partial(["mode": .string("dry-run")], ["plan": .string("2026-11-27T10:00:00.250Z")]))
+    let plan = try await planned.value
+    #expect(plan.report == nil && plan.refreshing)
+    #expect(plan.parts["plan"] == Date(timeIntervalSince1970: 1_795_773_600.25))
+
+    let sectioned = Task { try await reader.refresh(fresh: false) }
+    await settle()
+    socket.answer(
+      "desktop.reports.get",
+      partial(
+        ["mode": .string("dry-run"), "sections": .object(["caches": .array([])])],
+        ["plan": .string("2026-11-27T10:00:00.250Z"), "sections": .string("2026-11-27T10:00:01.250Z")]))
+    let sections = try await sectioned.value
+    #expect(sections.report?.sections.caches == [] && sections.refreshing)
+    #expect(sections.measuredAt == Date(timeIntervalSince1970: 1_795_773_600.25))
+    #expect(sections.parts["sections"] == Date(timeIntervalSince1970: 1_795_773_601.25))
+  }
+
   @Test func refusedOrCancelledGcInvalidationDoesNotReadOrDisconnectTheSession() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }

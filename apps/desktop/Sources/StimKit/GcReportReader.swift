@@ -32,35 +32,51 @@ import Foundation
       throw ServerError(code: "bad-response", message: "The local stim-server did not return a storage report.")
     }
     let refreshing = snapshot["refreshing"] == .bool(true)
-    guard snapshot["pending"] == .bool(false), let value = snapshot["value"], value != .null else {
+    let date = { (value: JSONValue?) in
+      value?.string.flatMap { try? Date($0, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true)) }
+    }
+    var value: [String: JSONValue]?
+    if snapshot["pending"] == .bool(false), case .object(let settled)? = snapshot["value"] { value = settled }
+    var measuredAt = value == nil ? nil : date(snapshot["measuredAt"])
+    var parts: [String: Date] = [:]
+    if refreshing, case .object(let partial)? = snapshot["partial"], case .object(let read)? = partial["value"] {
+      if read["sections"] != nil || value != nil {
+        value = (value ?? [:]).merging(read) { _, new in new }
+        measuredAt = measuredAt ?? date(partial["measuredAt"])
+      }
+      if case .object(let started)? = partial["parts"] { parts = started.compactMapValues { date($0) } }
+    }
+    guard let value else {
       if refreshing || snapshot["pending"] == .bool(true) && snapshot["error"] == nil {
-        return GcReportRead(report: nil, measuredAt: nil, refreshing: true, error: nil)
+        return GcReportRead(report: nil, measuredAt: nil, refreshing: true, error: nil, parts: parts)
       }
       throw ServerError(
         code: "bad-response",
         message: snapshot["error"]?.string ?? "The local stim-server did not return a completed storage report.")
     }
-    let measuredAt = snapshot["measuredAt"]?.string.flatMap {
-      try? Date($0, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true))
-    }
     return GcReportRead(
-      report: try decodeReporting(GcReport.self, from: value, source: .server, diagnostics: diagnostics),
-      measuredAt: measuredAt, refreshing: refreshing, error: snapshot["error"]?.string)
+      report: try decodeReporting(GcReport.self, from: .object(value), source: .server, diagnostics: diagnostics),
+      measuredAt: measuredAt, refreshing: refreshing, error: snapshot["error"]?.string, parts: parts)
   }
 }
 
 /// One answer of the server's gc report: no report while it measures for the first time, and `error` when its last
-/// measurement failed after the one `report` comes from.
+/// measurement failed after the one `report` comes from. While a measurement runs, `report` already holds the parts it
+/// has read over the last report, and `parts` says when each of those parts started.
 public struct GcReportRead: Sendable {
   public let report: GcReport?
   public let measuredAt: Date?
   public let refreshing: Bool
   public let error: String?
+  public let parts: [String: Date]
 
-  public init(report: GcReport?, measuredAt: Date?, refreshing: Bool, error: String? = nil) {
+  public init(
+    report: GcReport?, measuredAt: Date?, refreshing: Bool, error: String? = nil, parts: [String: Date] = [:]
+  ) {
     self.report = report
     self.measuredAt = measuredAt
     self.refreshing = refreshing
     self.error = error
+    self.parts = parts
   }
 }

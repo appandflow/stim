@@ -1,17 +1,32 @@
-import type { GcReportCache } from '@stim-cli/core/state';
+import { parseGcReportPartial, type GcReportCache, type GcReportPartial } from '@stim-cli/core/state';
 
 /** A gc report sweep's budget: a large machine needs over four minutes (#6606). */
 export const GC_REPORT_BUDGET_MS: number = 15 * 60_000;
 
+type OnPart = (part: GcReportPartial) => void;
+
 interface Sweep {
   startedAt: number;
   result: Promise<GcReportCache>;
+  parts: GcReportPartial[];
+  listeners: Set<OnPart>;
   leave(): void;
 }
 
+function join(sweep: Sweep, onPart?: OnPart): Promise<GcReportCache> {
+  if (onPart) {
+    for (const part of sweep.parts) onPart(part);
+    sweep.listeners.add(onPart);
+  }
+  return sweep.result;
+}
+
 export interface GcReportSweeps {
-  /** A sweep's report: with `after`, of one that started no earlier; otherwise of the one under way or a new one. */
-  sweep(after?: number): Promise<GcReportCache>;
+  /**
+   * A sweep's report: with `after`, of one that started no earlier; otherwise of the one under way or a new one. Each
+   * part of that sweep goes to `onPart`, the parts it read before this ask first.
+   */
+  sweep(after?: number, onPart?: OnPart): Promise<GcReportCache>;
   /** Stops the sweep under way; later asks are refused. */
   close(): void;
 }
@@ -23,19 +38,25 @@ export interface GcReportSweeps {
  * askers at once, and no other starts until its thread job settles.
  */
 export function createGcReportSweeps(
-  run: () => { result: Promise<GcReportCache>; leave(): void },
+  run: (onPart: (part: unknown) => void) => { result: Promise<GcReportCache>; leave(): void },
   write: (cache: GcReportCache) => void,
   onFailure: (error: unknown) => void = () => {},
   now: () => number = Date.now,
 ): GcReportSweeps {
   // @ref LLP 0012#the-gc-report-answers-from-its-cache -- stimd's sweep is the one writer of the cached report
   let current: Sweep | null = null;
-  let next: Promise<GcReportCache> | null = null;
+  let next: { result: Promise<GcReportCache>; listeners: Set<OnPart> } | null = null;
   let closed = false;
   let stopping: Promise<void> | null = null;
-  const start = (): Sweep => {
+  const start = (listeners: Set<OnPart> = new Set()): Sweep => {
     if (stopping) throw new Error('the last gc report sweep passed its budget and is still stopping');
-    const asked = run();
+    const parts: GcReportPartial[] = [];
+    const asked = run((value) => {
+      const part = parseGcReportPartial(value);
+      if (!part) return;
+      parts.push(part);
+      for (const listener of listeners) listener(part);
+    });
     asked.result.catch(onFailure);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const budget = new Promise<never>((_resolve, reject) => {
@@ -51,6 +72,8 @@ export function createGcReportSweeps(
     });
     const sweep: Sweep = {
       startedAt: now(),
+      parts,
+      listeners,
       leave: asked.leave,
       result: Promise.race([
         asked.result.then((cache) => {
@@ -60,6 +83,7 @@ export function createGcReportSweeps(
         budget,
       ]).finally(() => {
         clearTimeout(timer);
+        listeners.clear();
         if (current === sweep) current = null;
       }),
     };
@@ -67,24 +91,31 @@ export function createGcReportSweeps(
     return sweep;
   };
   return {
-    sweep(after) {
+    sweep(after, onPart) {
       if (closed) return Promise.reject(new Error('stimd is ending'));
       if (!current) {
         try {
-          return start().result;
+          return join(start(), onPart);
         } catch (error) {
           return Promise.reject(error);
         }
       }
-      if (after === undefined || current.startedAt >= after) return current.result;
-      next ??= current.result
-        .catch(() => undefined)
-        .then(() => {
-          next = null;
-          if (closed) throw new Error('stimd is ending');
-          return (current ?? start()).result;
-        });
-      return next;
+      if (after === undefined || current.startedAt >= after) return join(current, onPart);
+      if (!next) {
+        const listeners = new Set<OnPart>();
+        const result = current.result
+          .catch(() => undefined)
+          .then(() => {
+            next = null;
+            if (closed) throw new Error('stimd is ending');
+            if (!current) return start(listeners).result;
+            for (const listener of listeners) join(current, listener);
+            return current.result;
+          });
+        next = { result, listeners };
+      }
+      if (onPart) next.listeners.add(onPart);
+      return next.result;
     },
     close() {
       closed = true;

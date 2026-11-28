@@ -173,6 +173,22 @@ fresh only from its Refresh button and after an action that changes storage.
 Nothing deletes from this report: a gc pass and `deleteGarbageItem` read their
 candidates again before they act.
 
+A sweep streams its parts as it reads them: the maintenance plan, the storage
+sections, then the device inventory. stimd sends each to every reader of that
+sweep (`gc.report.part`, the parts read before a reader joined first), and
+while the sweep runs the snapshot's `partial` holds the payload keys read so
+far, when the sweep started and when each finished part started; `value` stays
+the last complete report, so an older Desktop and phone details read only
+whole reports. Desktop's reads during a sweep overlay `partial.value` on that
+report, show it once the storage sections are in, and keep each part's time.
+`stim gc --dry-run --refresh` names each part on stderr as it lands.
+
+Maintainer decision: "can scan like stream in, and is it possible to further reduce git calls", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
+
+Chosen by the implementing agent, not the maintainer: three parts rather than
+one per section or checkout, and Desktop reading partial parts on its existing
+15 second polls during a sweep rather than through a subscription.
+
 Maintainer decision: "also could stim mostly return its cached values, unless maybe deskt ask for fresh", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
 
 Maintainer decision: "how reliable is stimd cache tho? If it is we might want to return cached values always?", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).

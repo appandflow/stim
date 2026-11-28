@@ -125,3 +125,21 @@ export function parseGcReportCache(value: unknown): GcReportCache | null {
     run: value.run,
   };
 }
+
+/** One part of a gc report sweep under way: when the sweep and the part started, and the payload keys the part read. */
+export interface GcReportPartial {
+  measuredAt: string;
+  part: GcReportPart;
+  at: string;
+  value: Record<string, unknown>;
+}
+
+const PARTS: readonly string[] = ['plan', 'sections', 'inventory'];
+const isPart = (value: unknown): value is GcReportPart => typeof value === 'string' && PARTS.includes(value);
+
+/** `value` as one part of a gc report sweep, or null when it is not one. */
+export function parseGcReportPartial(value: unknown): GcReportPartial | null {
+  if (!isJsonObject(value) || !isTime(value.measuredAt) || !isPart(value.part) || !isTime(value.at)) return null;
+  if (!isJsonObject(value.value)) return null;
+  return { measuredAt: value.measuredAt, part: value.part, at: value.at, value: value.value };
+}

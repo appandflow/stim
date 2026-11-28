@@ -15,6 +15,7 @@ import {
   type DaemonPressure,
   type GcReportCache,
   type GcReportPart,
+  type GcReportPartial,
   type PressureLevel,
   type RescuedCopy,
 } from '@stim-cli/core/state';
@@ -313,10 +314,14 @@ export async function readGcReport(options: GcReadOptions = {}, deps: GcDependen
 
 /**
  * stimd's shared gc report: the dry-run payload as `readGcReport` reads it without measuring build state, with when each
- * part started and the plan fields the plain summary reads, for `$STIM_HOME/gc/report-cache.json`.
+ * part started and the plan fields the plain summary reads, for `$STIM_HOME/gc/report-cache.json`. Each part goes to
+ * `onPart` as soon as it is read.
  */
-export async function sweepGcReport(operation: StimContext): Promise<GcReportCache> {
-  const { payload, run, parts } = await readGcParts({ measureBuildState: false }, { operation });
+export async function sweepGcReport(
+  operation: StimContext,
+  onPart: (part: GcReportPartial) => void = () => {},
+): Promise<GcReportCache> {
+  const { payload, run, parts } = await readGcParts({ measureBuildState: false }, { operation }, onPart);
   return {
     version: GC_REPORT_CACHE_VERSION,
     measuredAt: parts.plan,
@@ -329,6 +334,7 @@ export async function sweepGcReport(operation: StimContext): Promise<GcReportCac
 async function readGcParts(
   options: GcReadOptions,
   deps: GcDependencies,
+  onPart: (part: GcReportPartial) => void = () => {},
 ): Promise<{ payload: GcRunPayload; run: LevelRun; parts: Record<GcReportPart, string> }> {
   const closeGitReads = openGitReads(deps.operation);
   try {
@@ -339,8 +345,12 @@ async function readGcParts(
       operation: deps.operation,
       walkUnknown: false,
     });
+    const planned = runPayload(run, false);
+    onPart({ measuredAt: plan, part: 'plan', at: plan, value: { ...planned } });
     const sections = new Date().toISOString();
     const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
+    const sectioned = gcReportSections(report);
+    onPart({ measuredAt: plan, part: 'sections', at: sections, value: { sections: sectioned } });
     const inventoryAt = new Date().toISOString();
     const inventory = await collectInventory(
       loadConfig(),
@@ -348,8 +358,9 @@ async function readGcParts(
       deps.operation?.env ?? process.env,
       deps.operation,
     );
+    onPart({ measuredAt: plan, part: 'inventory', at: inventoryAt, value: { inventory } });
     return {
-      payload: { ...runPayload(run, false), sections: gcReportSections(report), inventory },
+      payload: { ...planned, sections: sectioned, inventory },
       run,
       parts: { plan, sections, inventory: inventoryAt },
     };
@@ -539,7 +550,9 @@ async function sharedDryRun(
     );
   let why = 'no stimd answers for this Stim home';
   try {
-    const answer = await readGcReportThroughStimd({ fresh: Boolean(opts.refresh) }, signal);
+    const answer = await readGcReportThroughStimd({ fresh: Boolean(opts.refresh) }, signal, (part) =>
+      console.error(`Stim: stimd measured the ${PART_NAMES[part.part]} (started ${part.at}).`),
+    );
     if (answer && answer !== 'started') return { cache: answer, from: 'stimd' };
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -548,6 +561,12 @@ async function sharedDryRun(
   console.error(`Stim: ${why}, so this dry run scans in this process; the cached gc report is unchanged.`);
   return null;
 }
+
+const PART_NAMES: Record<GcReportPart, string> = {
+  plan: 'maintenance plan',
+  sections: 'storage sections',
+  inventory: 'device inventory',
+};
 
 function printSharedDryRun(
   { cache, from }: { cache: GcReportCache; from: 'cache' | 'stimd' },

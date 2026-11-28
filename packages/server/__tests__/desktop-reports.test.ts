@@ -1,5 +1,5 @@
 import { DesktopReports } from '../src/desktop-reports.ts';
-import { GC_REPORT_STALE_MS } from '@stim-cli/core/state';
+import { GC_REPORT_STALE_MS, type GcReportPartial } from '@stim-cli/core/state';
 import type { DetailsRead } from '../src/machine-details.ts';
 import type { DesktopReportSnapshot, DesktopReportTarget } from '../src/protocol.ts';
 
@@ -145,10 +145,20 @@ test('invalidation aborts the stale load so a waiting get takes only the fresh o
 });
 
 function gcLoads() {
-  const loads: { load: ReturnType<typeof deferred<DetailsRead>>; signal: AbortSignal; fresh: boolean }[] = [];
-  const load = (_target: DesktopReportTarget, signal: AbortSignal, fresh: boolean) => {
+  const loads: {
+    load: ReturnType<typeof deferred<DetailsRead>>;
+    signal: AbortSignal;
+    fresh: boolean;
+    part: (part: GcReportPartial) => void;
+  }[] = [];
+  const load = (
+    _target: DesktopReportTarget,
+    signal: AbortSignal,
+    fresh: boolean,
+    part: (part: GcReportPartial) => void,
+  ) => {
     const next = deferred<DetailsRead>();
-    loads.push({ load: next, signal, fresh });
+    loads.push({ load: next, signal, fresh, part });
     return next.promise;
   };
   return { loads, load };
@@ -243,6 +253,33 @@ test('the gc report takes a newer sweep from the cache file and its own measured
   await vi.advanceTimersByTimeAsync(GC_REPORT_STALE_MS);
   await cache.get(GC);
   expect(loads.map((entry) => entry.fresh)).toEqual([true, false]);
+});
+
+test('a gc sweep publishes each part it has read beside the last report, and drops them once it settles', async () => {
+  vi.useFakeTimers({ now: 10 * GC_REPORT_STALE_MS });
+  const { loads, load } = gcLoads();
+  const cache = new DesktopReports(load);
+  caches.push(cache);
+  const pushed: DesktopReportSnapshot[] = [];
+  cache.subscribe(GC, (snapshot) => pushed.push(snapshot));
+  await vi.waitFor(() => expect(loads).toHaveLength(1));
+  const measuredAt = new Date(Date.now()).toISOString();
+  const sectionsAt = new Date(Date.now() + 1000).toISOString();
+  loads[0]?.part({ measuredAt, part: 'plan', at: measuredAt, value: { mode: 'dry-run' } });
+  loads[0]?.part({ measuredAt, part: 'sections', at: sectionsAt, value: { sections: { caches: [] } } });
+  expect(pushed.at(-1)).toEqual({
+    pending: true,
+    value: null,
+    refreshing: true,
+    partial: {
+      measuredAt,
+      parts: { plan: measuredAt, sections: sectionsAt },
+      value: { mode: 'dry-run', sections: { caches: [] } },
+    },
+  });
+  loads[0]?.load.resolve({ ok: true, report: { mode: 'dry-run', sections: {}, inventory: null } });
+  await vi.waitFor(() => expect(pushed.at(-1)).not.toHaveProperty('partial'));
+  expect(pushed.at(-1)).toMatchObject({ pending: false, value: { inventory: null } });
 });
 
 test('a subscription to a seeded gc report refreshes it once the seed is stale', async () => {
