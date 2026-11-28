@@ -2301,7 +2301,7 @@ export async function runGcThroughStimd(
 /**
  * Asks this home's running stimd for its shared gc report sweep, which writes `$STIM_HOME/gc/report-cache.json`: with
  * `fresh`, one that starts no earlier than this request; otherwise the one under way or a new one. `background` returns
- * once the sweep is under way. Resolves with null when no stimd runs or it closes without answering, as a stimd of an
+ * once the sweep is under way, or with null when stimd does not say so at once. Resolves with null when no stimd runs or it closes without answering, as a stimd of an
  * older build does, so the caller reads in its own process; it never starts a stimd.
  */
 export function readGcReportThroughStimd(
@@ -2311,9 +2311,11 @@ export function readGcReportThroughStimd(
   if (!stimdLive()) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
     let settled = false;
+    let unanswered: ReturnType<typeof setTimeout> | undefined;
     const finish = (error: Error | null, answer: GcReportCache | 'started' | null = null) => {
       if (settled) return;
       settled = true;
+      clearTimeout(unanswered);
       signal?.removeEventListener('abort', abort);
       socket.destroy();
       if (error) reject(error);
@@ -2338,5 +2340,6 @@ export function readGcReportThroughStimd(
     if (signal?.aborted) return abort();
     signal?.addEventListener('abort', abort, { once: true });
     socket.once('close', () => finish(null, null));
+    if (background) unanswered = setTimeout(() => finish(null, null), CONTACT_TIMEOUT_MS);
   });
 }
