@@ -224,3 +224,16 @@ test('a subscription to a seeded gc report refreshes it once the seed is stale',
   await vi.advanceTimersByTimeAsync(GC_REPORT_STALE_MS);
   expect(loads).toHaveLength(1);
 });
+
+test.each([GC, undefined])(
+  'an invalidation before the first read makes a recent seeded gc report sweep',
+  async (target) => {
+    vi.useFakeTimers({ now: 10 * GC_REPORT_STALE_MS });
+    const { loads, load } = gcLoads();
+    const cache = new DesktopReports(load, undefined, undefined, () => ({ value: { version: 1 }, at: Date.now() }));
+    caches.push(cache);
+    cache.invalidate(target);
+    expect(await cache.get(GC)).toMatchObject({ value: { version: 1 }, refreshing: true });
+    await vi.waitFor(() => expect(loads).toHaveLength(1));
+  },
+);

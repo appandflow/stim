@@ -57,7 +57,8 @@ public final class GcReportStore {
   public var error: String? { latest.error }
 
   /// The last report while it is younger than `maxAge` and no action changed what it reports since it started;
-  /// otherwise the result of a run that started after that change, nil when that run fails.
+  /// otherwise the result of a fresh read, which the server can answer with its last report while it measures again,
+  /// nil when that read fails.
   public func report(maxAge: TimeInterval) async -> GcReport? {
     if let report, let at, at >= changedAt, now().timeIntervalSince(at) < maxAge { return report }
     return await current(fresh: true).value

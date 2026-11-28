@@ -42,6 +42,8 @@ export class DesktopReports {
   private readonly entries = new Map<string, Entry>();
   private closed = false;
   private activeLoads = 0;
+  /** An invalidation reached the gc report before its entry existed, so the seeded report is stale. */
+  private gcInvalidated = false;
   private readonly load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>;
   private readonly ttlMs: number;
   private readonly now: () => number;
@@ -122,6 +124,7 @@ export class DesktopReports {
 
   /** Invalidates `target`, or every target without one. */
   invalidate(target?: DesktopReportTarget): void {
+    if (!target || cachedReport(target)) this.gcInvalidated = true;
     const only = target && this.entries.get(reportKey(target));
     if (target && !only) return;
     for (const entry of only ? [only] : this.entries.values()) {
@@ -165,6 +168,7 @@ export class DesktopReports {
       if (cachedReport(target)) {
         const good = this.seed(target);
         entry.cached = good ? { good } : {};
+        if (this.gcInvalidated) entry.cached.stale = true;
       }
       this.entries.set(key, entry);
     }
