@@ -1421,11 +1421,10 @@ at 4 MiB, keeping one previous file. Samples, attempts and signal outcomes are
 JSON lines; reporting uses successful signal outcomes from the last hour.
 This reports a restart request, not proof of launchd's replacement.
 
-stimd's Apple service sample leaves fseventsd out; its advice comes from the
-memory culprit report, which reads footprint from `top`. That report keeps
-`sudo killall fseventsd` until a Stim Host release whose helper lists
-fseventsd is pinned, because the setup command would install a helper that
-does not restart it. The pin switches the command to the setup command
+stimd's Apple service sample leaves fseventsd out. Its advice comes from the
+memory culprit report, which reads footprint from `top` and prints the same
+setup command, so the advice is not printed twice. The advice needs a pinned
+Stim Host whose helper lists fseventsd, 0.2.1 or later
 ([#6604](https://github.com/appandflow/stim/issues/6604)).
 
 Only the home maintenance pass samples Apple services, reusing its process
@@ -1460,6 +1459,7 @@ Code: [helper](../packages/server/host/stim-host-helper.c),
 [policy](../packages/server/host/helper-policy.h),
 [ServiceManagement bridge](../packages/server/host/helper-service.m),
 [CLI and reporting](../packages/stim-cli/src/apple-services.ts),
+[fseventsd advice](../packages/stim-cli/src/memory-culprits.ts),
 [Desktop preferences](../apps/desktop/Sources/StimDesktop/Views/AppPreferencesView.swift).
 
 ## A report asks git each question once

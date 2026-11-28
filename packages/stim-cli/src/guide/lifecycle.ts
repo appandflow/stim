@@ -3840,8 +3840,8 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   daemons). Abnormal is at least a quarter of physical memory and 8 GiB, or
   2 GiB for fseventsd and Watchman, which are normally far smaller. A known
   safe-to-restart process comes with its command; Stim never runs it:
-    fseventsd                      sudo killall fseventsd (launchd restarts it;
-                                   file watchers rescan once)
+    fseventsd                      stim service install --helper (the helper
+                                   restarts it; file watchers rescan once)
     Watchman                       stim gc --pressure high
     Gradle or Kotlin daemon        stim gc --pressure high
   Any other process is named with its size only; ask before quitting it.
