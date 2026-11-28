@@ -1355,13 +1355,17 @@ Host; for a missing or too old one it shows that command.
 stimd keeps an installed Stim Host current. At each start, which every engine
 update causes, it installs the pinned release over a `~/Applications/Stim
 Host.app` whose version is older, through the same download, digest and
-signature checks, under a machine-wide lock in `~/.stim/machine/host` so the
-stimds of several Stim homes do not swap the bundle at once. A failed attempt
+signature checks. Every Host install, from stimd or a command, takes a
+machine-wide lock in `~/.stim/machine/host`, so the stimds of several Stim
+homes and a concurrent `stim service install` do not swap the bundle at once. A failed attempt
 retries hourly until one succeeds. It never installs Stim Host on a Mac that
 has none there, never downgrades a newer one, and skips the update when
-`engine.autoUpdate` is `off`. Replacing the bundle under a running stimd is
-safe: on the maintainer's MacBook on 2026-11-27 macOS left the running
-processes alone when a notarized same-team build replaced the bundle.
+`engine.autoUpdate` is `off`; under the default `auto` it updates Host even
+for an engine that does not update itself, such as a global npm install,
+because the Host should match whichever engine runs. Replacing the bundle under running processes
+is safe: on the maintainer's MacBook on 2026-11-27 the registered helper
+kept running when a notarized same-team build replaced the bundle, and the
+server launched by `stim-host` runs node, not the bundle's code.
 
 The helper exits when its own executable is replaced, so launchd's KeepAlive
 starts the new binary. It records its path and device and inode at start, and
@@ -1450,7 +1454,7 @@ a service that qualified before still qualifies. For #6604: updating only an
 older installed Host and never downgrading one, since the stimds of worktree
 builds and scratch homes share the real `~/Applications`; reusing
 `engine.autoUpdate` `off` as the opt-out; the hourly retry; the two-cycle
-settle check; and the lock path. No settings are added.
+settle check; and one lock for every Host install. No settings are added.
 
 Code: [helper](../packages/server/host/stim-host-helper.c),
 [policy](../packages/server/host/helper-policy.h),

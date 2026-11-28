@@ -171,12 +171,28 @@ async function downloadRelease(release: HostRelease, dir: string): Promise<strin
 /**
  * Installs the host app in `~/Applications`: the pinned signed `release`, or Stim Host Dev built from `sources` when
  * `release` is null. An installed release whose version is `release`'s stays untouched without a download, and so does
- * an installed bundle with the same bytes, so the grants macOS keyed to its signature still match.
+ * an installed bundle with the same bytes, so the grants macOS keyed to its signature still match. Installs from every
+ * Stim home and command take turns under one machine-wide lock.
  */
 export async function installHostApp(
   sources: string = SOURCES,
   release: HostRelease | null = RELEASE,
 ): Promise<HostApp> {
+  return withInstallLock(() => installUnlocked(sources, release));
+}
+
+const INSTALL_LOCK = () => join(homedir(), '.stim', 'machine', 'host', 'install');
+
+function withInstallLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lock = INSTALL_LOCK();
+  return withDirLockTransaction(lock, fn, {
+    waitMs: 300_000,
+    pollMs: 1000,
+    ensureParent: () => mkdirSync(dirname(lock), { recursive: true }),
+  });
+}
+
+async function installUnlocked(sources: string, release: HostRelease | null): Promise<HostApp> {
   const flavor = release ? FLAVORS.release : FLAVORS.dev;
   const applications = join(homedir(), 'Applications');
   const app = join(applications, `${flavor.name}.app`);
@@ -236,27 +252,18 @@ export async function installHostApp(
 }
 
 /**
- * Installs the pinned `release` over an older Stim Host in `~/Applications`, under a machine-wide lock so stimds of
- * several Stim homes do not swap the bundle at once. Resolves to null when no Stim Host is installed there, or when the
- * installed one is the pinned version or newer.
+ * Installs the pinned `release` over an older Stim Host in `~/Applications`. Resolves to null when no Stim Host is
+ * installed there, or when the installed one is the pinned version or newer.
  */
 // @ref LLP 0001#opt-in-apple-service-restarts -- stimd only upgrades a Stim Host that is already installed
 export async function updateInstalledHostApp(release: HostRelease | null = RELEASE): Promise<HostApp | null> {
   const app = join(homedir(), 'Applications', `${FLAVORS.release.name}.app`);
-  const current = () =>
-    bundleIdOf(app) === FLAVORS.release.bundleId ? infoValue(app, 'CFBundleShortVersionString') : null;
-  const before = current();
-  if (!release || !before || compareVersions(before, release.version) >= 0) return null;
-  const lock = join(homedir(), '.stim', 'machine', 'host', 'install');
-  return withDirLockTransaction(
-    lock,
-    async () => {
-      const installed = current();
-      if (!installed || compareVersions(installed, release.version) >= 0) return null;
-      return installHostApp(SOURCES, release);
-    },
-    { waitMs: 300_000, pollMs: 1000, ensureParent: () => mkdirSync(dirname(lock), { recursive: true }) },
-  );
+  const older = () => {
+    const version = bundleIdOf(app) === FLAVORS.release.bundleId ? infoValue(app, 'CFBundleShortVersionString') : null;
+    return !!release && !!version && compareVersions(version, release.version) < 0;
+  };
+  if (!release || !older()) return null;
+  return withInstallLock(async () => (older() ? installUnlocked(SOURCES, release) : null));
 }
 
 /** The host app a server runs under, from the `STIM_HOST_EXECUTABLE` its launcher set, or undefined. */

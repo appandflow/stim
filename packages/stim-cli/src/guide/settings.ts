@@ -707,6 +707,8 @@ update, and it never moves to a build at or below one that crash-looped.
 Three abnormal stimd exits of a build within 10 minutes mark the build bad
 and point the engine back at its previous build (stim engine status shows
 "crash loop in <version>"); the next newer build resumes updates.
+Off also stops stimd from upgrading an installed Stim Host to the version its
+engine pins.
   stim settings set engine.autoUpdate off --scope machine
 
 THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
