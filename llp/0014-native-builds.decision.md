@@ -23,7 +23,15 @@ simulator during the build to read an app's native modules. A build worker
 builds an app that declares native modules too, next to a simulator the build
 owns ([LLP 0009](./0009-build-offload.decision.md#exact-builds)).
 
-Stim owns port and device selection, build selectors, and lifecycle cleanup. Fixed calls keep those choices explicit. Exact needs the owned simulator only for a native-module roster read, so it can build without booting a device when the manifest declares no modules. [Exact iOS recipe](https://github.com/appandflow/stim/pull/5397), [Exact build-only support](https://github.com/appandflow/stim/pull/5451).
+A project plugin's manifest can supply the Android build command of a project
+type Stim does not bundle
+([LLP 0023](./0023-public-api.decision.md#frozen-and-experimental-plugin-kinds)).
+That command comes only from a `package.json` the machine's owner named in the
+machine setting `plugins`. The repository supplies nothing to it: Stim fills
+`{root}` and `{output}` itself and runs the list as written, as an argument
+list with no shell.
+
+Stim owns port and device selection, build selectors, and lifecycle cleanup. Fixed calls keep those choices explicit. Exact needs the owned simulator only for a native-module roster read, so it can build without booting a device when the manifest declares no modules. [Exact iOS recipe](https://github.com/appandflow/stim/pull/5397), [Exact build-only support](https://github.com/appandflow/stim/pull/5451). A plugin command keeps the rule's purpose: the person who owns the machine chose the command, and a checkout cannot change it. [Android build from a project plugin](https://github.com/appandflow/stim/issues/6599#issuecomment-7236966014).
 
 ## Consume an existing EAS build
 

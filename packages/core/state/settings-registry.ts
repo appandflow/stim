@@ -688,7 +688,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: [],
     description:
-      'Absolute plugin directories (a leading ~ is the home folder) whose package.json declares the project kind: Stim reads each manifest, never imports its code, and recognises a folder holding every marker file as a project of that type, with no build or run',
+      'Absolute plugin directories (a leading ~ is the home folder) whose package.json declares the project kind: Stim reads each manifest, never imports its code, and recognises a folder holding every marker file as a project of that type, and runs only a build command the manifest declares',
   },
   {
     key: 'iosSimulatorApp',

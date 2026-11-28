@@ -34,6 +34,7 @@ import { defineOp, type Op } from '../cli/define-op.ts';
 import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { describeMetroLastStop } from '../stimd/metro/stop-cause.ts';
+import { PLUGIN_PROJECT_ID } from '../integrations/plugin-projects.ts';
 import { projectPluginAt, projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
@@ -139,8 +140,17 @@ function appKind(path: string, isExpo: boolean | undefined): 'expo' | 'exact' | 
   return 'id' in ios && ios.id === 'exact' ? 'exact' : 'bare';
 }
 
+function pluginProject(path: string, bundleId: string | null | undefined): ReturnType<typeof projectPluginAt> {
+  const plugin = projectPluginAt(path);
+  if (!plugin) return null;
+  const android = projectRegistry.selectAndroid(path);
+  if ('id' in android && android.id === PLUGIN_PROJECT_ID)
+    return 'problem' in projectRegistry.selectIos(path) ? plugin : null;
+  return bundleId || projectRegistry.isMobileProject(path) ? null : plugin;
+}
+
 function appLine(path: string, { bundleId, isExpo }: ProjectRecord): string {
-  const plugin = bundleId || projectRegistry.isMobileProject(path) ? null : projectPluginAt(path);
+  const plugin = pluginProject(path, bundleId);
   return plugin
     ? `  project: ${plugin.name} (plugin ${plugin.package})`
     : `  app: ${bundleId ?? '?'} (${appKind(path, isExpo)})`;

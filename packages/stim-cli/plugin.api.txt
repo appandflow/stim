@@ -272,6 +272,8 @@
 [project] export runProjectContract
 [project] export type ProjectContractOptions
 [project] export type ProjectContractResult
+[project] export type ProjectPluginAndroidTarget
+[project] export type ProjectPluginCommand
 [project] export type ProjectPluginManifest
 [project] interface ProjectContractOptions {
 [project] interface ProjectContractOptions { @@1 baseDir: string;
@@ -280,10 +282,18 @@
 [project] interface ProjectContractResult { @@1 error?: string;
 [project] interface ProjectContractResult { @@1 name: string;
 [project] interface ProjectContractResult { @@1 passed: boolean;
+[project] interface ProjectPluginAndroidTarget {
+[project] interface ProjectPluginAndroidTarget { @@1 build: {
+[project] interface ProjectPluginAndroidTarget { @@2 debug: ProjectPluginCommand;
+[project] interface ProjectPluginAndroidTarget { @@2 output: "apk";
+[project] interface ProjectPluginAndroidTarget { @@2 release?: ProjectPluginCommand;
 [project] interface ProjectPluginManifest {
 [project] interface ProjectPluginManifest { @@1 id: string;
 [project] interface ProjectPluginManifest { @@1 markers: readonly string[];
 [project] interface ProjectPluginManifest { @@1 name: string;
+[project] interface ProjectPluginManifest { @@1 targets?: {
+[project] interface ProjectPluginManifest { @@2 android?: ProjectPluginAndroidTarget;
+[project] type ProjectPluginCommand = readonly [executable: string, ...args: string[]];
 [transport] declare const TRANSPORT_API_VERSION: 1;
 [transport] declare function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]>;
 [transport] export TransportContractOptions

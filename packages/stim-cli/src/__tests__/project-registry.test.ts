@@ -197,6 +197,11 @@ function setPlugins(...plugins: string[]) {
 }
 
 const godot = { id: 'godot', name: 'Godot', markers: ['project.godot', 'export_presets.cfg'] };
+const exportApk = ['godot', '--path', '{root}', '--export-debug', 'Android', '{output}'];
+const androidTarget = (build: Record<string, unknown>) => ({
+  ...godot,
+  targets: { android: { build: { debug: exportApk, output: 'apk', ...build } } },
+});
 
 test('a plugins entry makes a folder holding every marker a project with no build or run, until the entry leaves the setting', () => {
   const game = join(dir, 'game');
@@ -236,6 +241,28 @@ test('a plugin marker in a React Native app keeps the built-in build and run', (
   expect(projectRegistry.projectProblem(dir, 'macos')?.message).toContain('adds no build or run for it');
 });
 
+test('a declared Android target serves android only, and yields it to a bundled integration in the same root', () => {
+  const game = join(dir, 'game');
+  write(join(game, 'project.godot'));
+  setPlugins(projectPlugin('stim-plugin-godot', { ...androidTarget({}), markers: ['project.godot'] }));
+  expect(projectRegistry.selectAndroid(game)).toMatchObject({ id: 'plugin-project' });
+  expect(
+    projectRegistry.detectProject(game, {
+      context: { projectPath: game, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual({ platforms: ['android'], devServer: false });
+  for (const operation of ['ios', 'macos', 'dev-server'] as const)
+    expect(projectRegistry.projectProblem(game, operation)).toMatchObject({
+      kind: 'not-an-app',
+      message: `The plugin stim-plugin-godot builds the Godot project at ${game} for Android only.`,
+    });
+
+  packageAt(game);
+  expect(projectRegistry.selectAndroid(game)).toMatchObject({ id: 'react-native' });
+  expect(projectRegistry.selectDoctor(game).problem).toBeNull();
+});
+
 test.each([
   [
     'the id of a bundled integration',
@@ -255,6 +282,42 @@ test.each([
   ['a marker that is not a string', { ...godot, markers: ['project.godot', 7] }, { project: 1 }, /holds 7/],
   ['no marker', { ...godot, markers: [] }, { project: 1 }, /markers must be an array of 1 to 16 file names/],
   ['no project block', undefined, { project: 1 }, /stimPlugin\.project must be an object/],
+  [
+    'a target other than android',
+    { ...godot, targets: { ios: { build: { debug: exportApk, output: 'apk' } } } },
+    { project: 1 },
+    /targets declares "ios"; android is the only target/,
+  ],
+  [
+    'a build command with no {output}',
+    androidTarget({ debug: ['godot', '--export-debug', 'Android', 'game.apk'] }),
+    { project: 1 },
+    /build\.debug names \{output\} as a whole argument 0 times/,
+  ],
+  [
+    'a build command with two {output}',
+    androidTarget({ release: [...exportApk, '{output}'] }),
+    { project: 1 },
+    /build\.release names \{output\} as a whole argument 2 times/,
+  ],
+  [
+    'a placeholder Stim does not fill',
+    androidTarget({ debug: ['godot', '--export-debug', '{preset}', '{output}'] }),
+    { project: 1 },
+    /build\.debug holds "\{preset\}"; \{root\} and \{output\} are the only placeholders/,
+  ],
+  [
+    'an output that is not an APK',
+    androidTarget({ output: 'aab' }),
+    { project: 1 },
+    /build\.output is "aab"; it must be "apk"/,
+  ],
+  [
+    'a target field this Stim does not know',
+    androidTarget({ needsBootedDevice: true }),
+    { project: 1 },
+    /android holds "needsBootedDevice", which this stim does not know/,
+  ],
   ['another integer', godot, { project: 2 }, /speaks project 2, this stim speaks 1/],
   ['another kind only', godot, { transport: 1 }, /is not a project plugin/],
 ])('a project plugin that declares %s is skipped, with the reason', (_, project, kinds, reason) => {

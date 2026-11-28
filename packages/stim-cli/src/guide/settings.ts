@@ -913,8 +913,8 @@ PROJECT PLUGINS ARE MACHINE-LEVEL
 Top-level \`plugins\` in ~/.stim/config.json lists project plugin directories
 by absolute path (a leading ~ is the home folder). Each one's package.json
 declares a project type Stim does not bundle; a folder holding its marker
-files is then a project root that worktree and status handle, with no build
-or run. \`stim guide api\` has the manifest and the rules.
+files is then a project root that worktree and status handle; android runs
+a build the manifest declares. \`stim guide api\` has the manifest and the rules.
 
   stim settings set plugins '["~/src/stim-plugin-godot"]' --scope machine
 

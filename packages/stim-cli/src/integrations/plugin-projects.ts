@@ -105,23 +105,45 @@ export function pluginProjectAt(
   return null;
 }
 
-// @ref LLP 0023#frozen-and-experimental-plugin-kinds -- a match has no platform and never competes for an operation
+export const PLUGIN_PROJECT_ID = 'plugin-project';
+
+// @ref LLP 0023#frozen-and-experimental-plugin-kinds -- a match serves only a declared target and yields it to a bundled integration
 export function pluginProjectIntegration(bundled: () => ReadonlyMap<string, string>): ProjectIntegration {
   return {
-    id: 'plugin-project',
+    id: PLUGIN_PROJECT_ID,
     inspect(root) {
       const plugin = pluginProjectAt(root, bundled());
       if (!plugin) return null;
-      const { name } = plugin.project;
+      const { name, targets } = plugin.project;
+      const android = targets?.android;
+      const problem = {
+        kind: 'not-an-app' as const,
+        ...(android
+          ? {
+              message: `The plugin ${plugin.package} builds the ${name} project at ${root} for Android only.`,
+              remedy: `Run stim android to build and run it on this workspace's emulator. Use ${name}'s own tools for anything else.`,
+            }
+          : {
+              message: `The plugin ${plugin.package} recognises ${root} as a ${name} project and adds no build or run for it.`,
+              remedy: `Build and run the ${name} project with ${name}'s own tools. stim worktree add, list and remove manage worktrees of this folder.`,
+            }),
+      };
       return {
         root: 'explicit',
         application: true,
-        platforms: () => [],
-        validate: () => ({
-          kind: 'not-an-app',
-          message: `The plugin ${plugin.package} recognises ${root} as a ${name} project and adds no build or run for it.`,
-          remedy: `Build and run the ${name} project with ${name}'s own tools. stim worktree add, list and remove manage worktrees of this folder.`,
-        }),
+        yields: true,
+        platforms: () => (android ? ['android'] : []),
+        validate: (operation) => (android && operation === 'android' ? null : problem),
+        ...(android
+          ? {
+              android: async () =>
+                (await import('./plugin-android.ts')).pluginAndroidProject(
+                  root,
+                  { name, package: plugin.package },
+                  android,
+                ),
+            }
+          : {}),
       };
     },
   };

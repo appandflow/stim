@@ -388,6 +388,7 @@ async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<stri
 const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
   'gradle-build',
+  'plugin-build',
   'android-cas',
   'cache-provider',
   'js-swap-tmp',

@@ -5,8 +5,29 @@ import { isJsonObject } from '@stim-cli/core/state';
 export const PROJECT_API_VERSION = 1 as const;
 
 /**
+ * One build command of a project plugin target: the executable, then its arguments. Stim runs it in the project root
+ * as an argument list with no shell. An argument that is exactly `{root}` becomes the project root and one that is
+ * exactly `{output}` becomes the file Stim expects the build to write; `{output}` appears exactly once, and no other
+ * argument has the form `{name}`.
+ */
+export type ProjectPluginCommand = readonly [executable: string, ...args: string[]];
+
+/** The Android build of a project plugin: `stim android` runs it, then installs and launches the APK it wrote. */
+export interface ProjectPluginAndroidTarget {
+  build: {
+    /** The command for the default build and for `--variant debug`. */
+    debug: ProjectPluginCommand;
+    /** The command for `--variant release`. Without it a release build refuses. */
+    release?: ProjectPluginCommand;
+    /** What the command writes at `{output}`: one signed, standalone APK. */
+    output: 'apk';
+  };
+}
+
+/**
  * The `stimPlugin.project` block of a project plugin's package.json. Stim reads it from disk and never imports the
- * package's code: a folder that holds every marker is a project root of this type, with no build or run.
+ * package's code: a folder that holds every marker is a project root of this type. Without `targets` Stim builds and
+ * runs nothing there.
  */
 export interface ProjectPluginManifest {
   /** Lowercase letters, digits and hyphens, starting with a letter, at most 40 characters; never the id of a project integration Stim bundles. */
@@ -15,6 +36,8 @@ export interface ProjectPluginManifest {
   name: string;
   /** One to 16 names of files directly in the project root: no path separator, no glob character. */
   markers: readonly string[];
+  /** The builds the plugin declares. `android` is the only target. */
+  targets?: { android?: ProjectPluginAndroidTarget };
 }
 
 export interface ProjectContractResult {
@@ -94,6 +117,58 @@ function markersError(markers: unknown): string | null {
     : `stimPlugin.project.markers holds ${JSON.stringify(bad)}; a marker is the name of a file directly in the project root, with no path separator and no glob character`;
 }
 
+const PLACEHOLDER = /^\{[^{}]*\}$/;
+
+function unknownKey(value: Record<string, unknown>, known: readonly string[]): string | undefined {
+  return Object.keys(value).find((key) => !known.includes(key));
+}
+
+function readCommand(command: unknown, at: string): { command: ProjectPluginCommand } | { error: string } {
+  const [executable, ...args] = isStrings(command) ? command : [];
+  if (!isStrings(command) || executable === undefined || command.includes(''))
+    return { error: `${at} must be an array of non-empty strings: the executable, then its arguments` };
+  const reserved = command.find((arg) => PLACEHOLDER.test(arg) && arg !== '{root}' && arg !== '{output}');
+  if (reserved !== undefined)
+    return { error: `${at} holds ${JSON.stringify(reserved)}; {root} and {output} are the only placeholders` };
+  if (PLACEHOLDER.test(executable))
+    return { error: `${at} starts with ${JSON.stringify(executable)}; the first entry is the executable` };
+  const outputs = args.filter((arg) => arg === '{output}').length;
+  return outputs === 1
+    ? { command: [executable, ...args] }
+    : {
+        error: `${at} names {output} as a whole argument ${outputs} times; the build writes its APK to exactly one {output}`,
+      };
+}
+
+// @ref LLP 0023#frozen-and-experimental-plugin-kinds -- a target field this Stim does not know rejects the manifest
+function readTargets(targets: unknown): { targets?: ProjectPluginManifest['targets'] } | { error: string } {
+  const at = 'stimPlugin.project.targets';
+  if (targets === undefined) return {};
+  if (!isJsonObject(targets)) return { error: `${at} must be an object` };
+  const target = unknownKey(targets, ['android']);
+  if (target !== undefined)
+    return { error: `${at} declares ${JSON.stringify(target)}; android is the only target this stim builds` };
+  const { android } = targets;
+  if (android === undefined) return { targets: {} };
+  if (!isJsonObject(android) || !isJsonObject(android.build))
+    return { error: `${at}.android must be an object with a build object` };
+  const { build } = android;
+  const unknown = unknownKey(android, ['build']) ?? unknownKey(build, ['debug', 'release', 'output']);
+  if (unknown !== undefined)
+    return { error: `${at}.android holds ${JSON.stringify(unknown)}, which this stim does not know` };
+  if (build.output !== 'apk')
+    return { error: `${at}.android.build.output is ${JSON.stringify(build.output)}; it must be "apk"` };
+  const debug = readCommand(build.debug, `${at}.android.build.debug`);
+  if ('error' in debug) return debug;
+  const release = build.release === undefined ? null : readCommand(build.release, `${at}.android.build.release`);
+  if (release && 'error' in release) return release;
+  return {
+    targets: {
+      android: { build: { debug: debug.command, ...(release ? { release: release.command } : {}), output: 'apk' } },
+    },
+  };
+}
+
 // @ref LLP 0023#frozen-and-experimental-plugin-kinds -- the manifest is read, no module is resolved or imported
 export function readProjectPlugin(dir: string, reserved: ReadonlyMap<string, string>): ProjectPluginRead {
   const failed = (error: string): ProjectPluginRead => ({
@@ -115,6 +190,7 @@ export function readProjectPlugin(dir: string, reserved: ReadonlyMap<string, str
   if (!isJsonObject(manifest)) return failed(`${join(dir, 'package.json')} is not a JSON object`);
   const plugin = isJsonObject(manifest.stimPlugin) ? manifest.stimPlugin : {};
   const block = isJsonObject(plugin.project) ? plugin.project : null;
+  const declared = readTargets(block?.targets);
   const holder = block && typeof block.id === 'string' ? reserved.get(block.id) : undefined;
   const checks: ManifestCheck[] = [
     { name: 'package.json is a JSON object', error: null },
@@ -132,6 +208,14 @@ export function readProjectPlugin(dir: string, reserved: ReadonlyMap<string, str
           },
           { name: 'stimPlugin.project.name is one printable line', error: nameError(block.name) },
           { name: 'stimPlugin.project.markers are file names', error: markersError(block.markers) },
+          ...(block.targets === undefined
+            ? []
+            : [
+                {
+                  name: 'stimPlugin.project.targets declares builds Stim can run',
+                  error: 'error' in declared ? declared.error : null,
+                },
+              ]),
         ]
       : []),
   ];
@@ -145,7 +229,9 @@ export function readProjectPlugin(dir: string, reserved: ReadonlyMap<string, str
     package: typeof manifest.name === 'string' && manifest.name.trim() ? manifest.name.trim() : basename(dir),
     kinds: isJsonObject(plugin.kinds) ? plugin.kinds : {},
     checks,
-    project: accepted ? { id, name, markers } : null,
+    project: accepted
+      ? { id, name, markers, ...('targets' in declared && declared.targets ? { targets: declared.targets } : {}) }
+      : null,
   };
 }
 
@@ -160,8 +246,8 @@ export function holdsMarkers(root: string, project: ProjectPluginManifest): bool
 }
 
 /**
- * Checks a project plugin's package.json: the kind integer, and the id, name and marker rules of
- * `stimPlugin.project`. It reads the manifest only; the kind has no module to load.
+ * Checks a project plugin's package.json: the kind integer, and the id, name, marker and target rules of
+ * `stimPlugin.project`. It reads the manifest only and runs no declared command; the kind has no module to load.
  */
 export async function runProjectContract(options: ProjectContractOptions): Promise<ProjectContractResult[]> {
   const { reference, baseDir } = options;
