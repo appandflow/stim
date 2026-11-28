@@ -1141,6 +1141,10 @@ async function runStimdInner(
   const gcReports = createGcReportSweeps(
     () => threads.report(),
     (cache) => writeCacheFile(gcReportCacheFile(), cache),
+    (error) => {
+      if (isUnverifiedCleanup(error) && !contain(error))
+        failBackground(error, 'gc report cleanup could not be verified');
+    },
   );
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
@@ -1654,30 +1658,20 @@ async function runStimdInner(
   };
   const requestGcReport = (socket: Socket, params: Record<string, unknown>) => {
     const asked = gcReports.sweep(params.fresh === true ? Date.now() : undefined);
-    const unverified = (error: unknown) => {
-      if (isUnverifiedCleanup(error) && !contain(error))
-        failBackground(error, 'gc report cleanup could not be verified');
-    };
     if (params.background === true) {
-      asked.catch((error: unknown) => {
-        unverified(error);
-        log('warn', 'gc_report_failed', errorText(error));
-      });
+      asked.catch((error: unknown) => log('warn', 'gc_report_failed', errorText(error)));
       socket.end(`${JSON.stringify({ op: 'gc.report.started' })}\n`);
       return;
     }
     void asked
       .then(
         (cache) => ({ op: 'gc.report.done', cache }),
-        (error: unknown) => {
-          unverified(error);
-          return {
-            op: 'error',
-            code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
-            message: `The gc report failed: ${errorText(error)}`,
-            remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
-          };
-        },
+        (error: unknown) => ({
+          op: 'error',
+          code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
+          message: `The gc report failed: ${errorText(error)}`,
+          remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
+        }),
       )
       .then((answer) => {
         if (!socket.destroyed) socket.end(`${JSON.stringify(answer)}\n`);

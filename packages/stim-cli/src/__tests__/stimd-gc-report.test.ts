@@ -13,6 +13,7 @@ const report = (measuredAt: string): GcReportCache => ({
 function sweeps(settlesOnLeave = true) {
   const runs: { resolve: (cache: GcReportCache) => void; reject: (error: Error) => void; leave: () => void }[] = [];
   const written: GcReportCache[] = [];
+  const failures: unknown[] = [];
   let clock = 0;
   const owner = createGcReportSweeps(
     () => {
@@ -29,9 +30,10 @@ function sweeps(settlesOnLeave = true) {
       return { result, leave };
     },
     (cache) => written.push(cache),
+    (error) => failures.push(error),
     () => clock,
   );
-  return { owner, runs, written, tick: (ms: number) => (clock += ms) };
+  return { owner, runs, written, failures, tick: (ms: number) => (clock += ms) };
 }
 
 test('asks join the sweep under way, and an ask for a newer one gets one sweep after it', async () => {
@@ -70,4 +72,15 @@ test('a failed sweep writes nothing, and one past its budget fails even when its
   runs[2]?.resolve(report('2026-11-28T00:20:00.000Z'));
   await next;
   expect(written.map((cache) => cache.measuredAt)).toEqual(['2026-11-28T00:20:00.000Z']);
+});
+
+test('a cleanup failure that lands after the budget failed the sweep still reaches stimd', async () => {
+  vi.useFakeTimers();
+  const { owner, runs, failures } = sweeps(false);
+  const slow = owner.sweep().catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(GC_REPORT_BUDGET_MS);
+  expect(await slow).toMatchObject({ message: expect.stringContaining('did not finish') });
+  const cleanup = Object.assign(new Error('Report child 4242 did not close'), { reportCleanup: true });
+  runs[0]?.reject(cleanup);
+  await vi.waitFor(() => expect(failures).toContain(cleanup));
 });

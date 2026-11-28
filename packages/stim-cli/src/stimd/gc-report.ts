@@ -18,11 +18,13 @@ export interface GcReportSweeps {
 
 /**
  * stimd's gc report sweeps, the only writer of the cached report: at most one runs at a time, and an ask that needs a
- * newer one than the sweep under way gets the one sweep that follows it.
+ * newer one than the sweep under way gets the one sweep that follows it. Every failure of a sweep's thread job reaches
+ * `onFailure`, also one that lands after the sweep's budget already failed it.
  */
 export function createGcReportSweeps(
   run: () => { result: Promise<GcReportCache>; leave(): void },
   write: (cache: GcReportCache) => void,
+  onFailure: (error: unknown) => void = () => {},
   now: () => number = Date.now,
 ): GcReportSweeps {
   // @ref LLP 0012#the-gc-report-answers-from-its-cache -- stimd's sweep is the one writer of the cached report
@@ -31,6 +33,7 @@ export function createGcReportSweeps(
   let closed = false;
   const start = (): Sweep => {
     const asked = run();
+    asked.result.catch(onFailure);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const budget = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
