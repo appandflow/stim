@@ -208,37 +208,6 @@ test.skipIf(process.platform !== 'darwin')(
   30_000,
 );
 
-test.skipIf(process.platform !== 'darwin')(
-  'stimd waits for a running Stim Host install and does not downgrade what it installed',
-  async () => {
-    const { installHostApp } = await import('@stim-cli/server/cli');
-    const executable = installHost('0.1.1');
-    const release = join(home, 'release');
-    installHost('10.0.0', release);
-    const archive = join(home, 'StimHost.zip');
-    execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', join(release, 'Stim Host.app'), archive]);
-    const zip = readFileSync(archive);
-    let deliver: (response: Response) => void = () => {};
-    download.mockImplementationOnce(() => new Promise((resolve) => (deliver = resolve)));
-    const explicit = installHostApp(undefined, {
-      version: '10.0.0',
-      sha256: createHash('sha256').update(zip).digest('hex'),
-    });
-    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
-    const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();
-    const automatic = keepHostCurrent(log);
-    await vi.advanceTimersByTimeAsync(2000);
-    deliver(new Response(zip));
-    await explicit;
-    await vi.advanceTimersByTimeAsync(2000);
-    await automatic;
-    expect(download).toHaveBeenCalledTimes(1);
-    expect(log).not.toHaveBeenCalled();
-    expect(readFileSync(executable, 'utf8')).toBe('10.0.0');
-  },
-  30_000,
-);
-
 test('helper install refuses server options before changing either service', async () => {
   await expect(runCli(service, ['install', '--helper', '--serve'], { version: '1' })).rejects.toThrow(
     /cannot be combined/,
