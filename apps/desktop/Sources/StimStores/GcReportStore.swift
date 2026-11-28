@@ -123,6 +123,7 @@ public final class GcReportStore {
         latest.record(.success(report))
         at = read.measuredAt ?? startedAt
       }
+      if let error = read.error { latest.record(.failure(ServerError(code: "stim-failed", message: error))) }
     case .failure(let error):
       failures += 1
       refreshing = false

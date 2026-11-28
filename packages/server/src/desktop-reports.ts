@@ -30,7 +30,12 @@ interface Entry {
   listeners: Set<(snapshot: DesktopReportSnapshot) => void>;
   published?: string;
   timer?: ReturnType<typeof setTimeout>;
-  cached?: { good?: CachedReport; failure?: { message: string; at: number } };
+  cached?: {
+    good?: CachedReport;
+    failure?: { message: string; at: number };
+    /** A reader asked for fresh: the next read starts a sweep, or one starts after the sweep under way. */
+    stale?: true;
+  };
 }
 
 export class DesktopReports {
@@ -121,7 +126,8 @@ export class DesktopReports {
     if (target && !only) return;
     for (const entry of only ? [only] : this.entries.values()) {
       if (entry.cached) {
-        if (!entry.pending) this.start(entry);
+        entry.cached.stale = true;
+        if (!entry.pending && entry.listeners.size) this.start(entry);
         continue;
       }
       entry.generation++;
@@ -167,10 +173,14 @@ export class DesktopReports {
 
   /** When `entry` should read again: its settled read's expiry, or for the gc report its staleness or retry time. */
   private refreshAt(entry: Entry): number {
-    if (entry.cached)
-      return entry.cached.good
-        ? entry.cached.good.at + GC_REPORT_STALE_MS
-        : (entry.cached.failure?.at ?? -Infinity) + GC_REPORT_RETRY_MS;
+    if (entry.cached) {
+      const { good, failure, stale } = entry.cached;
+      if (stale) return -Infinity;
+      return Math.max(
+        good ? good.at + GC_REPORT_STALE_MS : -Infinity,
+        failure ? failure.at + GC_REPORT_RETRY_MS : -Infinity,
+      );
+    }
     return entry.settled ? entry.settled.at + this.ttlMs : -Infinity;
   }
 
@@ -189,6 +199,7 @@ export class DesktopReports {
     if (admitted) this.activeLoads++;
     const generation = entry.generation;
     const startedAt = this.now();
+    if (entry.cached) delete entry.cached.stale;
     const abort = new AbortController();
     const promise = Promise.resolve()
       .then((): DetailsRead | Promise<DetailsRead> => {
@@ -210,10 +221,14 @@ export class DesktopReports {
         entry.pending = undefined;
         if (this.closed) return undefined;
         if (entry.cached) {
-          if (result.ok) entry.cached = { good: { value: result.report, at: startedAt } };
-          else entry.cached.failure = { message: result.message, at: this.now() };
+          const { stale } = entry.cached;
+          entry.cached = result.ok
+            ? { good: { value: result.report, at: startedAt } }
+            : { ...entry.cached, failure: { message: result.message, at: this.now() } };
+          if (stale) entry.cached.stale = stale;
           entry.settled = { result, at: this.now(), generation };
-          this.publish(entry);
+          if (stale && entry.listeners.size) this.start(entry);
+          else this.publish(entry);
           this.schedule(entry);
           return undefined;
         }
@@ -263,7 +278,7 @@ export class DesktopReports {
   private schedule(entry: Entry): void {
     clearTimeout(entry.timer);
     entry.timer = undefined;
-    if (this.closed || !entry.listeners.size || entry.pending || !entry.settled) return;
+    if (this.closed || !entry.listeners.size || entry.pending || (!entry.settled && !entry.cached?.good)) return;
     entry.timer = setTimeout(
       () => {
         if (entry.pending) return;

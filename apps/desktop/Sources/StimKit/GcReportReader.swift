@@ -34,7 +34,7 @@ import Foundation
     let refreshing = snapshot["refreshing"] == .bool(true)
     guard snapshot["pending"] == .bool(false), let value = snapshot["value"], value != .null else {
       if refreshing || snapshot["pending"] == .bool(true) && snapshot["error"] == nil {
-        return GcReportRead(report: nil, measuredAt: nil, refreshing: true)
+        return GcReportRead(report: nil, measuredAt: nil, refreshing: true, error: nil)
       }
       throw ServerError(
         code: "bad-response",
@@ -45,19 +45,22 @@ import Foundation
     }
     return GcReportRead(
       report: try decodeReporting(GcReport.self, from: value, source: .server, diagnostics: diagnostics),
-      measuredAt: measuredAt, refreshing: refreshing)
+      measuredAt: measuredAt, refreshing: refreshing, error: snapshot["error"]?.string)
   }
 }
 
-/// One answer of the server's gc report: no report while it measures for the first time.
+/// One answer of the server's gc report: no report while it measures for the first time, and `error` when its last
+/// measurement failed after the one `report` comes from.
 public struct GcReportRead: Sendable {
   public let report: GcReport?
   public let measuredAt: Date?
   public let refreshing: Bool
+  public let error: String?
 
-  public init(report: GcReport?, measuredAt: Date?, refreshing: Bool) {
+  public init(report: GcReport?, measuredAt: Date?, refreshing: Bool, error: String? = nil) {
     self.report = report
     self.measuredAt = measuredAt
     self.refreshing = refreshing
+    self.error = error
   }
 }

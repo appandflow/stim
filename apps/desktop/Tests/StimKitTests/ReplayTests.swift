@@ -1222,10 +1222,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       "desktop.reports.get",
       .object([
         "pending": .bool(false), "value": .object(["sections": .object([:])]),
-        "measuredAt": .string("2026-11-27T10:00:00.250Z"), "refreshing": .bool(true),
+        "measuredAt": .string("2026-11-27T10:00:00.250Z"), "error": .string("sweep failed"),
       ]))
     let read = try await cached.value
-    #expect(read.report != nil && read.refreshing)
+    #expect(read.report != nil && !read.refreshing && read.error == "sweep failed")
     #expect(read.measuredAt == Date(timeIntervalSince1970: 1_795_773_600.25))
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
   }

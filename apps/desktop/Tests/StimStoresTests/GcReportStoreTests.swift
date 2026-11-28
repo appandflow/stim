@@ -178,4 +178,17 @@ struct GcReportStoreTests {
     #expect(await until { reads.calls == 4 })
     #expect(fresh.value == [false, false, false, true])
   }
+
+  @Test func aFailedServerRefreshKeepsTheCachedReportAndShowsTheError() async {
+    let reads = Scripted<GcReportRead>()
+    let store = GcReportStore(read: { _ in try await reads.call() })
+    store.poll()
+    #expect(await until { reads.calls == 1 })
+    let measuredAt = Date(timeIntervalSince1970: 1_000)
+    reads.finish(
+      0, .success(GcReportRead(report: gc("kept"), measuredAt: measuredAt, refreshing: false, error: "sweep failed")))
+    #expect(await until { store.error == "sweep failed" })
+    #expect(tag(store.report) == "kept")
+    #expect(store.at == measuredAt)
+  }
 }
