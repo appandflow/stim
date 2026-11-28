@@ -182,12 +182,18 @@ preparation, `git status --short` may show only the draft
    ```bash
    pnpm install --frozen-lockfile
    pnpm run release:prep --check
+   node scripts/host-release-check.mjs
    pnpm run build
    pnpm run test:compat
    node packages/stim-cli/dist/cli.mjs --help
    node packages/stim-cli/dist/cli.mjs guide agent
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
+
+   `scripts/host-release-check.mjs` fails when `packages/server/host/` changed
+   since the `host-v*` tag of the Stim Host pinned in `RELEASE`. Cut and pin a
+   new Stim Host first ([Stim Host releases](#stim-host-releases)), then
+   prepare the candidate again.
 
    When CI is unavailable, run `pnpm run format:check`,
    `pnpm run lint`, `pnpm run typecheck`, `pnpm run knip`, `pnpm test`,
@@ -579,7 +585,10 @@ signature, and it only needs a new version when the launcher changes.
    version and the SHA-256 from the workflow's `SHA256SUMS`. From the next
    `stim` release (or checkout build), `install` downloads that zip,
    checks the digest and the team's Developer ID signature, and installs
-   `~/Applications/Stim Host.app` (`dev.stim.host`). A Mac that had Stim Host
+   `~/Applications/Stim Host.app` (`dev.stim.host`). stimd also installs it at
+   start over an older Stim Host already in `~/Applications`, unless
+   `engine.autoUpdate` is `off`, and the helper of a replaced bundle exits so
+   launchd starts the new one. A Mac that had Stim Host
    Dev keeps that bundle in `~/Applications`; its owner can delete it and its
    System Settings entries after the switch. Update the paragraphs that
    describe the installed app in `packages/server/README.md` ("Run as a
