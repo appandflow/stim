@@ -557,8 +557,9 @@ leased until <time>" for each one.`,
   stim status --json adds appleServices on macOS: { helper, heartbeat?:
   { at, ok, error? }, warnings:
   [{ name, pid, cpu, rss, commands }], restarts:
-  [{ at, name, pid, cpu, rss, seconds }] }. at is epoch milliseconds, rss
-  is bytes, cpu is percent of one core. Restarts cover the last hour.
+  [{ at, name, pid, cpu, rss, footprint?, seconds }] }. at is epoch
+  milliseconds, rss and footprint are bytes, cpu is percent of one core.
+  Restarts cover the last hour.
 
   stim services --json
 

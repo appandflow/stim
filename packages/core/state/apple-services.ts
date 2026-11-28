@@ -41,6 +41,8 @@ export interface AppleServiceRestart {
   pid: number;
   cpu: number;
   rss: number;
+  /** Physical footprint in bytes; absent from result lines of a Stim Host helper before 0.2.1. */
+  footprint?: number;
   seconds: number;
 }
 
@@ -95,6 +97,7 @@ export function readHelperRestarts(now: number = Date.now()): AppleServiceRestar
           pid: value.pid,
           cpu: value.cpu,
           rss: value.rss,
+          ...(typeof value.footprint === 'number' ? { footprint: value.footprint } : {}),
           seconds: value.seconds,
         });
       } catch {}

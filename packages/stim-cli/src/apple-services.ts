@@ -140,7 +140,7 @@ export function appleServicesLines(status?: AppleServicesStatus): string[] {
     ),
     ...status.restarts.map(
       (row) =>
-        `Apple service: restarted ${row.name} at ${new Date(row.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} (${Math.round(row.cpu)}% CPU, ${(row.rss / 1024 ** 3).toFixed(1)} GB RSS for ${Math.floor(row.seconds / 60)} min)`,
+        `Apple service: restarted ${row.name} at ${new Date(row.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} (${Math.round(row.cpu)}% CPU, ${(Math.max(row.rss, row.footprint ?? 0) / 1024 ** 3).toFixed(1)} GB of memory for ${Math.floor(row.seconds / 60)} min)`,
     ),
   ];
 }

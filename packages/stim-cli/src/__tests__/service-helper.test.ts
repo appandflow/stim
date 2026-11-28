@@ -312,6 +312,16 @@ test('stimd requires consecutive high samples and logs only warning transitions 
   expect(observe(sample).lines).toHaveLength(1);
 });
 
+test.each([
+  ['a 0.2.0 helper without footprint', {}, '1.5 GB'],
+  ['a footprint above RSS', { footprint: 77 * 1024 ** 3 }, '77.0 GB'],
+])('a restart receipt from %s prints the larger memory measure', (_name, extra, memory) => {
+  const receipt = { name: 'fseventsd', pid: 1, at: Date.now(), cpu: 0, rss: 1.5 * 1024 ** 3, seconds: 600, ...extra };
+  expect(appleServicesLines({ helper: 'registered', warnings: [], restarts: [receipt] }).at(-1)).toContain(
+    `(0% CPU, ${memory} of memory for 10 min)`,
+  );
+});
+
 test('stimd logs helper health only when it changes', () => {
   const observe = createAppleServicesObserver();
   const sample = { helper: 'registered' as const, warnings: [], restarts: [] };
