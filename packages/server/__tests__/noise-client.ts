@@ -174,3 +174,17 @@ export function setupClient(
   if (!records) throw new Error('the setup secret was not spent');
   return { keyPair, records };
 }
+
+/** Reads the gc report until its background sweep has settled. */
+export async function settledGc(client: Client): Promise<ServerMessage> {
+  for (;;) {
+    const reply = await client.request('desktop.reports.get', { report: 'gc' });
+    const result: unknown = 'result' in reply ? reply.result : null;
+    const busy =
+      typeof result === 'object' &&
+      result !== null &&
+      (('pending' in result && result.pending === true) || ('refreshing' in result && result.refreshing === true));
+    if (!busy) return reply;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}

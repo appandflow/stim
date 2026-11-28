@@ -1174,7 +1174,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let (client, socket) = try await openConnection()
     defer { client.stop() }
     let reader = GcReportReader(environment: Task { environment }) { (client, alias.path) }
-    let read = Task { try await reader.refresh() }
+    let read = Task { try await reader.refresh(fresh: true) }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
@@ -1189,9 +1189,9 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       ])
     ])
     socket.answer("desktop.reports.get", .object(["pending": .bool(false), "value": report]))
-    #expect(try await read.value.sections.linkedWorktrees?.first?.path == "fresh")
+    #expect(try await read.value.report?.sections.linkedWorktrees?.first?.path == "fresh")
 
-    let failed = Task { try await reader.refresh() }
+    let failed = Task { try await reader.refresh(fresh: true) }
     await settle()
     socket.answer("desktop.reports.invalidate", .object([:]))
     await settle()
@@ -1201,6 +1201,35 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
+  @Test func aBackgroundGcReadTakesTheServersCachedReportWithoutInvalidating() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let environment = try statsEnvironment(in: directory)
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
+    let first = Task { try await reader.refresh(fresh: false) }
+    await settle()
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
+    socket.answer(
+      "desktop.reports.get", .object(["pending": .bool(true), "value": .null, "refreshing": .bool(true)]))
+    let measuring = try await first.value
+    #expect(measuring.report == nil && measuring.refreshing)
+
+    let cached = Task { try await reader.refresh(fresh: false) }
+    await settle()
+    socket.answer(
+      "desktop.reports.get",
+      .object([
+        "pending": .bool(false), "value": .object(["sections": .object([:])]),
+        "measuredAt": .string("2026-11-27T10:00:00.250Z"), "error": .string("sweep failed"),
+      ]))
+    let read = try await cached.value
+    #expect(read.report != nil && !read.refreshing && read.error == "sweep failed")
+    #expect(read.measuredAt == Date(timeIntervalSince1970: 1_795_773_600.25))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
+  }
+
   @Test func refusedOrCancelledGcInvalidationDoesNotReadOrDisconnectTheSession() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -1208,12 +1237,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let (client, socket) = try await openConnection()
     defer { client.stop() }
     let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
-    let refused = Task { try await reader.refresh() }
+    let refused = Task { try await reader.refresh(fresh: true) }
     await settle()
     socket.refuse("desktop.reports.invalidate", code: "forbidden")
     let error = await #expect(throws: ServerError.self) { try await refused.value }
     #expect(error?.code == "forbidden")
-    let cancelled = Task { try await reader.refresh() }
+    let cancelled = Task { try await reader.refresh(fresh: true) }
     await settle()
     cancelled.cancel()
     await #expect(throws: CancellationError.self) { try await cancelled.value }
@@ -1235,7 +1264,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let reader = GcReportReader(environment: Task { environment }) {
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     }
-    let error = await #expect(throws: ServerError.self) { try await reader.refresh() }
+    let error = await #expect(throws: ServerError.self) { try await reader.refresh(fresh: true) }
     #expect(error?.code == "not-connected")
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
@@ -1319,14 +1348,14 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
-  @Test func gcDoesNotAcceptAPendingSnapshotAsAFreshMeasurement() async throws {
+  @Test func gcTakesAPendingSnapshotAsStillMeasuring() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection()
     defer { client.stop() }
     let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
-    let read = Task { try await reader.refresh() }
+    let read = Task { try await reader.refresh(fresh: true) }
     await settle()
     socket.answer("desktop.reports.invalidate", .object([:]))
     await settle()
@@ -1335,8 +1364,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       .object([
         "pending": .bool(true), "value": .object(["sections": .object([:])]),
       ]))
-    let error = await #expect(throws: ServerError.self) { try await read.value }
-    #expect(error?.code == "bad-response")
+    let measuring = try await read.value
+    #expect(measuring.report == nil && measuring.refreshing)
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 

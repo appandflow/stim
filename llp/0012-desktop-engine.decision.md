@@ -141,8 +141,40 @@ it), serving every `net.ensure` one at a time in arrival order, matching a servi
 loopback setting alone, and refusing a service ask whose options do not match a
 running non-share thread.
 
+## The gc report answers from its cache
+
+Desktop's cleanup report is a gc dry run that takes minutes on a machine with
+many checkouts, so stim-server never makes Desktop wait for one.
+`desktop.reports.get {report: "gc"}` answers at once with the last good
+report and `measuredAt`, the time its sweep started. While no report exists it
+answers `pending: true` with no value, never zeros. At most one sweep runs. A
+read starts one when the report is missing or older than 15 minutes, or after
+`desktop.reports.invalidate` asked for fresh; an invalidation starts a sweep at
+once only for a subscriber, and one that arrives during a sweep never aborts
+it but makes one more sweep follow. `refreshing` is set while a sweep runs, and
+`error` carries the last failed sweep's reason while none does; a failure keeps
+the last good report, and the next sweep waits 5 minutes unless fresh is asked
+for. The sweep has a 15 minute budget instead of the API's 60
+seconds, and it saves its result to `$STIM_HOME/gc/report-cache.json` (written
+by the CLI's gc read, read by core), so a restarted stimd answers from it.
+Phone machine details read the same entry. Desktop reads without invalidating
+on its polls, every 15 seconds while a sweep runs or no report exists (backing
+off to 5 minutes after failures) and every 5 minutes otherwise, and asks for
+fresh only from its Refresh button and after an action that changes storage.
+Nothing deletes from this report: a gc pass and `deleteGarbageItem` read their
+candidates again before they act.
+
+Maintainer decision: "also could stim mostly return its cached values, unless maybe deskt ask for fresh", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
+
+Maintainer decision: "how reliable is stimd cache tho? If it is we might want to return cached values always?", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
+
+Chosen by the implementing agent, not the maintainer: the 15 minute staleness
+bound (about three of the slowest sweeps seen), the 15 minute sweep budget, the
+5 minute retry after a failed sweep, and Desktop's poll intervals.
+
 ## Code
 
 - [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [machine engine paths](../apps/desktop/Sources/StimKit/EngineState.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).
 - [Failing a command whose stimd went away](../packages/stim-cli/src/daemon/client.ts).
 - [stimd socket](../packages/stim-cli/src/stimd/main.ts) and [Desktop bootstrap proof](../packages/server/src/desktop-bootstrap.ts).
+- [The cached gc report](../packages/server/src/desktop-reports.ts) and [Desktop's polls](../apps/desktop/Sources/StimStores/GcReportStore.swift).

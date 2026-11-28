@@ -134,4 +134,61 @@ struct GcReportStoreTests {
     runs.finish(0, .success(gc("settled")))
     #expect(await until { tag(store.report) == "settled" })
   }
+
+  @Test func pollingWaitsOutAServerMeasurementWithoutAskingForAnotherAndBacksOffAfterFailures() async {
+    let clock = Clock()
+    let reads = Scripted<GcReportRead>()
+    let fresh = Locked<[Bool]>([])
+    let store = GcReportStore(
+      read: { wanted in
+        fresh.update { $0.append(wanted) }
+        return try await reads.call()
+      }, now: { clock.date })
+    let measuredAt = clock.date.addingTimeInterval(-3600)
+    store.poll()
+    #expect(await until { reads.calls == 1 })
+    reads.finish(0, .success(GcReportRead(report: gc("cached"), measuredAt: measuredAt, refreshing: true)))
+    #expect(await until { tag(store.report) == "cached" })
+    #expect(store.at == measuredAt)
+    #expect(store.running)
+
+    clock.advance(10)
+    store.poll()
+    await settle()
+    #expect(reads.calls == 1)
+    clock.advance(6)
+    store.poll()
+    #expect(await until { reads.calls == 2 })
+    reads.finish(1, .failure(Failed()))
+    #expect(await until { store.error != nil })
+    #expect(tag(store.report) == "cached")
+
+    clock.advance(16)
+    store.poll()
+    await settle()
+    #expect(reads.calls == 2)
+    clock.advance(16)
+    store.poll()
+    #expect(await until { reads.calls == 3 })
+    reads.finish(2, .success(GcReportRead(report: gc("new"), measuredAt: clock.date, refreshing: false)))
+    #expect(await until { tag(store.report) == "new" })
+    #expect(!store.running)
+
+    store.refresh()
+    #expect(await until { reads.calls == 4 })
+    #expect(fresh.value == [false, false, false, true])
+  }
+
+  @Test func aFailedServerRefreshKeepsTheCachedReportAndShowsTheError() async {
+    let reads = Scripted<GcReportRead>()
+    let store = GcReportStore(read: { _ in try await reads.call() })
+    store.poll()
+    #expect(await until { reads.calls == 1 })
+    let measuredAt = Date(timeIntervalSince1970: 1_000)
+    reads.finish(
+      0, .success(GcReportRead(report: gc("kept"), measuredAt: measuredAt, refreshing: false, error: "sweep failed")))
+    #expect(await until { store.error == "sweep failed" })
+    #expect(tag(store.report) == "kept")
+    #expect(store.at == measuredAt)
+  }
 }

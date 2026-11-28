@@ -9,7 +9,11 @@ import {
   validRunId,
   userHome,
   easMachineStateRoot,
+  gcReportCacheFile,
+  GC_REPORT_CACHE_VERSION,
+  type GcReportCache,
 } from '@stim-cli/core/state';
+import { writeCacheFile } from '../cache-file.ts';
 import { phaseLine } from '../command-output.ts';
 import { stopWorkspaceNow } from '../commands/stop.ts';
 import { runReload } from '../commands/reload.ts';
@@ -89,7 +93,7 @@ import type {
   StimDeviceUnlockOptions,
   StimDeviceToolOptions,
   StimMachineAccessOptions,
-  StimGcOptions,
+  EngineGcOptions,
   StimGcMutationOptions,
   StimGcItemOptions,
   StimSettingWriteOptions,
@@ -358,7 +362,7 @@ export function createLocalStim(options: EngineOptions): EngineClient {
         );
         return task;
       }),
-    gc: ({ signal, pressure, measureBuildState }: StimGcOptions = {}) => {
+    gc: ({ signal, pressure, measureBuildState, budgetMs, record }: EngineGcOptions = {}) => {
       if (pressure !== undefined && !GC_LEVELS.includes(pressure))
         return Promise.reject(
           new StimError({
@@ -367,17 +371,29 @@ export function createLocalStim(options: EngineOptions): EngineClient {
             remedy: 'Pass pressure as normal, high or critical, or leave it out.',
           }),
         );
-      return report('gc', signal, async (context) => {
-        const result = await readGcReport(
-          { pressure, measureBuildState },
-          {
-            operation: context,
-            easLedgerRoot: easMachineStateRoot(context.env),
-          },
-        );
-        if ('code' in result) throw new StimError(result);
-        return result;
-      });
+      return report(
+        'gc',
+        signal,
+        async (context) => {
+          const measuredAt = new Date().toISOString();
+          const result = await readGcReport(
+            { pressure, measureBuildState },
+            {
+              operation: context,
+              easLedgerRoot: easMachineStateRoot(context.env),
+            },
+          );
+          if ('code' in result) throw new StimError(result);
+          if (record)
+            writeCacheFile(gcReportCacheFile(), {
+              version: GC_REPORT_CACHE_VERSION,
+              measuredAt,
+              report: { ...result },
+            } satisfies GcReportCache);
+          return result;
+        },
+        budgetMs,
+      );
     },
     collectGarbage: ({ signal, pressure }: StimGcMutationOptions = {}) => {
       if (pressure !== undefined && !GC_LEVELS.includes(pressure))

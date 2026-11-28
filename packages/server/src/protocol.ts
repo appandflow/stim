@@ -1317,6 +1317,7 @@ export function protocolJsonSchema(): JsonSchema {
           value: { type: ['object', 'null'] },
           error: { type: 'string' },
           measuredAt: { type: 'string' },
+          refreshing: { const: true },
         },
       },
       MachineDetails: {

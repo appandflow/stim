@@ -1,4 +1,5 @@
-import { gcLogFile } from './paths.ts';
+import { gcLogFile, gcReportCacheFile } from './paths.ts';
+import { isJsonObject, readJsonObject } from './json-file.ts';
 import { readNdjsonGenerations, type NdjsonRecord } from './ndjson.ts';
 import type { PressureLevel } from './daemon.ts';
 
@@ -74,4 +75,27 @@ export function readGcLog(file: string = gcLogFile()): (GcLogRecord | GcLogEntry
   return readNdjsonGenerations(file)
     .filter((record): record is GcLogRecord | GcLogEntry => record.src === 'gc' && typeof record.ts === 'number')
     .toSorted((a, b) => a.ts - b.ts);
+}
+
+export const GC_REPORT_CACHE_VERSION = 1;
+
+export interface GcReportCache {
+  version: typeof GC_REPORT_CACHE_VERSION;
+  /** When the sweep that produced `report` started, as an ISO time. */
+  measuredAt: string;
+  report: Record<string, unknown>;
+}
+
+/** The cached gc report, or null when it is missing, of another version or does not parse; it is rebuildable. */
+export function readGcReportCache(file: string = gcReportCacheFile()): GcReportCache | null {
+  const value = readJsonObject(file);
+  if (
+    !value ||
+    value.version !== GC_REPORT_CACHE_VERSION ||
+    typeof value.measuredAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.measuredAt)) ||
+    !isJsonObject(value.report)
+  )
+    return null;
+  return { version: GC_REPORT_CACHE_VERSION, measuredAt: value.measuredAt, report: value.report };
 }

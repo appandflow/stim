@@ -81,7 +81,7 @@ final class MetricsStore {
   private func tick() {
     sampleMachineCpu()
     sample()
-    if !gc.running, gc.at.map({ Date().timeIntervalSince($0) > 300 }) ?? true { gc.refresh() }
+    gc.poll()
   }
 
   private func sampleMachineCpu() {

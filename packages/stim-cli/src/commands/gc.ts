@@ -290,23 +290,28 @@ function resultOf(action: LevelRunAction): GcResult {
 
 /** `stim gc --dry-run --json` as the API's read-only `gc()` returns it: the plan and the storage sections. */
 export async function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
-  const run = await runMaintenanceAtLevel({
-    level: options.pressure,
-    act: false,
-    operation: deps.operation,
-    walkUnknown: false,
-  });
-  const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
-  return {
-    ...runPayload(run, false),
-    sections: gcReportSections(report),
-    inventory: await collectInventory(
-      loadConfig(),
-      report.deadProjects,
-      deps.operation?.env ?? process.env,
-      deps.operation,
-    ),
-  };
+  const closeGitReads = openGitReads(deps.operation);
+  try {
+    const run = await runMaintenanceAtLevel({
+      level: options.pressure,
+      act: false,
+      operation: deps.operation,
+      walkUnknown: false,
+    });
+    const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
+    return {
+      ...runPayload(run, false),
+      sections: gcReportSections(report),
+      inventory: await collectInventory(
+        loadConfig(),
+        report.deadProjects,
+        deps.operation?.env ?? process.env,
+        deps.operation,
+      ),
+    };
+  } finally {
+    closeGitReads();
+  }
 }
 
 /** A gc pass request: the level the caller chose, if any, which client asked, and `walkUnknown` for the API's. */

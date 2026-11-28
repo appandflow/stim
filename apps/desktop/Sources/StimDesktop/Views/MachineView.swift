@@ -142,7 +142,7 @@ struct MachineView: View {
     }
     .onAppear {
       storage.refresh()
-      if gc.report == nil { gc.refresh() }
+      if gc.report == nil { gc.poll() }
     }
     .confirmationDialog(
       "Free This Space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
