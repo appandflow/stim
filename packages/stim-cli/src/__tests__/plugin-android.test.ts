@@ -20,7 +20,7 @@ function write(path: string, content = '') {
   writeFileSync(path, content);
 }
 
-function plugin(build: Record<string, unknown>) {
+function plugin(declared: Record<string, unknown>) {
   const dir = join(directory, 'stim-plugin-game');
   write(
     join(dir, 'package.json'),
@@ -28,7 +28,7 @@ function plugin(build: Record<string, unknown>) {
       name: 'stim-plugin-game',
       stimPlugin: {
         kinds: { project: 1 },
-        project: { id: 'game', name: 'Game', markers: ['game.project'], targets: { android: { build } } },
+        project: { id: 'game', name: 'Game', markers: ['game.project'], targets: { android: { build: declared } } },
       },
     }),
   );
