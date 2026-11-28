@@ -111,6 +111,21 @@ function gradleBuildDir(dir: string, packageRoot: string | null): boolean {
   });
 }
 
+/**
+ * Whether the file at `segments`, relative to a dependency tree of `kind`, is the package manager's own state: its
+ * stamps, pnpm's `.pnpm-workspace-state*.json` and `.package-map.json` at the root, and `.pnpm/lock.yaml`.
+ */
+function packageManagerState(kind: TreeKind, segments: readonly string[]): boolean {
+  const name = segments.at(-1) ?? '';
+  if (segments.length === 1)
+    return (
+      STAMPS[kind].includes(name) ||
+      (kind === 'node_modules' &&
+        ((name.startsWith('.pnpm-workspace-state') && name.endsWith('.json')) || name === '.package-map.json'))
+    );
+  return kind === 'node_modules' && segments.length === 2 && segments[0] === '.pnpm' && name === 'lock.yaml';
+}
+
 // @ref LLP 0002#edits-inside-dependency-folders -- what tools write inside a dependency folder is not an edit
 /**
  * Whether the entry at `segments`, relative to a dependency tree of `kind`, holds what package managers and native
@@ -127,14 +142,7 @@ function excludedFromEdits(
 ): boolean {
   const name = segments.at(-1) ?? '';
   const parent = segments.at(-2);
-  if (!directory) {
-    if (segments.length === 1)
-      return (
-        STAMPS[kind].includes(name) ||
-        (kind === 'node_modules' && name.startsWith('.pnpm-workspace-state') && name.endsWith('.json'))
-      );
-    return kind === 'node_modules' && segments.length === 2 && segments[0] === '.pnpm' && name === 'lock.yaml';
-  }
+  if (!directory) return packageManagerState(kind, segments);
   if (kind === 'Pods') return name === 'xcuserdata';
   if (inBinDir(segments)) return true;
   if (segments.length === 1 && name.startsWith('.') && !TREE_DOT_DIRS.includes(name)) return true;
@@ -388,9 +396,14 @@ async function recordedEdits(
   const tree = canonicalOr(path);
   const record = readDependencyInstall(tree);
   const signature = treeSignature(tree);
-  const known = (record?.edits?.files ?? []).filter(
-    (file) => unchanged(tree, file) && !(kindOf(tree) === 'node_modules' && inBinDir(file.rel.split('/'))),
-  );
+  const known = (record?.edits?.files ?? []).filter((file) => {
+    const segments = file.rel.split('/');
+    return (
+      unchanged(tree, file) &&
+      !(kindOf(tree) === 'node_modules' && inBinDir(segments)) &&
+      !packageManagerState(kindOf(tree), segments)
+    );
+  });
   if (
     level !== 'critical' &&
     known.length &&
