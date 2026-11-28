@@ -34,9 +34,10 @@ time and each part's (plan, sections, inventory). `--refresh` asks stimd for a
 sweep that starts after the request, or the one that follows a sweep under
 way, and waits for it. With no cached report the dry run waits for stimd's
 sweep. A cached report older than 15 minutes still answers, says so, and asks
-stimd to sweep in the background. With no stimd, with a stimd that does not
-answer, or with `--pressure`, whose level the cached plan does not hold, the
-dry run scans in its own process as before and leaves the cache alone.
+stimd to sweep in the background. When it needs a sweep and no stimd answers
+or stimd refuses, or with `--pressure`, whose level the cached plan does not
+hold, the dry run scans in its own process as before and leaves the cache
+alone.
 `--refresh` without `--dry-run` is refused: an acting `stim gc`, a maintenance
 pass and Stim Desktop's Free space never read the cached report and read each
 candidate again before they delete. The cached sweep runs in report mode, so it

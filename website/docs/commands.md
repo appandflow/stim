@@ -411,8 +411,8 @@ projects, old archives, finished worktrees past their grace period, and the
 regenerable files of idle workspaces. Preview with `--dry-run` first. A dry
 run answers from the report `stimd` last measured, the one Stim Desktop shows,
 and prints its age; `--refresh` has `stimd` measure again now, which can take
-minutes on a machine with many checkouts. Without `stimd`, or with
-`--pressure`, the dry run scans in its own process. `stim gc` itself always
+minutes on a machine with many checkouts. With no cached report and no
+`stimd`, or with `--pressure`, the dry run scans in its own process. `stim gc` itself always
 reads what it deletes fresh.
 It also stops orphaned EAS sessions of the current Expo project. A pnpm patch
 edit folder or a Solana keypair is copied to `$STIM_HOME/rescued` before its

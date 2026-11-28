@@ -10,7 +10,7 @@ const report = (measuredAt: string): GcReportCache => ({
   run: {},
 });
 
-function sweeps() {
+function sweeps(settlesOnLeave = true) {
   const runs: { resolve: (cache: GcReportCache) => void; reject: (error: Error) => void; leave: () => void }[] = [];
   const written: GcReportCache[] = [];
   let clock = 0;
@@ -22,7 +22,9 @@ function sweeps() {
         resolve = done;
         reject = fail;
       });
-      const leave = vi.fn<() => void>(() => reject(new Error('aborted')));
+      const leave = vi.fn<() => void>(() => {
+        if (settlesOnLeave) reject(new Error('aborted'));
+      });
       runs.push({ resolve, reject, leave });
       return { result, leave };
     },
@@ -49,9 +51,9 @@ test('asks join the sweep under way, and an ask for a newer one gets one sweep a
   expect(written.map((cache) => cache.measuredAt)).toEqual(['2026-11-28T00:00:00.000Z', '2026-11-28T00:05:00.000Z']);
 });
 
-test('a failed sweep writes nothing, and one past its budget stops and says so', async () => {
+test('a failed sweep writes nothing, and one past its budget fails even when its thread never settles', async () => {
   vi.useFakeTimers();
-  const { owner, runs, written } = sweeps();
+  const { owner, runs, written } = sweeps(false);
   const failed = owner.sweep();
   runs[0]?.reject(new Error('git failed'));
   await expect(failed).rejects.toThrow('git failed');
@@ -62,4 +64,10 @@ test('a failed sweep writes nothing, and one past its budget stops and says so',
   expect(runs[1]?.leave).toHaveBeenCalled();
   expect(await slow).toMatchObject({ message: expect.stringContaining('did not finish within 15 minutes') });
   expect(written).toEqual([]);
+  const next = owner.sweep();
+  expect(runs).toHaveLength(3);
+  runs[1]?.resolve(report('2026-11-28T00:00:00.000Z'));
+  runs[2]?.resolve(report('2026-11-28T00:20:00.000Z'));
+  await next;
+  expect(written.map((cache) => cache.measuredAt)).toEqual(['2026-11-28T00:20:00.000Z']);
 });

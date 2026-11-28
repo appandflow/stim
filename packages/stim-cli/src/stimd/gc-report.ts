@@ -44,7 +44,7 @@ export function createGcReportSweeps(
       leave: asked.leave,
       result: Promise.race([
         asked.result.then((cache) => {
-          write(cache);
+          if (current === sweep) write(cache);
           return cache;
         }),
         budget,
