@@ -68,11 +68,11 @@ public final class GcReportStore {
     _ = current(fresh: true)
   }
 
-  /// Reads the server's current report without asking for a new measurement: every 15 seconds while it measures
-  /// or has none yet, backing off to 5 minutes after failures, and every 5 minutes otherwise.
+  /// Reads the server's current report without asking for a new measurement: every 15 seconds while it measures,
+  /// has none yet or the last read failed, doubling after each failure up to 5 minutes, and every 5 minutes otherwise.
   public func poll() {
     guard task == nil else { return }
-    let waiting = refreshing || report == nil
+    let waiting = refreshing || report == nil || failures > 0
     let interval = waiting ? min(Self.slowPoll, Self.fastPoll * pow(2, Double(failures))) : Self.slowPoll
     if let polledAt, now().timeIntervalSince(polledAt) < interval { return }
     _ = current(fresh: false)

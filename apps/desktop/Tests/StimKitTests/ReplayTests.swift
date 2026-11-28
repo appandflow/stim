@@ -1348,7 +1348,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
-  @Test func gcDoesNotAcceptAPendingSnapshotAsAFreshMeasurement() async throws {
+  @Test func gcTakesAPendingSnapshotAsStillMeasuring() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     let environment = try statsEnvironment(in: directory)
@@ -1364,8 +1364,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       .object([
         "pending": .bool(true), "value": .object(["sections": .object([:])]),
       ]))
-    let error = await #expect(throws: ServerError.self) { try await read.value }
-    #expect(error?.code == "bad-response")
+    let measuring = try await read.value
+    #expect(measuring.report == nil && measuring.refreshing)
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
