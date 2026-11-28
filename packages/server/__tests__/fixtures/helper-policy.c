@@ -11,6 +11,8 @@ int main(void) {
   assert(helper_service("/tmp/PerfPowerServices") == -1);
   assert(helper_service("/usr/libexec/PerfPowerServices-extra") == -1);
   assert(helper_service("/System/Library/CoreServices/WindowServer") == -1);
+  assert(helper_service("/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd") == 5);
+  assert(helper_service("/usr/sbin/fseventsd") == -1);
   struct helper_window window = {0};
   for (int at = 1000; at <= 1600; at += 60) {
     window = helper_observe(window, at, 198, 1024);

@@ -451,8 +451,9 @@ stim service uninstall --helper unregisters only the helper and downloads nothin
 
 The helper has no inbound IPC or configurable thresholds. Once a minute it
 matches exact executable paths for PerfPowerServices, mds_stores,
-mdworker_shared, photoanalysisd and mediaanalysisd under /System or /usr/libexec.
-Above 150% CPU or 2 GiB RSS for 10 continuous minutes, it rechecks the process
+mdworker_shared, photoanalysisd, mediaanalysisd and fseventsd under /System or
+/usr/libexec. Above 150% CPU or 2 GiB of RSS or physical footprint for 10
+continuous minutes, it rechecks the process
 identity and sends SIGTERM, allowing launchd to restart it. It attempts at most
 one restart per service per hour, including across helper restarts. It never
 signals WindowServer, launchd, coreaudiod, CoreSimulator or any other process.

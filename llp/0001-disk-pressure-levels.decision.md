@@ -1335,6 +1335,8 @@ Maintainer decision: "Can we do this", 2026-11-24, on the privileged helper in S
 Maintainer decision: "Sounds good, if helper isnt setup and we detect high usage from a process ti could kill can we suggest the command to run to setup the helper", 2026-11-24, accepting the design below.
 Maintainer decision: "lets do both", 2026-11-24, for the Desktop toggle and the CLI flag.
 Maintainer decision: "Setup command only (Recommended)", 2026-11-24, choosing that the advice without a helper prints only the setup command and drops the one-off kill command.
+Maintainer decision: "That should be a candidate for our cleanup automatic", 2026-11-27, on fseventsd, after Stim Desktop showed "fseventsd uses 82.68 GB" with the advice `sudo killall fseventsd` ([#6600](https://github.com/appandflow/stim/issues/6600)).
+Maintainer decision: "using our priviledged helper (should be installed right?)", 2026-11-27, on the same fseventsd advice.
 
 Registration is opt-in through the signed Stim Host executable, using
 SMAppService.daemon and an embedded LaunchDaemon plist with BundleProgram.
@@ -1346,20 +1348,29 @@ Mac that never installed the server service, or installed it before a
 helper-capable Host, still registers
 ([#6297](https://github.com/appandflow/stim/issues/6297)). It replaces only the
 bundle: a server already running from the old one keeps running until its next
-restart. Uninstall --helper downloads nothing. Desktop does not download Stim
+restart, and so does a running helper. Uninstall --helper downloads nothing. Desktop does not download Stim
 Host; for a missing or too old one it shows that command. The helper has no listener, Mach service, socket
 or request file. It does not accept targets, paths or thresholds from callers.
 It is independent of daemon.mode and STIM_HOME until unregistered.
 
 Only the exact system executable paths of PerfPowerServices, mds_stores,
-mdworker_shared, photoanalysisd and mediaanalysisd qualify. These paths were
-checked on macOS 27.0 (26A428) on 2026-11-24. Once a minute libproc
-samples CPU time and RSS. More than 150% CPU or 2 GiB RSS for 10 continuous
-minutes qualifies one process for SIGTERM; a changed identity, missing sample,
+mdworker_shared, photoanalysisd, mediaanalysisd and fseventsd qualify. These
+paths were checked on macOS 27.0 (26A428), the first five on 2026-11-24 and
+fseventsd on 2026-11-27. New entries go at the end of the list because log
+lines record a service by its index. Once a minute libproc samples CPU time,
+RSS and physical footprint. Memory is the larger of RSS and footprint, because
+RSS leaves out compressed and swapped pages: on the maintainer's MacBook on
+2026-11-27 fseventsd had about 10 GB RSS against a 77 GiB footprint, 67 GiB of
+it compressed, after nine days up ([#5910](https://github.com/appandflow/stim/issues/5910)
+covers an earlier 52 GB case). More than 150% CPU or 2 GiB of memory for 10
+continuous minutes qualifies one process for SIGTERM; a changed identity, missing sample,
 sample gap over 90 seconds, or recovery resets the relevant window. CPU and
 memory each need their own continuous window. The helper verifies path and
 start identity again immediately before signalling. Nothing else is signalled:
 WindowServer, launchd, coreaudiod and CoreSimulator stay outside this exception.
+Restarting fseventsd makes every FSEvents client, such as Metro, Watchman and
+Spotlight, rescan the folders it watches once; launchd starts fseventsd again
+at once.
 
 A service gets at most one attempt per hour across all its instances. The
 helper syncs an attempt before signalling and restores cooldowns from its
@@ -1371,6 +1382,10 @@ root-owned non-writable directory. Logs are readable by other users and rotate
 at 4 MiB, keeping one previous file. Samples, attempts and signal outcomes are
 JSON lines; reporting uses successful signal outcomes from the last hour.
 This reports a restart request, not proof of launchd's replacement.
+
+stimd's Apple service sample leaves fseventsd out. Its advice comes from the
+memory culprit report, which reads footprint from `top` and prints the same
+setup command, so the advice is not printed twice.
 
 Only the home maintenance pass samples Apple services, reusing its process
 table for device activity. stimd names an allowlisted process over either limit
@@ -1391,10 +1406,14 @@ restart once and warnings only when they start or their state changes.
 Chosen by the implementer within the issue's approximate limits: strict
 threshold comparisons, separate CPU and memory windows, the 90-second maximum
 sample gap, durable attempted-restart cooldowns, log rotation size and retention,
-and reporting the last hour. No settings are added.
+and reporting the last hour. For #6600: the 2 GiB limit for fseventsd, the CPU
+limit applying to it as to the others, and footprint counting for every listed
+service, not only fseventsd. Footprint can only raise the measured memory, so
+a service that qualified before still qualifies. No settings are added.
 
 Code: [helper](../packages/server/host/stim-host-helper.c),
 [policy](../packages/server/host/helper-policy.h),
 [ServiceManagement bridge](../packages/server/host/helper-service.m),
 [CLI and reporting](../packages/stim-cli/src/apple-services.ts),
+[fseventsd advice](../packages/stim-cli/src/memory-culprits.ts),
 [Desktop preferences](../apps/desktop/Sources/StimDesktop/Views/AppPreferencesView.swift).
