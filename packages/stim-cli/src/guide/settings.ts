@@ -907,6 +907,15 @@ to its app path for every command it starts.
 \`"defaultReason": "Stim Desktop installed"\`. A set value always wins; set
 \`"xcode"\` or \`"emulator"\` to keep the device windows.
 
+PROJECT PLUGINS ARE MACHINE-LEVEL
+Top-level \`plugins\` in ~/.stim/config.json lists project plugin directories
+by absolute path (a leading ~ is the home folder). Each one's package.json
+declares a project type Stim does not bundle; a folder holding its marker
+files is then a project root that worktree and status handle, with no build
+or run. \`stim guide api\` has the manifest and the rules.
+
+  stim settings set plugins '["~/src/stim-plugin-godot"]' --scope machine
+
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same

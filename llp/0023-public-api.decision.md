@@ -84,6 +84,27 @@ contract test kits. The export list drops `cacheProviderContractChecks`.
 The `@stim-cli/cache-s3` peer range tracks the published Stim version so the
 `next` channel's 2.0 prereleases satisfy it.
 
+The `project` kind is experimental as well, and it is the one experimental kind
+that loads from outside the package. A project plugin is a directory whose
+`package.json` declares `stimPlugin.kinds.project` and a `stimPlugin.project`
+block (`ProjectPluginManifest`: `id`, `name`, `markers`). The block is the whole
+contract, so the kind exposes no host internals, and its integer may change in a
+minor release like the other two.
+
+- Stim reads the manifest and imports no module of the plugin. Project
+  detection is synchronous and runs in `status`, `stop`, `logs`, discovery and
+  stimd; a `detect()` function would put plugin code in every one of them.
+- The machine setting `plugins` names the directories. A project setting, as
+  `cache.provider` is, resolves from a project's `package.json`, which a
+  repository of another framework does not have. An entry is an absolute
+  directory; a package name is not accepted, because no install location for
+  one is decided.
+- A match has no platform and answers every operation with a problem, so it
+  never competes with a bundled integration for the same root, and a plugin
+  cannot declare a bundled integration's id or one an earlier entry holds.
+- The list is read again when `config.json` or a named `package.json` changes
+  on disk, so stimd follows `stim settings set plugins` without a restart.
+
 ## JSON payloads
 
 Within 2.x a `--json` payload, a `logs --json` record and an API result only
@@ -110,7 +131,8 @@ declaration and union branch, and whether it sits in a parameter list.
   interface a plugin implements returns to Stim (`CacheProvider`,
   `CacheProviderModule`, `BuildCacheCapability`, `FileCacheCapability`,
   `Transport`, `TransportModule`, `HostedAgentDriver`, `AgentDriverModule`,
-  and the types they return), or what a caller passes to an exported function
+  and the types they return, and `ProjectPluginManifest`, which a plugin's
+  `package.json` holds), or what a caller passes to an exported function
   or a `StimClient` method, and the types those reach.
 - An added optional parameter, a wider union and a new enum value are
   additive, as the JSON rule says. A narrower one breaks.
@@ -162,3 +184,11 @@ remains in the public `StimSettings` declarations and API report. Its removal
 is deferred to a future versioned API change under the gate above.
 [Review note](https://github.com/appandflow/stim/issues/5592#issuecomment-6842811722),
 [public API report](../packages/stim-cli/api.api.txt).
+
+**Maintainer decision:** "Yes, lets build the plugin and test end to end"
+(2026-11-27), to building the `project` kind with a machine setting that lists
+plugins, detection from the manifest only, and an experimental kind that loads
+from outside the package.
+[Project kind decision](https://github.com/appandflow/stim/issues/6599#issuecomment-7231963979).
+The setting's name, `plugins`, and the directory-only reference are the
+implementing agent's choices; the maintainer has not stated them.

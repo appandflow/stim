@@ -338,26 +338,46 @@ and apiVersion (CacheProviderModule), a transport id and createTransport({ env,
 options }) (TransportModule), and an agent driver id and createAgentDriver(input),
 optionally client and recover(input) (AgentDriverModule). Stim checks the
 package.json integer, not apiVersion, before importing the module.
-The kinds are cache-provider, transport and agent-driver. Only cache-provider
-is stable in 2.x; transport and agent-driver are experimental, and their
+The kinds are cache-provider, transport, agent-driver and project. Only
+cache-provider is stable in 2.x; the others are experimental, and their
 contracts and integers may change in a minor release. runContract(kind,
 options) from 'stim/plugin' runs a kind's contract kit.
+
+A project plugin has no module. Its package.json declares one project type
+(ProjectPluginManifest), and the machine setting plugins lists such plugin
+directories by absolute path (a leading ~ is the home folder):
+
+  "stimPlugin": { "kinds": { "project": 1 },
+    "project": { "id": "godot", "name": "Godot", "markers": ["project.godot"] } }
+  stim settings set plugins '["~/src/stim-plugin-godot"]' --scope machine
+
+A folder holding every marker as a file is a project root of that type:
+worktree add and warm register it and status names it. It has no platform, so
+ios, android, macos and start refuse with STIM_NO_PROJECT naming the type; a
+root a bundled integration builds keeps its build and run. id is lowercase
+letters, digits and hyphens, not a bundled integration's or an earlier
+plugin's; name is one line; markers are 1 to 16 file names, no path separator
+or glob. Stim never imports the plugin's code and rereads the list when
+config.json or a named package.json changes, so stimd needs no restart.
 
   stim plugin list [--json]
   stim plugin test <plugin> [--json]
 
 plugin list prints the plugins this Stim bundles (builtin:local and
-builtin:tailscale transports, builtin:agent-device agent driver) and the plugin
-cache.provider names, reading package.json manifests only. --json prints
-{ api: { <kind>: <integer> }, plugins: [{ name, source: 'builtin'|'project',
-kinds, selectedBy: [<setting>], accepted, reason?, baseDir? }] }; accepted is
-false, with the reason, when the module does not resolve or declares another
-integer. doctor reports the same as a plugin-ref finding, and stim settings set
-cache.provider warns on stderr and still writes the value.
+builtin:tailscale transports, builtin:agent-device agent driver) and the plugins
+cache.provider and plugins name, reading package.json manifests only. --json prints
+{ api: { <kind>: <integer> }, plugins: [{ name, source:
+'builtin'|'project'|'machine', kinds, selectedBy: [<setting>], accepted,
+reason?, baseDir? }] }; source is machine for a plugins entry. accepted is
+false, with the reason, when the module does not resolve, declares another
+integer, or breaks a project manifest rule. doctor reports the same as a
+plugin-ref finding, and stim settings set cache.provider or plugins warns on
+stderr and still writes the value.
 
 plugin test takes a plugin directory or module path, a package installed in
 the current directory, or builtin:local or builtin:agent-device, and runs the kit of
-each transport or agent-driver kind the manifest declares. It runs the
+each transport, agent-driver or project kind the manifest declares. A project
+plugin is named by its directory, and only its package.json is checked. It runs the
 plugin's code as your user, with access to files, the network and other
 processes; it is not a sandbox, so test only a plugin you trust. What it
 isolates: the module loads in a worker thread, never in the CLI process; its

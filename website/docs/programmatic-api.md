@@ -87,10 +87,12 @@ The TypeScript declarations in the package are the full reference, and
 ## Plugins
 
 A plugin is a package that implements a plugin kind: `cache-provider`,
-`transport` or `agent-driver`. A project selects a cache provider with the
-`cache.provider` setting. Stim bundles the `local` and `tailscale` transports
-and the `agent-device` agent driver; other transports and drivers are not
-loaded yet. Only the `cache-provider` contract is stable in 2.x.
+`transport`, `agent-driver` or `project`. A project selects a cache provider
+with the `cache.provider` setting, and a machine lists project plugins in the
+`plugins` setting. Stim bundles the `local` and `tailscale` transports and the
+`agent-device` agent driver; other transports and drivers are not loaded yet.
+Only the `cache-provider` contract is stable in 2.x; the other kinds are
+experimental, and their contracts may change in a minor release.
 
 A plugin declares its kinds in `package.json` and imports only types from
 `stim/plugin`:
@@ -122,6 +124,59 @@ files, the network and other processes. It is not a sandbox.
 A cache provider is tested in its own test suite with
 `runCacheProviderContract` from `stim/plugin`. The exports each kind needs are
 in `stim guide api`.
+
+### Project types from a plugin
+
+A `project` plugin teaches Stim to recognise a project type it does not
+bundle, such as a Godot game. It has no code: its `package.json` names the
+type and the files that mark a project root.
+
+```json
+{
+  "name": "stim-plugin-godot",
+  "stimPlugin": {
+    "kinds": { "project": 1 },
+    "project": { "id": "godot", "name": "Godot", "markers": ["project.godot"] }
+  }
+}
+```
+
+Add the plugin's directory to the machine setting `plugins`, by absolute path:
+
+<StimTabs code={`stim settings set plugins '["~/src/stim-plugin-godot"]' --scope machine`} />
+
+A folder that holds every marker as a file is then a project root of that
+type:
+
+- `stim worktree add` and `stim worktree warm` register it like any project,
+  and `stim status` names the type.
+- It has no platform. `stim ios`, `stim android`, `stim macos` and `stim start`
+  refuse with `STIM_NO_PROJECT` and name the type; build and run the project
+  with its own tools. `stim web` still opens a `web.url` you configure.
+- A folder that is also an app Stim builds keeps its build and run.
+
+The rules for the manifest:
+
+- `id` is lowercase letters, digits and hyphens, and is neither the id of a
+  project type Stim bundles nor one an earlier plugin in the list declares.
+- `name` is one line of at most 40 characters.
+- `markers` are 1 to 16 names of files directly in the project root, with no
+  path separator and no glob. Run Stim from the folder that holds them.
+
+Stim never imports a project plugin's code. It reads the list again when the
+setting or a named `package.json` changes, so nothing needs a restart.
+`stim plugin list` shows each entry and why Stim rejects one, `stim doctor`
+reports a rejected entry, and `stim plugin test <directory>` checks the
+manifest.
+
+<PromptBox
+title="Add a project type"
+response={`plugins now lists ~/src/stim-plugin-godot. stim plugin list shows it as project 1, and stim status names this folder a Godot project.`}
+
+>
+
+{`Add the Stim project plugin at ~/src/stim-plugin-godot to the machine setting plugins, keeping any entries already there. Then run stim plugin list and stim status here and tell me what they report.`}
+</PromptBox>
 
 <PromptBox
 title="Test a plugin"

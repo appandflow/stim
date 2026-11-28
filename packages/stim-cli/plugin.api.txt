@@ -1,5 +1,5 @@
 // The stim/plugin API report. Regenerate it with `node scripts/plugin-api-report.mjs --update`; see that script.
-// The agent-driver and transport kinds are experimental in 2.x: their integers may go up in a minor release. Only cache-provider is frozen.
+// The agent-driver, transport and project kinds are experimental in 2.x: their integers may go up in a minor release. Only cache-provider is frozen.
 // Reset once before 2.0.0 with --reset; a later change to these lines follows the integers.
 [*] declare function runContract<Kind extends keyof ContractOptions>(kind: Kind, options: ContractOptions[Kind]): Promise<ContractResults[Kind]>;
 [*] export runContract
@@ -9,10 +9,12 @@
 [*] interface ContractOptions {
 [*] interface ContractOptions { @@1 "agent-driver": AgentDriverContractOptions;
 [*] interface ContractOptions { @@1 "cache-provider": CacheContractModuleOptions;
+[*] interface ContractOptions { @@1 project: ProjectContractOptions;
 [*] interface ContractOptions { @@1 transport: TransportContractOptions;
 [*] interface ContractResults {
 [*] interface ContractResults { @@1 "agent-driver": AgentDriverContractResult[];
 [*] interface ContractResults { @@1 "cache-provider": CacheContractResult[];
+[*] interface ContractResults { @@1 project: ProjectContractResult[];
 [*] interface ContractResults { @@1 transport: TransportContractResult[];
 [*] interface HostedAgentIssuedGrant {
 [*] interface HostedAgentIssuedGrant { @@1 driver: string;
@@ -264,6 +266,24 @@
 [cache-provider] interface LoadCacheProviderResult { @@1 none?: true;
 [cache-provider] interface LoadCacheProviderResult { @@1 provider?: CacheProvider;
 [cache-provider] interface LoadCacheProviderResult { @@1 unavailable?: string;
+[project] declare const PROJECT_API_VERSION: 1;
+[project] declare function runProjectContract(options: ProjectContractOptions): Promise<ProjectContractResult[]>;
+[project] export PROJECT_API_VERSION
+[project] export runProjectContract
+[project] export type ProjectContractOptions
+[project] export type ProjectContractResult
+[project] export type ProjectPluginManifest
+[project] interface ProjectContractOptions {
+[project] interface ProjectContractOptions { @@1 baseDir: string;
+[project] interface ProjectContractOptions { @@1 reference: string;
+[project] interface ProjectContractResult {
+[project] interface ProjectContractResult { @@1 error?: string;
+[project] interface ProjectContractResult { @@1 name: string;
+[project] interface ProjectContractResult { @@1 passed: boolean;
+[project] interface ProjectPluginManifest {
+[project] interface ProjectPluginManifest { @@1 id: string;
+[project] interface ProjectPluginManifest { @@1 markers: readonly string[];
+[project] interface ProjectPluginManifest { @@1 name: string;
 [transport] declare const TRANSPORT_API_VERSION: 1;
 [transport] declare function runTransportContract(options: TransportContractOptions): Promise<TransportContractResult[]>;
 [transport] export TransportContractOptions

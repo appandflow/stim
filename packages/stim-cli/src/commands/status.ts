@@ -34,7 +34,7 @@ import { defineOp, type Op } from '../cli/define-op.ts';
 import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { describeMetroLastStop } from '../stimd/metro/stop-cause.ts';
-import { projectRegistry } from '../integrations/projects.ts';
+import { projectPluginAt, projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
 import { formatBytes, formatSize, volumeRootFor } from '../fs-util.ts';
@@ -46,6 +46,7 @@ import {
   type DeviceAppProcess,
   type DeviceIdleShutdownRecord,
   type LastBuildReport,
+  type ProjectRecord,
   type StatusPayload,
   archiveRoot,
   readArchives,
@@ -136,6 +137,13 @@ function appKind(path: string, isExpo: boolean | undefined): 'expo' | 'exact' | 
   if (isExpo ?? detectIsExpo(path)) return 'expo';
   const ios = projectRegistry.selectIos(path);
   return 'id' in ios && ios.id === 'exact' ? 'exact' : 'bare';
+}
+
+function appLine(path: string, { bundleId, isExpo }: ProjectRecord): string {
+  const plugin = bundleId || projectRegistry.isMobileProject(path) ? null : projectPluginAt(path);
+  return plugin
+    ? `  project: ${plugin.name} (plugin ${plugin.package})`
+    : `  app: ${bundleId ?? '?'} (${appKind(path, isExpo)})`;
 }
 
 function formatGb(mb: number): string {
@@ -337,7 +345,7 @@ export function renderStatus(
     out.push(
       labelOnlyRoots[i]
         ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
-        : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${appKind(path, proj.isExpo)})`),
+        : chalk.dim(appLine(path, proj)),
     );
 
     if (!labelOnlyRoots[i]) out.push(chalk.dim(stageLine(state, snapshot, now)));

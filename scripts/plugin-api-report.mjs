@@ -22,7 +22,7 @@ const REPORTS = [
     source: 'src/plugin.ts',
     baselineFile: 'packages/stim-cli/plugin.api.txt',
     produced: 'implemented',
-    note: 'The agent-driver and transport kinds are experimental in 2.x: their integers may go up in a minor release. Only cache-provider is frozen.',
+    note: 'The agent-driver, transport and project kinds are experimental in 2.x: their integers may go up in a minor release. Only cache-provider is frozen.',
   },
   {
     name: 'stim',
@@ -66,12 +66,14 @@ const MODULE_KINDS = {
   'transport-kit': 'transport',
   'agent-driver': 'agent-driver',
   'agent-driver-kit': 'agent-driver',
+  'project-plugin': 'project',
 };
 
 const VERSION_KINDS = {
   CACHE_PROVIDER: 'cache-provider',
   TRANSPORT: 'transport',
   AGENT_DRIVER: 'agent-driver',
+  PROJECT: 'project',
   STIM: 'stim',
 };
 
@@ -88,6 +90,7 @@ const IMPLEMENTED = [
   'TransportModule',
   'HostedAgentDriver',
   'AgentDriverModule',
+  'ProjectPluginManifest',
 ];
 
 const TAG_MARK = '\u0000tag:';

@@ -20,6 +20,13 @@ import {
   type ResolvedProjectSettings,
 } from '../workspace/settings.ts';
 import { nativeXcodeProjectIntegration } from './native-xcode-project.ts';
+import {
+  pluginProjectAt,
+  pluginProjectIntegration,
+  projectPlugins,
+  readProjectPlugins,
+  type ProjectPluginEntry,
+} from './plugin-projects.ts';
 
 import {
   createProjectRegistry,
@@ -161,14 +168,37 @@ const browserWeb: ProjectIntegration = {
   },
 };
 
+const pluginProjects = pluginProjectIntegration(() => bundledProjectIds());
+
 export const projectIntegrations: readonly ProjectIntegration[] = [
   reactNativeProject,
   nativeAndroidIntegration,
   swiftPackage,
   exactApp,
+  pluginProjects,
   browserWeb,
   nativeXcodeProjectIntegration,
 ];
+
+let bundledIds: ReadonlyMap<string, string> | null = null;
+
+export function bundledProjectIds(): ReadonlyMap<string, string> {
+  bundledIds ??= new Map(projectIntegrations.map(({ id }) => [id, 'a project integration Stim bundles']));
+  return bundledIds;
+}
+
+export function configuredProjectPlugins(): readonly ProjectPluginEntry[] {
+  return projectPlugins(bundledProjectIds());
+}
+
+export function projectPluginProblems(references: readonly unknown[]): string[] {
+  return readProjectPlugins(references, bundledProjectIds()).flatMap(({ problem }) => (problem ? [problem] : []));
+}
+
+export function projectPluginAt(root: string): { name: string; package: string } | null {
+  const plugin = pluginProjectAt(root, bundledProjectIds());
+  return plugin ? { name: plugin.project.name, package: plugin.package } : null;
+}
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 
 function nativeProjectIntegration(

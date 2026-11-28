@@ -10,12 +10,12 @@
   "topics": {
     "agent": 4230,
     "errors": 5000,
-    "api": 24523,
+    "api": 25724,
     "metro": 27677,
     "logs": 52270,
     "lifecycle": 20778,
     "cleanup": 30440,
-    "settings": 137922,
+    "settings": 138346,
     "share": 29250,
     "macos": 35750
   },
