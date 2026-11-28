@@ -66,3 +66,24 @@ test.runIf(process.platform === 'darwin')(
     }
   },
 );
+
+test.runIf(process.platform === 'darwin')(
+  'helper exits once a replaced executable settles, and keeps running while the path is missing or still being written',
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-helper-update-'));
+    try {
+      const executable = join(dir, 'update');
+      execFileSync('cc', [
+        '-Wall',
+        '-Wextra',
+        '-Werror',
+        '-o',
+        executable,
+        fileURLToPath(new URL('./fixtures/helper-update.c', import.meta.url)),
+      ]);
+      execFileSync(executable, [dir], { timeout: 5000 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

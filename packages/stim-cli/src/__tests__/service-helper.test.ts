@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Mock } from 'vitest';
@@ -9,6 +9,8 @@ import { runCli } from '../cli/define-op.ts';
 import service from '../commands/service.ts';
 import { appleServicesLines, createAppleServicesObserver, helperStatus } from '../apple-services.ts';
 import { measureTick } from '../daemon/measure.ts';
+import { keepHostCurrent } from '../stimd/host-update.ts';
+import { saveConfig } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
 const pinned = vi.hoisted(() => ({ version: '9.9.9', sha256: '0'.repeat(64) }));
@@ -19,6 +21,7 @@ vi.mock('../server-cli.ts', async () => {
     loadServerCli: async () => ({
       ...server,
       installHostApp: (sources?: string) => server.installHostApp(sources, pinned),
+      updateInstalledHostApp: () => server.updateInstalledHostApp(pinned),
     }),
   };
 });
@@ -116,16 +119,19 @@ test('helper unregistration uses an older Stim Host as it is', async () => {
   expect(download).not.toHaveBeenCalled();
 });
 
-test('helper registration stops when the pinned Stim Host cannot be downloaded', async () => {
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  installHost('0.1.1');
-  const run = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
-  setExecutor({ runFileAsync: run });
-  await expect(runCli(service, ['install', '--helper'], { version: '1' })).rejects.toThrow(
-    /Could not download Stim Host 9\.9\.9 .*host-v9\.9\.9.*HTTP 404/,
-  );
-  expect(run).not.toHaveBeenCalled();
-});
+test.skipIf(process.platform !== 'darwin')(
+  'helper registration stops when the pinned Stim Host cannot be downloaded',
+  async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    installHost('0.1.1');
+    const run = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
+    setExecutor({ runFileAsync: run });
+    await expect(runCli(service, ['install', '--helper'], { version: '1' })).rejects.toThrow(
+      /Could not download Stim Host 9\.9\.9 .*host-v9\.9\.9.*HTTP 404/,
+    );
+    expect(run).not.toHaveBeenCalled();
+  },
+);
 
 test.skipIf(process.platform !== 'darwin')(
   'helper registration replaces an older Stim Host with the pinned release before registering',
@@ -150,6 +156,56 @@ test.skipIf(process.platform !== 'darwin')(
     await runCli(service, ['install', '--helper'], { version: '1' });
     expect(download).toHaveBeenCalledWith(expect.stringContaining('/host-v9.9.9/'), expect.anything());
     expect(registeredWith).toEqual([pinned.version]);
+    expect(readFileSync(executable, 'utf8')).toBe(pinned.version);
+  },
+  30_000,
+);
+
+test.each([
+  ['no Stim Host', null, false],
+  ['the pinned Stim Host', '9.9.9', false],
+  ['a newer Stim Host', '10.0.0', false],
+  ['an older Stim Host with engine.autoUpdate off', '0.1.1', true],
+])('stimd leaves %s as it is', async (_case, version, off) => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  const executable = version ? installHost(version) : undefined;
+  if (off) saveConfig({ projects: {}, repos: {}, engine: { autoUpdate: 'off' } });
+  const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();
+  await keepHostCurrent(log);
+  expect(download).not.toHaveBeenCalled();
+  expect(log).not.toHaveBeenCalled();
+  expect(executable ? readFileSync(executable, 'utf8') : existsSync(join(home, 'Applications'))).toBe(version ?? false);
+});
+
+test.skipIf(process.platform !== 'darwin')('stimd retries a failed Stim Host update an hour later', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  installHost('0.1.1');
+  const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();
+  await keepHostCurrent(log);
+  expect(log).toHaveBeenCalledWith(
+    'warn',
+    'host_update_failed',
+    expect.stringMatching(/HTTP 404.*retrying in an hour/),
+  );
+  expect(download).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  expect(download).toHaveBeenCalledTimes(2);
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'stimd replaces an older Stim Host with the pinned release',
+  async () => {
+    const executable = installHost('0.1.1');
+    const release = join(home, 'release');
+    installHost(pinned.version, release);
+    const archive = join(home, 'StimHost.zip');
+    execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', join(release, 'Stim Host.app'), archive]);
+    const zip = readFileSync(archive);
+    pinned.sha256 = createHash('sha256').update(zip).digest('hex');
+    download.mockResolvedValue(new Response(zip));
+    const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();
+    await keepHostCurrent(log);
+    expect(log).toHaveBeenCalledWith('info', 'host_updated', expect.stringContaining('Stim Host.app'));
     expect(readFileSync(executable, 'utf8')).toBe(pinned.version);
   },
   30_000,

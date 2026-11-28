@@ -34,6 +34,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
         'scripts/build-android-audio.mjs',
         'scripts/fingerprint-parity.mjs',
         'scripts/fingerprint-drift.mjs',
+        'scripts/host-release-check.mjs',
         'scripts/agent-benchmark/native-driver.mjs',
         'scripts/agent-benchmark/native-fixtures.mjs',
       ],

@@ -13,8 +13,9 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withDirLockTransaction } from '@stim-cli/core';
 import { isJsonObject, permissionPanes } from '@stim-cli/core/state';
-import { ServiceError } from './service-plist.ts';
+import { compareVersions, ServiceError } from './service-plist.ts';
 
 const FLAVORS = {
   release: { name: 'Stim Host', bundleId: 'dev.stim.host' },
@@ -170,23 +171,49 @@ async function downloadRelease(release: HostRelease, dir: string): Promise<strin
 /**
  * Installs the host app in `~/Applications`: the pinned signed `release`, or Stim Host Dev built from `sources` when
  * `release` is null. An installed release whose version is `release`'s stays untouched without a download, and so does
- * an installed bundle with the same bytes, so the grants macOS keyed to its signature still match.
+ * an installed bundle with the same bytes, so the grants macOS keyed to its signature still match. Installs from every
+ * Stim home and command take turns under one machine-wide lock.
  */
 export async function installHostApp(
   sources: string = SOURCES,
   release: HostRelease | null = RELEASE,
 ): Promise<HostApp> {
+  return pinnedInstalled(release, false) ?? withInstallLock(() => installUnlocked(sources, release));
+}
+
+function pinnedInstalled(release: HostRelease | null, refuse = true): HostApp | null {
   const flavor = release ? FLAVORS.release : FLAVORS.dev;
-  const applications = join(homedir(), 'Applications');
-  const app = join(applications, `${flavor.name}.app`);
+  const app = join(homedir(), 'Applications', `${flavor.name}.app`);
   const executable = join(app, 'Contents', 'MacOS', 'stim-host');
   if (existsSync(app) && bundleIdOf(app) !== flavor.bundleId) {
+    if (!refuse) return null;
     throw new ServiceError(
       `${app} is not a ${flavor.name} bundle (${flavor.bundleId}); not replacing it. Move it away, then run install again.`,
     );
   }
-  if (release && existsSync(executable) && infoValue(app, 'CFBundleShortVersionString') === release.version)
-    return { app, executable, ...flavor, adHoc: false, replaced: false };
+  return release && existsSync(executable) && infoValue(app, 'CFBundleShortVersionString') === release.version
+    ? { app, executable, ...flavor, adHoc: false, replaced: false }
+    : null;
+}
+
+const INSTALL_LOCK = () => join(homedir(), '.stim', 'machine', 'host', 'install');
+
+function withInstallLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lock = INSTALL_LOCK();
+  return withDirLockTransaction(lock, fn, {
+    waitMs: 300_000,
+    pollMs: 1000,
+    ensureParent: () => mkdirSync(dirname(lock), { recursive: true }),
+  });
+}
+
+async function installUnlocked(sources: string, release: HostRelease | null): Promise<HostApp> {
+  const flavor = release ? FLAVORS.release : FLAVORS.dev;
+  const applications = join(homedir(), 'Applications');
+  const app = join(applications, `${flavor.name}.app`);
+  const executable = join(app, 'Contents', 'MacOS', 'stim-host');
+  const installed = pinnedInstalled(release);
+  if (installed) return installed;
   mkdirSync(applications, { recursive: true });
   for (const entry of readdirSync(applications)) {
     const owner = STALE_TEMPORARY.exec(entry)?.[1];
@@ -232,6 +259,21 @@ export async function installHostApp(
   } finally {
     if (cleanup) rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+/**
+ * Installs the pinned `release` over an older Stim Host in `~/Applications`. Resolves to null when no Stim Host is
+ * installed there, or when the installed one is the pinned version or newer.
+ */
+// @ref LLP 0001#opt-in-apple-service-restarts -- stimd only upgrades a Stim Host that is already installed
+export async function updateInstalledHostApp(release: HostRelease | null = RELEASE): Promise<HostApp | null> {
+  const app = join(homedir(), 'Applications', `${FLAVORS.release.name}.app`);
+  const older = () => {
+    const version = bundleIdOf(app) === FLAVORS.release.bundleId ? infoValue(app, 'CFBundleShortVersionString') : null;
+    return !!release && !!version && compareVersions(version, release.version) < 0;
+  };
+  if (!release || !older()) return null;
+  return withInstallLock(async () => (older() ? installUnlocked(SOURCES, release) : null));
 }
 
 /** The host app a server runs under, from the `STIM_HOST_EXECUTABLE` its launcher set, or undefined. */

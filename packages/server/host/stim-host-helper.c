@@ -79,6 +79,25 @@ static void restore_cooldowns(int dir, const char *name, double *last) {
   fclose(file);
 }
 
+static bool same_file(const struct stat *a, const struct stat *b) {
+  return a->st_dev == b->st_dev && a->st_ino == b->st_ino;
+}
+
+/* @ref LLP 0001#opt-in-apple-service-restarts -- a replaced executable ends this helper so launchd starts the new one */
+static bool replaced(const char *self, const struct stat *started, struct stat *seen, bool *pending) {
+  struct stat now;
+  if (stat(self, &now) != 0 || !S_ISREG(now.st_mode) || !(now.st_mode & S_IXUSR) || same_file(&now, started)) {
+    *pending = false;
+    return false;
+  }
+  bool settled = *pending && same_file(&now, seen) && now.st_size == seen->st_size &&
+                 now.st_mtimespec.tv_sec == seen->st_mtimespec.tv_sec &&
+                 now.st_mtimespec.tv_nsec == seen->st_mtimespec.tv_nsec;
+  *seen = now;
+  *pending = true;
+  return settled;
+}
+
 static bool identity(pid_t pid, int service, const struct proc_bsdinfo *before) {
   char path[PROC_PIDPATHINFO_MAXSIZE];
   struct proc_bsdinfo after;
@@ -104,6 +123,9 @@ int main(void) {
     fputs("stim-host-helper: cannot read Mach timebase.\n", stderr);
     return 1;
   }
+  char self[PROC_PIDPATHINFO_MAXSIZE];
+  struct stat started, seen;
+  bool watching = proc_pidpath(getpid(), self, sizeof self) > 0 && stat(self, &started) == 0, pending = false;
   double last[HELPER_SERVICES] = {0};
   double last_monotonic[HELPER_SERVICES] = {0};
   restore_cooldowns(dir, "helper.ndjson.1", last);
@@ -194,6 +216,12 @@ retry:
     if (!heartbeat(dir, error)) perror("stim-host-helper: heartbeat write failed");
     free(pids);
     free(current);
+    if (watching && replaced(self, &started, &seen, &pending)) {
+      if (log >= 0 && (dprintf(log, "{\"event\":\"update\",\"at\":%.0f}\n", (double)time(NULL)) < 0 || fsync(log) != 0))
+        perror("stim-host-helper: update log write failed");
+      fputs("stim-host-helper: the executable was replaced; exiting so launchd starts the new one.\n", stderr);
+      return 0;
+    }
     sleep(HELPER_SAMPLE_SECONDS);
   }
 }

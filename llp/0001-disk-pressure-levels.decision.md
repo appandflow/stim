@@ -1337,6 +1337,7 @@ Maintainer decision: "lets do both", 2026-11-24, for the Desktop toggle and the 
 Maintainer decision: "Setup command only (Recommended)", 2026-11-24, choosing that the advice without a helper prints only the setup command and drops the one-off kill command.
 Maintainer decision: "That should be a candidate for our cleanup automatic", 2026-11-27, on fseventsd, after Stim Desktop showed "fseventsd uses 82.68 GB" with the advice `sudo killall fseventsd` ([#6600](https://github.com/appandflow/stim/issues/6600)).
 Maintainer decision: "using our priviledged helper (should be installed right?)", 2026-11-27, on the same fseventsd advice.
+Maintainer decision: "so if updating is pretty easy and can be done automatically we prob dont need to separate the process list", 2026-11-27 ([#6604](https://github.com/appandflow/stim/issues/6604#issuecomment-7234079580)), dropping a signed policy file for the service list: the list stays compiled into the helper and Stim Host updates itself.
 
 Registration is opt-in through the signed Stim Host executable, using
 SMAppService.daemon and an embedded LaunchDaemon plist with BundleProgram.
@@ -1348,10 +1349,47 @@ Mac that never installed the server service, or installed it before a
 helper-capable Host, still registers
 ([#6297](https://github.com/appandflow/stim/issues/6297)). It replaces only the
 bundle: a server already running from the old one keeps running until its next
-restart, and so does a running helper. Uninstall --helper downloads nothing. Desktop does not download Stim
-Host; for a missing or too old one it shows that command. The helper has no listener, Mach service, socket
+restart. Uninstall --helper downloads nothing. Desktop does not download Stim
+Host; for a missing or too old one it shows that command.
+
+stimd keeps an installed Stim Host current. At each start, which every engine
+update causes, it installs the pinned release over a `~/Applications/Stim
+Host.app` whose version is older, through the same download, digest and
+signature checks. Every Host install, from stimd or a command, takes a
+machine-wide lock in `~/.stim/machine/host`, so the stimds of several Stim
+homes and a concurrent `stim service install` do not swap the bundle at once. A failed attempt
+retries hourly until one succeeds. It never installs Stim Host on a Mac that
+has none there, never downgrades a newer one, and skips the update when
+`engine.autoUpdate` is `off`; under the default `auto` it updates Host even
+for an engine that does not update itself, such as a global npm install,
+because the Host should match whichever engine runs. Replacing the bundle under running processes
+is safe: on the maintainer's MacBook on 2026-11-27 the registered helper
+kept running when a notarized same-team build replaced the bundle, and the
+server launched by `stim-host` runs node, not the bundle's code.
+
+The helper exits when its own executable is replaced, so launchd's KeepAlive
+starts the new binary. It records its path and device and inode at start, and
+at the end of each sample cycle, never between a restart attempt and its
+result, it checks that path. A missing path, which the two renames of an
+install leave for a moment, keeps it running. A different regular executable
+file must show the same inode, size and modification time on two cycles in a
+row, so a copy still being written does not end it. It then writes an
+`update` event to its log and exits 0. Cooldowns are already durable and come
+back from the log, but the sample windows start over, so a service over a
+limit needs another 10 minutes. launchd's `ThrottleInterval` of 60 seconds
+bounds a relaunch loop if the new binary cannot run. On 2026-11-27 a 0.2.0
+helper killed after such a swap came back on the new binary, still
+registered, with no approval prompt ([#6604](https://github.com/appandflow/stim/issues/6604#issuecomment-7234079580));
+the next boot or login after a swap was not tested. A helper from a release
+before this rule, such as 0.2.0, keeps its old binary until a reboot or
+`sudo launchctl kickstart -k system/dev.stim.host.helper`.
+
+The release preflight runs `scripts/host-release-check.mjs`, which fails when
+`packages/server/host/` changed since the `host-v*` tag of the pinned release,
+so a stim release never ships helper changes without a Host release. Tagging
+`host-v*` stays a maintainer step. The helper has no listener, Mach service, socket
 or request file. It does not accept targets, paths or thresholds from callers.
-It is independent of daemon.mode and STIM_HOME until unregistered.
+Its registration is independent of daemon.mode and STIM_HOME until unregistered.
 
 Only the exact system executable paths of PerfPowerServices, mds_stores,
 mdworker_shared, photoanalysisd, mediaanalysisd and fseventsd qualify. These
@@ -1412,7 +1450,11 @@ sample gap, durable attempted-restart cooldowns, log rotation size and retention
 and reporting the last hour. For #6600: the 2 GiB limit for fseventsd, the CPU
 limit applying to it as to the others, and footprint counting for every listed
 service, not only fseventsd. Footprint can only raise the measured memory, so
-a service that qualified before still qualifies. No settings are added.
+a service that qualified before still qualifies. For #6604: updating only an
+older installed Host and never downgrading one, since the stimds of worktree
+builds and scratch homes share the real `~/Applications`; reusing
+`engine.autoUpdate` `off` as the opt-out; the hourly retry; the two-cycle
+settle check; and one lock for every Host install. No settings are added.
 
 Code: [helper](../packages/server/host/stim-host-helper.c),
 [policy](../packages/server/host/helper-policy.h),
