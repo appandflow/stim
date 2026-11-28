@@ -28,7 +28,7 @@ export type SettingType =
   | { kind: 'bundle-url' }
   | PluginRefType;
 
-export type PluginKind = 'cache-provider' | 'transport' | 'agent-driver';
+export type PluginKind = 'cache-provider' | 'transport' | 'agent-driver' | 'project';
 
 /**
  * A setting that names a plugin of one kind. With `choices` it is closed and names only those built-ins; without, it
@@ -682,6 +682,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Second-tier cache provider module',
   },
   { key: 'cache.options', type: OBJECT, scopes: PROJECT, description: 'Options passed to the cache provider' },
+  {
+    key: 'plugins',
+    type: { kind: 'strings', absolutePaths: true },
+    scopes: MACHINE,
+    default: [],
+    description:
+      'Absolute plugin directories (a leading ~ is the home folder) whose package.json declares the project kind: Stim reads each manifest, never imports its code, and recognises a folder holding every marker file as a project of that type, with no build or run',
+  },
   {
     key: 'iosSimulatorApp',
     type: { kind: 'choice', choices: IOS_SIMULATOR_APPS },

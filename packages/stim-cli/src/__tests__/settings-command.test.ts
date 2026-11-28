@@ -685,6 +685,26 @@ test('build and device approvals are independent and pending machines cannot rep
   expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
 });
 
+test('settings set plugins writes the list and warns about a directory Stim would not accept', async () => {
+  const good = join(app, 'godot');
+  const empty = join(app, 'empty');
+  mkdirSync(good);
+  mkdirSync(empty);
+  writeFileSync(
+    join(good, 'package.json'),
+    JSON.stringify({
+      name: 'stim-plugin-godot',
+      stimPlugin: { kinds: { project: 1 }, project: { id: 'godot', name: 'Godot', markers: ['project.godot'] } },
+    }),
+  );
+  const { note, exitCode } = await settings(['set', 'plugins', JSON.stringify([good, empty]), '--scope', 'machine']);
+  expect(exitCode).toBe(0);
+  expect(loadConfig()).toMatchObject({ plugins: [good, empty] });
+  expect(note.filter((line) => line.startsWith('Warning:'))).toEqual([
+    expect.stringContaining(`${empty} has no readable package.json`),
+  ]);
+});
+
 test.each([
   ['a module that is not installed', null, [expect.stringMatching(/^Warning: \.\/provider does not resolve from /)]],
   [

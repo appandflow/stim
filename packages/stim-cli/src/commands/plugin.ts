@@ -1,9 +1,10 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
+import { isJsonObject } from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -44,7 +45,7 @@ interface PluginTestPayload {
   passed: boolean;
 }
 
-const TESTED_KINDS = new Set(['transport', 'agent-driver']);
+const TESTED_KINDS = new Set(['transport', 'agent-driver', 'project']);
 
 const CACHE_PROVIDER_SKIP =
   'a cache provider runs in the calling process; test it with runCacheProviderContract from stim/plugin in its own tests';
@@ -82,12 +83,31 @@ async function declaredKinds(reference: string, cwd: string): Promise<Record<str
   try {
     return await manifestKinds(reference, cwd);
   } catch (error) {
+    let failure = error;
+    try {
+      const kinds = directoryKinds(reference, cwd);
+      if (kinds) return kinds;
+    } catch (manifestError) {
+      failure = manifestError;
+    }
     throw new Refusal(
       'STIM_BAD_ARG',
-      `${reference} does not resolve from ${cwd}: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
+      `${reference} does not resolve from ${cwd}: ${(failure instanceof Error ? failure.message : String(failure)).split('\n')[0]}`,
       'Name a plugin directory or module path, a package installed here, or builtin:<name>.',
     );
   }
+}
+
+// Node's resolver (require.resolve) finds a directory only through its `main` or index file, which a project plugin
+// does not have, so its package.json is read directly.
+function directoryKinds(reference: string, cwd: string): Record<string, unknown> | null {
+  if (!reference.startsWith('.') && !isAbsolute(reference)) return null;
+  const file = join(resolve(cwd, reference), 'package.json');
+  if (!existsSync(file)) return null;
+  const manifest: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  const plugin = isJsonObject(manifest) ? manifest.stimPlugin : null;
+  const kinds = isJsonObject(plugin) ? plugin.kinds : null;
+  return isJsonObject(kinds) ? kinds : {};
 }
 
 /** A relative path such as `plugins/acme` names that directory when it exists, before a package of that name. */
@@ -112,7 +132,7 @@ async function testPlugin(given: string, cwd: string, context: StimContext): Pro
       `${reference} declares no plugin kind this command tests (${Object.keys(kinds).join(', ') || 'stimPlugin.kinds is empty'}).`,
       skipped.length
         ? skipped.map(({ kind, reason }) => `${kind}: ${reason}.`).join(' ')
-        : 'Declare stimPlugin.kinds in its package.json, such as {"transport": 1} or {"agent-driver": 1}.',
+        : 'Declare stimPlugin.kinds in its package.json, such as {"transport": 1}, {"agent-driver": 1} or {"project": 1}.',
     );
   const { runContract } = await import('../plugin-kit.ts');
   const checks: PluginCheck[] = [];
@@ -130,15 +150,17 @@ async function testPlugin(given: string, cwd: string, context: StimContext): Pro
   try {
     for (const kind of tested) {
       const results =
-        kind === 'transport'
-          ? await runContract('transport', { reference, baseDir: cwd, env, options: {} })
-          : await runContract('agent-driver', {
-              reference,
-              baseDir: cwd,
-              ...(builtinPlugin(reference) ? { id: reference.slice('builtin:'.length) } : {}),
-              unavailableInput: { env, stateDir: join(scratch, 'driver'), claimRoot: join(scratch, 'driver.claims') },
-              app: { client: 'stim-plugin-test', session: randomUUID(), bundleId: 'dev.stim.plugin-test', pid: 1 },
-            });
+        kind === 'project'
+          ? await runContract('project', { reference, baseDir: cwd })
+          : kind === 'transport'
+            ? await runContract('transport', { reference, baseDir: cwd, env, options: {} })
+            : await runContract('agent-driver', {
+                reference,
+                baseDir: cwd,
+                ...(builtinPlugin(reference) ? { id: reference.slice('builtin:'.length) } : {}),
+                unavailableInput: { env, stateDir: join(scratch, 'driver'), claimRoot: join(scratch, 'driver.claims') },
+                app: { client: 'stim-plugin-test', session: randomUUID(), bundleId: 'dev.stim.plugin-test', pid: 1 },
+              });
       for (const result of results) checks.push({ kind, ...result });
     }
   } finally {
@@ -183,7 +205,7 @@ const test = defineOp({
     plugin: 'a plugin directory or module path, a package installed here, or builtin:<name>',
   },
   description:
-    'Run the contract kit of each kind the plugin declares, with the module loaded in a worker thread as Stim runs it',
+    'Run the contract kit of each kind the plugin declares, with the module loaded in a worker thread as Stim runs it; a project plugin has no module, so only its package.json is checked',
   options: { json: { flags: '--json', description: 'print the checks as JSON' } },
   run: ({ args: [reference], options }) =>
     run(Boolean(options.json), async () => {

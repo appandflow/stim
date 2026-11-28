@@ -226,6 +226,30 @@ test.each([
   expect(logs).toContainEqual(expect.stringContaining(`app: ? (${kind})`));
 });
 
+test('status names the project type a plugin declares for a registered folder that holds its marker', async () => {
+  const game = join(tmpHome, 'game');
+  const plugin = join(tmpHome, 'stim-plugin-godot');
+  mkdirSync(game);
+  mkdirSync(plugin);
+  writeFileSync(join(game, 'project.godot'), '');
+  writeFileSync(
+    join(plugin, 'package.json'),
+    JSON.stringify({
+      name: 'stim-plugin-godot',
+      stimPlugin: { kinds: { project: 1 }, project: { id: 'godot', name: 'Godot', markers: ['project.godot'] } },
+    }),
+  );
+  saveConfig({
+    ...makeConfig({ version: 2, projects: { [game]: { metroPort: null, platforms: {} } } }),
+    plugins: [plugin],
+  });
+
+  const logs = await runStatus();
+
+  expect(logs).toContainEqual(expect.stringContaining('project: Godot (plugin stim-plugin-godot)'));
+  expect(logs.join('\n')).not.toContain('(bare)');
+});
+
 test('status reports simctl as unreadable instead of warning that every sim is gone', async () => {
   setExecutor({
     runFile(_file, args = []) {

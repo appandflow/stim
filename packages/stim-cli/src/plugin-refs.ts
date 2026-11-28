@@ -5,6 +5,7 @@ import { isJsonObject, settingDefinition, type PluginKind } from '@stim-cli/core
 import { TRANSPORT_API_VERSION } from '@stim-cli/transport';
 import type { Finding } from './diagnostics/doctor.ts';
 import { BUILTIN_PLUGINS, BUILTIN_PREFIX } from './plugin-builtins.ts';
+import { PROJECT_API_VERSION } from './project-plugin.ts';
 import { resolveCacheProviderConfig, type ProjectSettingsContext } from './workspace/settings.ts';
 import { settingEntry, type SettingsContext } from './workspace/settings-payload.ts';
 
@@ -13,6 +14,7 @@ export const PLUGIN_API: Readonly<Record<PluginKind, number>> = {
   'cache-provider': CACHE_PROVIDER_API_VERSION,
   transport: TRANSPORT_API_VERSION,
   'agent-driver': AGENT_DRIVER_API_VERSION,
+  project: PROJECT_API_VERSION,
 };
 
 function reason(error: unknown): string {
@@ -39,7 +41,8 @@ export async function pluginRefProblem(reference: string, baseDir: string, kind:
 export interface PluginEntry {
   /** `builtin:<name>`, or the reference a setting names. */
   name: string;
-  source: 'builtin' | 'project';
+  /** `project` for a reference a project setting names, `machine` for one a machine setting names. */
+  source: 'builtin' | 'project' | 'machine';
   kinds: Record<string, unknown>;
   /** The settings that select it. */
   selectedBy: string[];
@@ -70,6 +73,22 @@ async function cacheProviderEntry(context: ProjectSettingsContext): Promise<Plug
   };
 }
 
+async function machinePluginEntries(): Promise<PluginEntry[]> {
+  const { configuredProjectPlugins } = await import('./integrations/projects.ts');
+  const { PLUGINS_SETTING } = await import('./integrations/plugin-projects.ts');
+  return configuredProjectPlugins().map(({ reference, kinds, problem }): PluginEntry => {
+    const entry: PluginEntry = {
+      name: reference,
+      source: 'machine',
+      kinds,
+      selectedBy: [PLUGINS_SETTING],
+      accepted: problem === null,
+    };
+    if (problem !== null) entry.reason = problem;
+    return entry;
+  });
+}
+
 /** The bundled plugins and the plugins the settings name, read from manifests only. */
 export async function listPlugins(context: SettingsContext): Promise<PluginEntry[]> {
   const driverSetting = settingDefinition('hosting.agentDriver');
@@ -85,13 +104,14 @@ export async function listPlugins(context: SettingsContext): Promise<PluginEntry
     ? await cacheProviderEntry({ ...context, projectPath: context.projectPath })
     : null;
   if (provider) entries.push(provider);
+  entries.push(...(await machinePluginEntries()));
   return entries;
 }
 
 /** Doctor's findings for plugin references this Stim cannot load. */
 export async function pluginRefFindings(context: ProjectSettingsContext): Promise<Finding[]> {
   const provider = await cacheProviderEntry(context);
-  return [provider ?? []]
+  return [provider ?? [], await machinePluginEntries()]
     .flat()
     .filter((plugin) => !plugin.accepted)
     .map((plugin) => ({
@@ -99,6 +119,9 @@ export async function pluginRefFindings(context: ProjectSettingsContext): Promis
       level: 'cost',
       title: `${plugin.selectedBy.join(', ')} names ${plugin.name}, which this Stim cannot load`,
       detail: `${plugin.reason}. Commands that use it go on without it.`,
-      fix: `Install ${plugin.name} in the project, or set ${plugin.selectedBy[0]} to a module whose package.json declares stimPlugin.kinds; \`stim plugin list\` shows what Stim accepts`,
+      fix:
+        plugin.source === 'machine'
+          ? `Correct ${plugin.name}'s package.json, or take it out of the list with \`stim settings set ${plugin.selectedBy[0]} <json array> --scope machine\`; \`stim plugin list\` shows what Stim accepts`
+          : `Install ${plugin.name} in the project, or set ${plugin.selectedBy[0]} to a module whose package.json declares stimPlugin.kinds; \`stim plugin list\` shows what Stim accepts`,
     }));
 }

@@ -194,6 +194,11 @@ export async function mutateSetting(
     const problem = await pluginRefProblem(value.trim(), baseDir, setting.type.plugin);
     if (problem) note(`Warning: ${problem}. Commands that read ${key} go on without it until it does.`);
   }
+  if (key === 'plugins' && Array.isArray(value)) {
+    const { projectPluginProblems } = await import('../integrations/projects.ts');
+    for (const problem of projectPluginProblems(value))
+      note(`Warning: ${problem}. Stim goes on without that plugin until its package.json is accepted.`);
+  }
   beforeWrite?.(context.projectPath);
   const apply = async (): Promise<SettingWriteResult> => {
     const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;

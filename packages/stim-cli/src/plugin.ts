@@ -62,6 +62,13 @@ export type {
   TransportResolveInput,
   TransportWatchEvent,
 } from '@stim-cli/transport';
+export {
+  PROJECT_API_VERSION,
+  runProjectContract,
+  type ProjectContractOptions,
+  type ProjectContractResult,
+  type ProjectPluginManifest,
+} from './project-plugin.ts';
 export * from './agent-driver-kit.ts';
 export * from './transport-kit.ts';
 export * from './plugin-kit.ts';

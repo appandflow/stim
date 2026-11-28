@@ -6,7 +6,7 @@ import {
   unownedProjectState,
   type ProjectIntegration,
 } from '../integrations/project-registry.ts';
-import { projectIntegrations, projectRegistry } from '../integrations/projects.ts';
+import { configuredProjectPlugins, projectIntegrations, projectRegistry } from '../integrations/projects.ts';
 import { findServerWorkspace } from '../workspace/project.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -175,4 +175,101 @@ test('selected-root recognition preserves operation ambiguity and unreadable ref
   write(join(dir, 'package.json'), '{');
   expect(projectRegistry.selectDoctor(dir).problem?.kind).toBe('unreadable');
   expect(unownedProjectState(dir, projectIntegrations)).toBe('unknown');
+});
+
+function projectPlugin(name: string, project: unknown, kinds: unknown = { project: 1 }): string {
+  const plugin = join(home, name);
+  write(join(plugin, 'package.json'), JSON.stringify({ name, stimPlugin: { kinds, project } }));
+  return plugin;
+}
+
+function setPlugins(...plugins: string[]) {
+  write(join(home, 'config.json'), JSON.stringify({ plugins }));
+}
+
+const godot = { id: 'godot', name: 'Godot', markers: ['project.godot', 'export_presets.cfg'] };
+
+test('a plugins entry makes a folder holding every marker a project with no build or run, until the entry leaves the setting', () => {
+  const game = join(dir, 'game');
+  write(join(game, 'project.godot'));
+  write(join(game, 'scenes', 'main.tscn'));
+  const plugin = projectPlugin('stim-plugin-godot', godot);
+  expect(projectRegistry.findProjectRoot(join(game, 'scenes'))).toBeNull();
+
+  setPlugins(plugin);
+  expect(projectRegistry.findProjectRoot(join(game, 'scenes'))).toBeNull();
+
+  write(join(game, 'export_presets.cfg'));
+  expect(projectRegistry.findProjectRoot(join(game, 'scenes'))).toBe(game);
+  expect(projectRegistry.keepsWorkspace(game)).toBe(true);
+  expect(projectRegistry.isMobileProject(game)).toBe(false);
+  for (const operation of ['ios', 'android', 'macos', 'dev-server'] as const) {
+    const problem = projectRegistry.projectProblem(game, operation);
+    expect(problem?.kind).toBe('not-an-app');
+    expect(problem?.message).toContain('is a Godot project');
+    expect(problem?.message).toContain('stim-plugin-godot');
+    expect(problem?.remedy).toContain('stim worktree add');
+  }
+
+  setPlugins();
+  expect(projectRegistry.findProjectRoot(join(game, 'scenes'))).toBeNull();
+  expect(projectRegistry.keepsWorkspace(game)).toBe(false);
+});
+
+test('a plugin marker in a React Native app keeps the built-in build and run', () => {
+  packageAt(dir);
+  write(join(dir, 'project.godot'));
+  setPlugins(projectPlugin('stim-plugin-godot', { ...godot, markers: ['project.godot'] }));
+  expect(projectRegistry.selectIos(dir)).toMatchObject({ id: 'react-native' });
+  expect(projectRegistry.selectAndroid(dir)).toMatchObject({ id: 'react-native' });
+  expect(projectRegistry.projectProblem(dir, 'dev-server')).toBeNull();
+});
+
+test.each([
+  [
+    'the id of a bundled integration',
+    { ...godot, id: 'exact' },
+    { project: 1 },
+    /"exact" is the id of a project integration Stim bundles/,
+  ],
+  ['an id that is not lowercase', { ...godot, id: 'Godot' }, { project: 1 }, /stimPlugin\.project\.id is "Godot"/],
+  ['a name that spans lines', { ...godot, name: 'Godot\nEngine' }, { project: 1 }, /stimPlugin\.project\.name/],
+  [
+    'a marker in a subfolder',
+    { ...godot, markers: ['addons/plugin.cfg'] },
+    { project: 1 },
+    /holds "addons\/plugin\.cfg"/,
+  ],
+  ['a glob marker', { ...godot, markers: ['*.godot'] }, { project: 1 }, /holds "\*\.godot"/],
+  ['a marker that is not a string', { ...godot, markers: ['project.godot', 7] }, { project: 1 }, /holds 7/],
+  ['no marker', { ...godot, markers: [] }, { project: 1 }, /markers must be an array of 1 to 16 file names/],
+  ['no project block', undefined, { project: 1 }, /stimPlugin\.project must be an object/],
+  ['another integer', godot, { project: 2 }, /speaks project 2, this stim speaks 1/],
+  ['another kind only', godot, { transport: 1 }, /is not a project plugin/],
+])('a project plugin that declares %s is skipped, with the reason', (_, project, kinds, reason) => {
+  for (const marker of ['project.godot', 'export_presets.cfg', 'addons/plugin.cfg', '*.godot'])
+    write(join(dir, marker));
+  setPlugins(projectPlugin('stim-plugin-godot', project, kinds));
+  expect(projectRegistry.findProjectRoot(dir)).toBeNull();
+  expect(configuredProjectPlugins()).toEqual([
+    expect.objectContaining({ project: null, problem: expect.stringMatching(reason) }),
+  ]);
+});
+
+test('a package.json edit is read without a settings change, and a second plugin cannot take an accepted id', () => {
+  write(join(dir, 'project.godot'));
+  write(join(dir, 'export_presets.cfg'));
+  const first = join(home, 'first');
+  write(join(first, 'package.json'), '{ "name": "first", "stimPlugin": ');
+  const second = projectPlugin('second', { ...godot, name: 'Second' });
+  setPlugins(first, second);
+  expect(configuredProjectPlugins()[0]?.problem).toMatch(/package\.json is not valid JSON/);
+  expect(projectRegistry.projectProblem(dir, 'ios')?.message).toContain('is a Second project');
+
+  projectPlugin('first', godot);
+  expect(projectRegistry.projectProblem(dir, 'ios')?.message).toContain('is a Godot project');
+  expect(configuredProjectPlugins()[1]).toMatchObject({
+    project: null,
+    problem: `stimPlugin.project.id "godot" is the id of the plugin at ${first}`,
+  });
 });
