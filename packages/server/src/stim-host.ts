@@ -178,14 +178,15 @@ export async function installHostApp(
   sources: string = SOURCES,
   release: HostRelease | null = RELEASE,
 ): Promise<HostApp> {
-  return pinnedInstalled(release) ?? withInstallLock(() => installUnlocked(sources, release));
+  return pinnedInstalled(release, false) ?? withInstallLock(() => installUnlocked(sources, release));
 }
 
-function pinnedInstalled(release: HostRelease | null): HostApp | null {
+function pinnedInstalled(release: HostRelease | null, refuse = true): HostApp | null {
   const flavor = release ? FLAVORS.release : FLAVORS.dev;
   const app = join(homedir(), 'Applications', `${flavor.name}.app`);
   const executable = join(app, 'Contents', 'MacOS', 'stim-host');
   if (existsSync(app) && bundleIdOf(app) !== flavor.bundleId) {
+    if (!refuse) return null;
     throw new ServiceError(
       `${app} is not a ${flavor.name} bundle (${flavor.bundleId}); not replacing it. Move it away, then run install again.`,
     );
