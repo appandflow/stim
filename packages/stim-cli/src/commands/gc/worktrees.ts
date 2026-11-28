@@ -71,7 +71,7 @@ import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
-import { sharedRead } from '../../workspace/git-reads.ts';
+import { gitReadsOpen, sharedRead } from '../../workspace/git-reads.ts';
 
 export const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 const DIRTY_PATHS_SHOWN = 3;
@@ -738,6 +738,7 @@ interface PendingMerge {
   candidate: WorktreeCandidate;
   facts: WorktreeFacts;
   repo: string;
+  branch: string | null;
 }
 
 async function staleFetch(
@@ -931,17 +932,33 @@ async function checkMergeStates(
     const fetches = refresh && entries.some(({ candidate }) => !candidate.discovered);
     const target = fetches
       ? await fetchDefaultBranchAsync(repo, grace.now, execution)
-      : await localDefaultBranchAsync(repo, execution);
+      : await sharedRead(operation, `default-branch\0${canonicalPath(repo)}`, () =>
+          localDefaultBranchAsync(repo, execution),
+        );
     // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
     // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
     // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
     const fetch = fetches ? null : await staleFetch(repo, grace.now, freshMs, execution);
-    await eachLimited(entries, readConcurrency(operation), async ({ candidate, facts }) => {
+    const tip =
+      'error' in target || !gitReadsOpen(operation)
+        ? null
+        : await resolveFullRefAsync(repo, target.ref, {
+            env: operation?.env,
+            signal: operation?.signal,
+            declareFor: operation,
+          });
+    await eachLimited(entries, readConcurrency(operation), async ({ candidate, facts, branch }) => {
       operation?.signal.throwIfAborted();
       const merge: MergeState =
         'error' in target
           ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
-          : await mergeStateAsync(candidate.path, target, execution);
+          : tip && candidate.head
+            ? await sharedRead(
+                operation,
+                `merge\0${canonicalPath(candidate.path)}\0${candidate.head}\0${branch}\0${tip}`,
+                () => mergeStateAsync(candidate.path, target, execution),
+              )
+            : await mergeStateAsync(candidate.path, target, execution);
       const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
       const note =
         !refresh && verdict && MERGE_DECIDES.has(verdict.code)
@@ -1111,7 +1128,7 @@ export async function collectWorktreeSweep({
     const archiveDirty = dirty > 0 && managed && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
     if (activity && archiveDirty) {
-      const edited = await uncommittedActivityOf(path, operation);
+      const edited = await fact('uncommitted-activity', () => uncommittedActivityOf(path, operation));
       activity = edited === 'unreadable' ? null : newerActivity(activity, edited);
     }
     const head = linked ? (status ? status.head : await resolveFullRefAsync(path, 'HEAD', read)) : null;
@@ -1198,7 +1215,7 @@ export async function collectWorktreeSweep({
   readCachedPullRequests(handedOver, now, reportFreshMs(operation));
   const worktrees: WorktreeCandidate[] = [];
   const pending: PendingMerge[] = [];
-  for (const { candidate, facts, repo } of inspected) {
+  for (const { candidate, facts, repo, branch } of inspected) {
     const verdict = worktreeSkipReason(facts, days, grace, noOwnCommitsIdleMs);
     Object.assign(candidate, {
       pullRequest: facts.pullRequest,
@@ -1211,7 +1228,7 @@ export async function collectWorktreeSweep({
       (MERGE_DECIDES.has(verdict.code) || (verdict.code === 'dirty' && facts.archiveDirty)) &&
       repo !== null
     )
-      pending.push({ candidate, facts, repo });
+      pending.push({ candidate, facts, repo, branch });
     worktrees.push(candidate);
   }
   await checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs, operation);
@@ -1220,18 +1237,21 @@ export async function collectWorktreeSweep({
     const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
     const reads = discoveredReads(operation?.signal);
     for (const candidate of handed) {
-      const hold = await discoveredRemovalHold(candidate.path, {
-        main: candidate.source ?? null,
-        idleMs: dormantMs(operation),
-        reads,
-        reduceOnly: candidate.reduceOnly === true,
+      const main = candidate.source ?? null;
+      const reduceOnly = candidate.reduceOnly === true;
+      const hold = await sharedRead(
         operation,
-      });
+        `sweep\0discovered-hold\0${canonicalPath(candidate.path)}\0${main}\0${reduceOnly}`,
+        () =>
+          discoveredRemovalHold(candidate.path, { main, idleMs: dormantMs(operation), reads, reduceOnly, operation }),
+      );
       if (hold) Object.assign(candidate, { skipCode: 'recent-activity', skipped: `kept: ${hold}`, eligibleAt: null });
     }
   }
   for (const candidate of worktrees.filter((entry) => !entry.discovered && entry.skipped === null)) {
-    const hold = await registeredRemovalHold(candidate.path, operation);
+    const hold = await sharedRead(operation, `sweep\0registered-hold\0${canonicalPath(candidate.path)}`, () =>
+      registeredRemovalHold(candidate.path, operation),
+    );
     if (hold) Object.assign(candidate, { skipCode: 'dirty', skipped: `kept: ${hold}`, eligibleAt: null });
   }
   if (onObservation)

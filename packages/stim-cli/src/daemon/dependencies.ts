@@ -847,7 +847,8 @@ async function takeIdleDependencies(
           });
   }
   await between();
-  const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
+  // @ref LLP 0001#a-report-asks-git-each-question-once -- a report keeps the run's git reads
+  const worktrees = take.length && input.act ? await artifactWorktreesFor(operation) : [];
   let listed: Promise<RunningProcesses | null> | undefined;
   const listing = () => (listed ??= readRunningProcessesAsync(operation?.signal));
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;

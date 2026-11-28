@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -12,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runGc } from '../commands/gc.ts';
+import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { executeAction } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor, clearSourceTrees } from '../stimd/passes/artifacts.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
@@ -23,12 +25,14 @@ import { upsertProject } from '../workspace/config.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
+import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import { ignoredFilesHold } from '../workspace/discovered-removal.ts';
 import {
   branchStatusAsync,
   gitCommonDirAsync,
   removeWorktreeAsync,
   gitDirAsync,
+  listWorktreesAsync,
   repoRootAsync,
   resolveFullRefAsync,
   resolveSourceCheckoutAsync,
@@ -81,16 +85,20 @@ function linkedWorktree(root: string, branch: string): string {
   return path;
 }
 
-/** Counts the git commands run while the executor stays the real one: worktree lists, checkout paths, branch statuses. */
-function countGit(): Record<'total' | 'lists' | 'paths' | 'statuses', number> {
+/**
+ * Counts the git commands run while the executor stays the real one: worktree lists, checkout paths, branch statuses,
+ * patch ids.
+ */
+function countGit(): Record<'total' | 'lists' | 'paths' | 'statuses' | 'patchIds', number> {
   const executor = getExecutor();
-  const counts = { total: 0, lists: 0, paths: 0, statuses: 0 };
+  const counts = { total: 0, lists: 0, paths: 0, statuses: 0, patchIds: 0 };
   const note = (file: string, args: string[]) => {
     if (file !== 'git') return;
     counts.total++;
     if (args.includes('worktree') && args.includes('list')) counts.lists++;
     if (args.includes('--show-toplevel') || args.includes('--git-common-dir')) counts.paths++;
     if (args.includes('--porcelain=v2')) counts.statuses++;
+    if (args.includes('patch-id')) counts.patchIds++;
   };
   setExecutor({
     ...executor,
@@ -166,7 +174,7 @@ test.each([
       ...(diskPass ? { diskPass: (input) => diskPass(input, log) } : {}),
     });
     expect(passes.pressure.level).toBe('high');
-    expect(counts).toEqual({ total: 0, lists: 0, paths: 0, statuses: 0 });
+    expect(counts).toEqual({ total: 0, lists: 0, paths: 0, statuses: 0, patchIds: 0 });
     expect(log).toHaveBeenCalledWith(
       'debug',
       'daemon_step',
@@ -184,7 +192,13 @@ test('a gc dry run lists each repository and reads each checkout once, with the 
   const alone = await gcDryRun();
   const counts = countGit();
   const shared = await gcDryRun(testContext({ home }));
-  expect({ ...counts, total: counts.total <= TOTAL_GC }).toEqual({ total: true, lists: 2, paths: 4, statuses: 2 });
+  expect({ ...counts, total: counts.total <= TOTAL_GC }).toEqual({
+    total: true,
+    lists: 2,
+    paths: 4,
+    statuses: 2,
+    patchIds: 0,
+  });
   const plan = (payload: { actions: unknown[] }) => JSON.stringify(payload.actions).replaceAll(/\d+/g, 'N');
   expect(plan(shared)).toBe(plan(alone));
 }, 30_000);
@@ -450,4 +464,122 @@ test("a checkout's core.fsmonitor command never runs from the discovery and gc r
   await removeWorktreeAsync(linked, { from: main });
   expect(existsSync(linked)).toBe(false);
   expect(existsSync(marker)).toBe(false);
+});
+
+describe('reads shared across one run', () => {
+  test('worktrees of one repository listed side by side ask git once', async () => {
+    const main = repo('main');
+    const paths = [main, linkedWorktree(main, 'one'), linkedWorktree(main, 'two')];
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    const counts = countGit();
+    try {
+      const listed = await Promise.all(paths.map((path) => listWorktreesAsync(path, { declareFor: operation })));
+      expect(listed.map((entries) => entries.length)).toEqual([3, 3, 3]);
+      expect(counts.lists).toBe(1);
+    } finally {
+      close();
+    }
+  });
+
+  test('a listing asks git when a stalled read holds the filesystem probe', async () => {
+    const main = repo('main');
+    const linked = linkedWorktree(main, 'one');
+    let release = () => {};
+    const stalled = new Promise<void>((resolve) => (release = resolve));
+    await expect(answered('/stalled', () => stalled, 1)).rejects.toBeInstanceOf(Unanswered);
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    const counts = countGit();
+    try {
+      expect(await listWorktreesAsync(linked, { declareFor: operation })).toHaveLength(2);
+      expect(counts.lists).toBe(1);
+    } finally {
+      release();
+      await stalled;
+      close();
+    }
+  });
+
+  test('a worktree merge state is read once per run until the default branch moves', async () => {
+    const main = repo('main');
+    const remote = join(home, 'remote.git');
+    git(['init', '-q', '--bare', remote]);
+    git(['-C', main, 'remote', 'add', 'origin', remote]);
+    git(['-C', main, 'push', '-q', 'origin', 'main']);
+    git(['-C', main, 'fetch', '-q', 'origin']);
+    git(['-C', main, 'remote', 'set-head', 'origin', 'main']);
+    const linked = linkedWorktree(main, 'feature');
+    writeFileSync(join(linked, 'feature.txt'), 'x');
+    git(['-C', linked, 'add', 'feature.txt']);
+    commit(linked, 'feature');
+    for (const path of [main, linked]) {
+      upsertProject(path, { metroPort: null });
+      recordWorkspaceUse(path, new Date(Date.now() - 40 * 86_400_000));
+    }
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    const counts = countGit();
+    const patchIds = () => counts.patchIds;
+    const sweep = async () =>
+      (
+        await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false, operation })
+      ).worktrees.find((worktree) => worktree.path === linked)?.merge;
+    try {
+      expect(await sweep()).toMatchObject({ merged: false, unknown: false });
+      const once = patchIds();
+      expect(once).toBeGreaterThan(0);
+      expect(await sweep()).toMatchObject({ merged: false, unknown: false });
+      expect(patchIds()).toBe(once);
+      commit(main, 'moved');
+      git(['-C', main, 'update-ref', 'refs/remotes/origin/main', 'main']);
+      expect(await sweep()).toMatchObject({ merged: false, unknown: false });
+      expect(patchIds()).toBeGreaterThan(once);
+    } finally {
+      close();
+    }
+  });
+
+  test('a source walk asks git check-ignore once per depth, and per folder when a submodule fails the batch', async () => {
+    const quiet = Date.now() - 86_400_000;
+    const old = new Date(quiet - 86_400_000);
+    const inner = repo('inner');
+    const main = repo('main');
+    writeFileSync(join(main, '.gitignore'), 'node_modules\nbuild/\n');
+    git(['-C', main, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'vendored']);
+    for (const dir of ['vendored/build', 'app/build']) mkdirSync(join(main, dir), { recursive: true });
+    writeFileSync(join(main, 'app', 'build', 'fresh.js'), '');
+    const ages = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (path === join(main, 'app', 'build') || entry.name === '.git') continue;
+        if (entry.isDirectory()) ages(path);
+        utimesSync(path, old, old);
+      }
+    };
+    ages(main);
+    const ignores: string[] = [];
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileQuietAsync: (file, args, options) => {
+        if (file === 'git' && args.includes('check-ignore')) ignores.push(String(options?.input));
+        return executor.runFileQuietAsync(file, args, options);
+      },
+      runFileAsync: (file, args, options) => {
+        if (file === 'git' && args.includes('check-ignore')) ignores.push(String(options?.input));
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+
+    const scan = await scanSourceWrites(main, quiet);
+
+    expect(scan).toEqual({ newest: expect.any(Number) });
+    expect('newest' in scan && scan.newest <= quiet).toBe(true);
+    expect(ignores.map((input) => input.split('\0').toSorted())).toEqual([
+      ['app/build', 'vendored/build'],
+      ['app/build'],
+      ['vendored/build'],
+    ]);
+  });
 });
