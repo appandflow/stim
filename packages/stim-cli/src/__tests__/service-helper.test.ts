@@ -10,7 +10,7 @@ import service from '../commands/service.ts';
 import { appleServicesLines, createAppleServicesObserver, helperStatus } from '../apple-services.ts';
 import { measureTick } from '../daemon/measure.ts';
 import { keepHostCurrent } from '../stimd/host-update.ts';
-import { saveConfig, type Config } from '../workspace/config.ts';
+import { saveConfig } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
 const pinned = vi.hoisted(() => ({ version: '9.9.9', sha256: '0'.repeat(64) }));
@@ -166,7 +166,7 @@ test.each([
 ])('stimd leaves %s as it is', async (_case, version, off) => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   const executable = version ? installHost(version) : undefined;
-  if (off) saveConfig({ engine: { autoUpdate: 'off' } } as Config);
+  if (off) saveConfig({ projects: {}, repos: {}, engine: { autoUpdate: 'off' } });
   const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();
   await keepHostCurrent(log);
   expect(download).not.toHaveBeenCalled();
@@ -204,6 +204,37 @@ test.skipIf(process.platform !== 'darwin')(
     await keepHostCurrent(log);
     expect(log).toHaveBeenCalledWith('info', 'host_updated', expect.stringContaining('Stim Host.app'));
     expect(readFileSync(executable, 'utf8')).toBe(pinned.version);
+  },
+  30_000,
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'stimd waits for a running Stim Host install and does not downgrade what it installed',
+  async () => {
+    const { installHostApp } = await import('@stim-cli/server/cli');
+    const executable = installHost('0.1.1');
+    const release = join(home, 'release');
+    installHost('10.0.0', release);
+    const archive = join(home, 'StimHost.zip');
+    execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', join(release, 'Stim Host.app'), archive]);
+    const zip = readFileSync(archive);
+    let deliver: (response: Response) => void = () => {};
+    download.mockImplementationOnce(() => new Promise((resolve) => (deliver = resolve)));
+    const explicit = installHostApp(undefined, {
+      version: '10.0.0',
+      sha256: createHash('sha256').update(zip).digest('hex'),
+    });
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();
+    const automatic = keepHostCurrent(log);
+    await vi.advanceTimersByTimeAsync(2000);
+    deliver(new Response(zip));
+    await explicit;
+    await vi.advanceTimersByTimeAsync(2000);
+    await automatic;
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalled();
+    expect(readFileSync(executable, 'utf8')).toBe('10.0.0');
   },
   30_000,
 );
