@@ -131,6 +131,12 @@ test('a build command that exits 0 without writing its output fails, and an earl
   });
 });
 
+test('a directory left at the output path is replaced by the APK the next build writes', async () => {
+  mkdirSync(join(workspaceDir(root), 'plugin-build', 'android-debug.apk', 'leftover'), { recursive: true });
+  const debug = await build();
+  expect(readFileSync(debug.apkPath, 'utf8')).toBe('apk 1');
+});
+
 test('a build command that exits non-zero fails with its last output', async () => {
   exportApk = () => 1;
   await expect(build()).rejects.toMatchObject({

@@ -145,7 +145,7 @@ export function pluginAndroidProject(
           `android-${buildPlan.release ? 'release' : 'debug'}.apk`,
         );
         await mkdir(dirname(output), { recursive: true });
-        await rm(output, { force: true });
+        await rm(output, { recursive: true, force: true });
         const run = await runCaptured({
           cmd: program,
           args: declared.map((arg) => (arg === '{root}' ? root : arg === '{output}' ? output : arg)),

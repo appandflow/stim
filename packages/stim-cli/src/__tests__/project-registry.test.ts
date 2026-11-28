@@ -319,6 +319,12 @@ test.each([
     /build\.debug starts with "tools\/export\.sh"; the executable is an absolute path or a bare command name/,
   ],
   [
+    'an executable relative to a drive',
+    androidTarget({ debug: ['C:godot', '{output}'] }),
+    { project: 1 },
+    /build\.debug starts with "C:godot"; the executable is an absolute path or a bare command name/,
+  ],
+  [
     'an executable with surrounding space',
     androidTarget({ debug: [' ', '{output}'] }),
     { project: 1 },

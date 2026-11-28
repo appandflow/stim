@@ -132,7 +132,7 @@ function readCommand(command: unknown, at: string): { command: ProjectPluginComm
   if (
     executable !== executable.trim() ||
     PLACEHOLDER.test(executable) ||
-    (!isAbsolute(executable) && /[\\/]/.test(executable))
+    (!isAbsolute(executable) && /[\\/:]/.test(executable))
   )
     return {
       error: `${at} starts with ${JSON.stringify(executable)}; the executable is an absolute path or a bare command name found on PATH`,
