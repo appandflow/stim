@@ -9,9 +9,18 @@ import {
 } from '@stim-cli/core/state';
 import { writeCacheFile } from '../cache-file.ts';
 import { runGc } from '../commands/gc.ts';
+import { readGcReportThroughStimd, stimdLive } from '../daemon/client.ts';
 import { runMaintenanceAtLevel, type LevelRun } from '../stimd/passes/level-run.ts';
 
 vi.mock('../stimd/passes/level-run.ts', () => ({ runMaintenanceAtLevel: vi.fn<typeof runMaintenanceAtLevel>() }));
+vi.mock('../daemon/client.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../daemon/client.ts')>();
+  return {
+    ...actual,
+    stimdLive: vi.fn<typeof actual.stimdLive>(() => false),
+    readGcReportThroughStimd: vi.fn<typeof actual.readGcReportThroughStimd>(async () => null),
+  };
+});
 
 const PRESSURE: DaemonPressure = {
   level: 'normal',
@@ -41,6 +50,9 @@ beforeEach(() => {
   err = [];
   vi.spyOn(console, 'log').mockImplementation((line: string) => void out.push(line));
   vi.spyOn(console, 'error').mockImplementation((line: string) => void err.push(line));
+  vi.clearAllMocks();
+  vi.mocked(stimdLive).mockReturnValue(false);
+  vi.mocked(readGcReportThroughStimd).mockResolvedValue(null);
   vi.mocked(runMaintenanceAtLevel).mockResolvedValue({
     pressure: PRESSURE,
     level: 'normal',
@@ -108,6 +120,29 @@ test('a stale cached report still answers and says how to measure again', async 
   await runGc({ dryRun: true, json: true });
   expect(JSON.parse(out[0] ?? '')).toMatchObject({ measured: { from: 'cache' } });
   expect(err.join('\n')).toMatch(/cached gc report is 2h old; pass --refresh/);
+  expect(readGcReportThroughStimd).toHaveBeenCalledWith({ background: true });
+});
+
+test.each([
+  ['--refresh', { refresh: true }, { fresh: true }],
+  ['no cached report', {}, { fresh: false }],
+])('with %s and a stimd, the dry run prints the report stimd measured', async (_case, options, asked) => {
+  vi.mocked(stimdLive).mockReturnValue(true);
+  const swept = cache(new Date().toISOString());
+  rmSync(gcReportCacheFile());
+  vi.mocked(readGcReportThroughStimd).mockResolvedValue(swept);
+  await runGc({ dryRun: true, json: true, ...options });
+  expect(readGcReportThroughStimd).toHaveBeenCalledWith(asked, undefined);
+  expect(JSON.parse(out[0] ?? '')).toMatchObject({ measured: { from: 'stimd', at: swept.measuredAt } });
+  expect(runMaintenanceAtLevel).not.toHaveBeenCalled();
+});
+
+test('a dry run whose stimd refuses the report scans in this process and says why', async () => {
+  vi.mocked(stimdLive).mockReturnValue(true);
+  vi.mocked(readGcReportThroughStimd).mockRejectedValue(new Error('stimd is ending'));
+  await runGc({ dryRun: true });
+  expect(runMaintenanceAtLevel).toHaveBeenCalledOnce();
+  expect(err.join('\n')).toMatch(/gc report failed \(stimd is ending\), so this dry run scans in this process/);
 });
 
 test.each([

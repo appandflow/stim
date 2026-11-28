@@ -31,31 +31,27 @@ export function createGcReportSweeps(
   let closed = false;
   const start = (): Sweep => {
     const asked = run();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      asked.leave();
-    }, GC_REPORT_BUDGET_MS);
-    timer.unref();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        asked.leave();
+        reject(new Error(`the gc report did not finish within ${GC_REPORT_BUDGET_MS / 60_000} minutes`));
+      }, GC_REPORT_BUDGET_MS);
+      timer.unref();
+    });
     const sweep: Sweep = {
       startedAt: now(),
       leave: asked.leave,
-      result: asked.result
-        .then(
-          (cache) => {
-            write(cache);
-            return cache;
-          },
-          (error: unknown) => {
-            if (timedOut)
-              throw new Error(`the gc report did not finish within ${GC_REPORT_BUDGET_MS / 60_000} minutes`);
-            throw error;
-          },
-        )
-        .finally(() => {
-          clearTimeout(timer);
-          if (current === sweep) current = null;
+      result: Promise.race([
+        asked.result.then((cache) => {
+          write(cache);
+          return cache;
         }),
+        budget,
+      ]).finally(() => {
+        clearTimeout(timer);
+        if (current === sweep) current = null;
+      }),
     };
     current = sweep;
     return sweep;

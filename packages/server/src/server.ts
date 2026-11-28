@@ -656,7 +656,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const abort = new AbortController();
     if (signal?.aborted) abort.abort();
     else signal?.addEventListener('abort', () => abort.abort(), { once: true });
-    const timeoutMs = options.commandLimits?.timeoutMs ?? (method === 'gc' ? GC_REPORT_BUDGET_MS : DETAILS_TIMEOUT_MS);
+    const timeoutMs =
+      options.commandLimits?.timeoutMs ??
+      (method === 'gc' ? (fresh ? 2 : 1) * GC_REPORT_BUDGET_MS : DETAILS_TIMEOUT_MS);
     let task: Promise<DetailsRead>;
     const cancel = async () => {
       abort.abort();

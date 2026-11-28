@@ -181,7 +181,9 @@ export class DesktopReports {
     const seeded = cached && this.seed(entry.target);
     if (!cached || !seeded || seeded.at <= (cached.good?.at ?? -Infinity)) return;
     cached.good = seeded;
-    if (cached.failure && cached.failure.at <= seeded.at) delete cached.failure;
+    delete cached.failure;
+    this.publish(entry);
+    this.schedule(entry);
   }
 
   /** When `entry` should read again: its settled read's expiry, or for the gc report its staleness or retry time. */

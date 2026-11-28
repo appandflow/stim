@@ -450,6 +450,7 @@ export async function executeGc(
   const chosen = opts.pressure !== undefined;
   const walk = opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {};
   let closeGitReads: (() => void) | undefined;
+  let scannedAt = '';
   try {
     let reply: GcPassReply;
     if (act) {
@@ -460,6 +461,7 @@ export async function executeGc(
       );
     } else {
       closeGitReads = openGitReads(deps.operation);
+      scannedAt = new Date().toISOString();
       reply = {
         run: await runMaintenanceAtLevel({ level: opts.pressure, act, operation: deps.operation, ...walk }),
       };
@@ -472,11 +474,10 @@ export async function executeGc(
       ...(reply.joined ? { joined: reply.joined } : {}),
     };
     if (!act && opts.json) {
-      const at = new Date().toISOString();
       const report = await collectGcReport({ measureBuildState: opts.measureBuildState }, deps);
       payload = {
         ...payload,
-        measured: { from: 'scan', at },
+        measured: { from: 'scan', at: scannedAt },
         sections: gcReportSections(report),
         inventory: await collectInventory(
           loadConfig(),
@@ -530,13 +531,21 @@ async function sharedDryRun(
   if (opts.pressure) return null;
   const cached = opts.refresh ? null : readGcReportCache();
   if (cached) return { cache: cached, from: 'cache' };
-  if (!opts.refresh && stimdLive())
-    console.error('Stim: no gc report is cached yet; asking stimd to measure one, which can take minutes.');
-  const answer = await readGcReportThroughStimd({ fresh: Boolean(opts.refresh) }, signal);
-  if (answer && answer !== 'started') return { cache: answer, from: 'stimd' };
-  console.error(
-    'Stim: no stimd answers for this Stim home, so this dry run scans in this process; the cached gc report is unchanged.',
-  );
+  if (stimdLive())
+    console.error(
+      opts.refresh
+        ? 'Stim: stimd is measuring the gc report again, which can take minutes.'
+        : 'Stim: no gc report is cached yet; asking stimd to measure one, which can take minutes.',
+    );
+  let why = 'no stimd answers for this Stim home';
+  try {
+    const answer = await readGcReportThroughStimd({ fresh: Boolean(opts.refresh) }, signal);
+    if (answer && answer !== 'started') return { cache: answer, from: 'stimd' };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    why = `stimd's gc report failed (${error instanceof Error ? error.message : String(error)})`;
+  }
+  console.error(`Stim: ${why}, so this dry run scans in this process; the cached gc report is unchanged.`);
   return null;
 }
 

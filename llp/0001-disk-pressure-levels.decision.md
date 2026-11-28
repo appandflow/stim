@@ -47,9 +47,12 @@ Maintainer decision: "could gc defaults to cached, but have refresh flag or smt"
 
 Maintainer decision: "same way automatic maintenance and desktop will work?", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
 
-Chosen by the implementing agent, not the maintainer: `--pressure` scanning in
-process, the background sweep after a stale answer, and refusing `--refresh`
-without `--dry-run`.
+Chosen by the implementing agent, not the maintainer: the `measured` field,
+answering from a cached report of any age (with a note past 15 minutes) and
+then asking for a background sweep, waiting for stimd's sweep when nothing is
+cached instead of scanning in process, reading build-state sizes only from the
+disk-usage cache in that sweep, `--pressure` scanning in process, and refusing
+`--refresh` without `--dry-run`.
 
 ## Levels and defaults
 
