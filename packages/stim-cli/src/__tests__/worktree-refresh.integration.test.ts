@@ -16,6 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
+import statusOp from '../commands/status.ts';
 import { addOp, warmOp } from '../commands/worktree.ts';
 import { runCli, type Op } from '../cli/define-op.ts';
 import { acquireWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
@@ -29,7 +30,7 @@ import {
 import { operationState } from '../engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { warmWorktreePaths } from '../workspace/worktree.ts';
-import { upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   type DepsInputs,
@@ -1415,6 +1416,38 @@ test.each([
   },
   120_000,
 );
+
+test('registers a plugin project in a worktree made with git worktree add, and status names its type', async () => {
+  const plugin = join(base, 'stim-plugin-godot');
+  write(
+    plugin,
+    'package.json',
+    JSON.stringify({
+      name: 'stim-plugin-godot',
+      stimPlugin: { kinds: { project: 1 }, project: { id: 'godot', name: 'Godot', markers: ['project.godot'] } },
+    }),
+  );
+  write(join(base, 'home'), 'config.json', JSON.stringify({ plugins: [plugin] }));
+  write(root, 'project.godot', 'config_version=5\n');
+  write(target, 'project.godot', 'config_version=5\n');
+
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).not.toContain('registers nothing in status');
+  expect(getProject(target)).not.toBeNull();
+
+  setExecutor({
+    ...getExecutor(),
+    runFile: () => '',
+    runFileAsync: async () => '',
+    runQuiet: () => null,
+    runFileQuiet: () => null,
+  });
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+  const status = await runOp(statusOp, target);
+  expect(status.stdout).toContainEqual(expect.stringContaining('project: Godot (plugin stim-plugin-godot)'));
+});
 
 describe('a refresh from the worktree root with a nested app that has its own lockfile', () => {
   let app: string;

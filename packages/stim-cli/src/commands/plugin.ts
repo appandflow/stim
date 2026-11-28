@@ -99,7 +99,7 @@ async function declaredKinds(reference: string, cwd: string): Promise<Record<str
 }
 
 // Node's resolver (require.resolve) finds a directory only through its `main` or index file, which a project plugin
-// does not have, so its package.json is read directly.
+// does not have, so the package.json of a directory that declares the project kind is read directly.
 function directoryKinds(reference: string, cwd: string): Record<string, unknown> | null {
   if (!reference.startsWith('.') && !isAbsolute(reference)) return null;
   const file = join(resolve(cwd, reference), 'package.json');
@@ -107,7 +107,7 @@ function directoryKinds(reference: string, cwd: string): Record<string, unknown>
   const manifest: unknown = JSON.parse(readFileSync(file, 'utf8'));
   const plugin = isJsonObject(manifest) ? manifest.stimPlugin : null;
   const kinds = isJsonObject(plugin) ? plugin.kinds : null;
-  return isJsonObject(kinds) ? kinds : {};
+  return isJsonObject(kinds) && kinds.project !== undefined ? kinds : null;
 }
 
 /** A relative path such as `plugins/acme` names that directory when it exists, before a package of that name. */

@@ -26,8 +26,12 @@ interface Snapshot {
 let snapshot: Snapshot | null = null;
 
 function stamp(path: string): string {
-  const stat = statSync(path, { throwIfNoEntry: false });
-  return stat ? `${stat.ino}:${stat.size}:${stat.mtimeMs}` : 'absent';
+  try {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    return stat ? `${stat.ino}:${stat.size}:${stat.mtimeMs}` : 'absent';
+  } catch (error) {
+    return `error:${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'}`;
+  }
 }
 
 function configuredReferences(): unknown[] {
@@ -115,8 +119,8 @@ export function pluginProjectIntegration(bundled: () => ReadonlyMap<string, stri
         platforms: () => [],
         validate: () => ({
           kind: 'not-an-app',
-          message: `${root} is a ${name} project, recognised through the plugin ${plugin.package}, which gives Stim no build or run for it.`,
-          remedy: `Stim manages this project's worktrees and disk with stim worktree add, list and remove; build and run it with ${name}'s own tools.`,
+          message: `The plugin ${plugin.package} recognises ${root} as a ${name} project and adds no build or run for it.`,
+          remedy: `Build and run the ${name} project with ${name}'s own tools. stim worktree add, list and remove manage worktrees of this folder.`,
         }),
       };
     },

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -143,6 +143,47 @@ test('a project plugin with no entry module is listed, tested and reported from 
     },
   });
 });
+
+test('a directory with no entry module is read directly only when it declares the project kind', async () => {
+  const transport = join(base, 'transport');
+  mkdirSync(transport);
+  writeFileSync(
+    join(transport, 'package.json'),
+    JSON.stringify({ name: 'transport', stimPlugin: { kinds: { transport: 1 } } }),
+  );
+  expect(await stim(['test', transport, '--json'], base)).toEqual({
+    exitCode: 1,
+    payload: { code: 'STIM_BAD_ARG', message: expect.stringContaining('does not resolve'), remedy: expect.any(String) },
+  });
+});
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'plugin list reports a plugins entry it cannot read instead of failing',
+  async () => {
+    const locked = join(base, 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(base, 'home', 'config.json'), JSON.stringify({ plugins: [locked] }));
+    chmodSync(locked, 0o000);
+    try {
+      const { payload, exitCode } = await stim(['list', '--json'], base);
+      expect(exitCode).toBe(0);
+      expect(payload).toMatchObject({
+        plugins: expect.arrayContaining([
+          {
+            name: locked,
+            source: 'machine',
+            kinds: {},
+            selectedBy: ['plugins'],
+            accepted: false,
+            reason: expect.stringContaining('has no readable package.json: EACCES'),
+          },
+        ]),
+      });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  },
+);
 
 test('a plugin under test sees only its scratch environment, and its output never reaches stdout', () => {
   const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));

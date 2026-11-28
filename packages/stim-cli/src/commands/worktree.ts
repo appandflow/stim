@@ -35,7 +35,7 @@ import {
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
-import { projectRegistry } from '../integrations/projects.ts';
+import { projectPluginAt, projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { prepareInstallCarry } from '../fingerprint/index-store.ts';
@@ -330,14 +330,19 @@ function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
   return resolve(root, rel);
 }
 
+function warmRegisters(path: string): boolean {
+  return isMobileProject(path) || projectPluginAt(path) !== null;
+}
+
 /**
  * The app workspace a warm prepares: the nearest app below the worktree root, or else the one app registered in
  * the source checkout, at the same place in this worktree, or else the one registered in this worktree, or else
- * the worktree root when it is the app. A monorepo root can declare react-native without being the app.
+ * the worktree root when it is the app. A monorepo root can declare react-native without being the app. A project
+ * type a plugin declares counts as an app here, since warm is the only command that registers one.
  */
 export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
   const nearest = findProjectRoot(cwd);
-  const app = nearest && isPathPrefix(target, nearest) && isMobileProject(nearest) ? nearest : null;
+  const app = nearest && isPathPrefix(target, nearest) && warmRegisters(nearest) ? nearest : null;
   if (app && app !== target) return app;
   const registered = Object.keys(loadConfig()?.projects ?? {});
   const appsUnder = (checkout: string): Set<string> => {
@@ -346,7 +351,7 @@ export function warmedWorkspace(root: string, target: string, cwd: string): stri
       const rel = relative(checkout, path);
       if (rel.startsWith('..') || isAbsolute(rel)) continue;
       const mapped = resolve(target, rel);
-      if (isMobileProject(mapped)) apps.add(mapped);
+      if (warmRegisters(mapped)) apps.add(mapped);
     }
     return apps;
   };

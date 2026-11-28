@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -206,9 +215,10 @@ test('a plugins entry makes a folder holding every marker a project with no buil
   for (const operation of ['ios', 'android', 'macos', 'dev-server'] as const) {
     const problem = projectRegistry.projectProblem(game, operation);
     expect(problem?.kind).toBe('not-an-app');
-    expect(problem?.message).toContain('is a Godot project');
-    expect(problem?.message).toContain('stim-plugin-godot');
-    expect(problem?.remedy).toContain('stim worktree add');
+    expect(problem?.message).toBe(
+      `The plugin stim-plugin-godot recognises ${game} as a Godot project and adds no build or run for it.`,
+    );
+    expect(problem?.remedy).toContain("Godot's own tools");
   }
 
   setPlugins();
@@ -223,6 +233,7 @@ test('a plugin marker in a React Native app keeps the built-in build and run', (
   expect(projectRegistry.selectIos(dir)).toMatchObject({ id: 'react-native' });
   expect(projectRegistry.selectAndroid(dir)).toMatchObject({ id: 'react-native' });
   expect(projectRegistry.projectProblem(dir, 'dev-server')).toBeNull();
+  expect(projectRegistry.projectProblem(dir, 'macos')?.message).toContain('adds no build or run for it');
 });
 
 test.each([
@@ -247,8 +258,7 @@ test.each([
   ['another integer', godot, { project: 2 }, /speaks project 2, this stim speaks 1/],
   ['another kind only', godot, { transport: 1 }, /is not a project plugin/],
 ])('a project plugin that declares %s is skipped, with the reason', (_, project, kinds, reason) => {
-  for (const marker of ['project.godot', 'export_presets.cfg', 'addons/plugin.cfg', '*.godot'])
-    write(join(dir, marker));
+  for (const marker of ['project.godot', 'export_presets.cfg', 'addons/plugin.cfg']) write(join(dir, marker));
   setPlugins(projectPlugin('stim-plugin-godot', project, kinds));
   expect(projectRegistry.findProjectRoot(dir)).toBeNull();
   expect(configuredProjectPlugins()).toEqual([
@@ -264,12 +274,38 @@ test('a package.json edit is read without a settings change, and a second plugin
   const second = projectPlugin('second', { ...godot, name: 'Second' });
   setPlugins(first, second);
   expect(configuredProjectPlugins()[0]?.problem).toMatch(/package\.json is not valid JSON/);
-  expect(projectRegistry.projectProblem(dir, 'ios')?.message).toContain('is a Second project');
+  expect(projectRegistry.projectProblem(dir, 'ios')?.message).toContain('as a Second project');
 
   projectPlugin('first', godot);
-  expect(projectRegistry.projectProblem(dir, 'ios')?.message).toContain('is a Godot project');
+  expect(projectRegistry.projectProblem(dir, 'ios')?.message).toContain('as a Godot project');
   expect(configuredProjectPlugins()[1]).toMatchObject({
     project: null,
     problem: `stimPlugin.project.id "godot" is the id of the plugin at ${first}`,
   });
 });
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a plugins entry Stim cannot read is skipped with its reason, and detection goes on',
+  () => {
+    packageAt(dir);
+    write(join(dir, 'project.godot'));
+    const locked = projectPlugin('locked', godot);
+    const open = projectPlugin('open', { ...godot, id: 'open', name: 'Open', markers: ['project.godot'] });
+    setPlugins(locked, open);
+    chmodSync(locked, 0o000);
+    try {
+      expect(projectRegistry.selectIos(dir)).toMatchObject({ id: 'react-native' });
+      expect(projectRegistry.projectProblem(dir, 'macos')?.message).toContain('as a Open project');
+      expect(configuredProjectPlugins()).toEqual([
+        expect.objectContaining({
+          project: null,
+          problem: expect.stringMatching(/has no readable package\.json: EACCES/),
+        }),
+        expect.objectContaining({ problem: null }),
+      ]);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+    expect(configuredProjectPlugins()[0]).toMatchObject({ problem: null, project: { id: 'godot' } });
+  },
+);
