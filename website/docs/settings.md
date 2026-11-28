@@ -215,7 +215,8 @@ stim settings set recording.enabled false --scope machine
 
 `engine.autoUpdate` (default `auto`): `stimd` moves the engine to the newest
 release on its channel by itself when Stim Desktop or a service installed it.
-`on` and `off` force it.
+`on` and `off` force it. `off` also stops `stimd` from updating an installed
+Stim Host to the version this release pins.
 
 ### Runaway Apple background services
 
@@ -224,7 +225,8 @@ Stim Host. It restarts only PerfPowerServices, mds_stores, mdworker_shared,
 photoanalysisd and mediaanalysisd when one uses more than 150% CPU or 2 GiB of
 memory for 10 minutes, at most once per hour. It needs administrator approval
 in **System Settings > General > Login Items & Extensions**.
-`stim service uninstall --helper` removes it.
+`stim service uninstall --helper` removes it. After Stim updates Stim Host, a
+helper newer than 0.2.0 restarts on the new version by itself.
 
 ## Old setting names
 
