@@ -164,7 +164,7 @@ deletes the worktree with its dependency folders.
 
 Known misses, accepted as best effort: an edit that keeps an older
 modification time (`cp -p`, `rsync -t`, a tar extract); a file deleted by
-hand; edits inside the directories above; an edit made inside an install
+hand; edits inside the paths above; an edit made inside an install
 window, or inside the first window once a project install moves the stamp; an
 edit to a package whose `package.json` an editor replaced (`sed -i`, save by
 rename), once an install Stim did not run follows. A dependency's own install

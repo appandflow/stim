@@ -746,9 +746,13 @@ After updating Stim Host, unregister and register the helper again.`,
   virtual-store directory included), the .bin directory of any node_modules,
   .gradle, .kotlin, .cxx and Gradle's
   build in a package's android directory or beside a Gradle build script, a
-  package's ios/build, and Pods' xcuserdata. Known misses: an edit that keeps
+  package's ios/build, expo-modules-jsi/apple's .DerivedData, .build,
+  .generated, .swiftpm and Products, Pods' xcuserdata, and what an iOS build
+  writes in Pods: a pod's .last_build_configuration,
+  artifacts/.last_build_configuration and artifacts/*.last_config, and a
+  dSYM's Contents/Resources/<UUID>.plist. Known misses: an edit that keeps
   an older modification time (cp -p, rsync -t, tar), a file deleted by hand,
-  edits in those directories, an edit inside an install window, and an edit
+  edits in those paths, an edit inside an install window, and an edit
   to a package whose package.json an editor replaced, once an install Stim
   did not run follows. A tree with no install stamp, or a directory that
   cannot be read, is kept. stim doctor, stim gc --dry-run and report-mode
