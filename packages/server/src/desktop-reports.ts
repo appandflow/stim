@@ -9,7 +9,7 @@ export const GC_REPORT_BUDGET_MS: number = 15 * 60_000;
 /** How long a failed gc refresh with no earlier report waits before a read starts another. */
 const GC_REPORT_RETRY_MS = 5 * 60_000;
 
-/** The gc report answers from its last good result at once and refreshes in the background; others wait for a read. */
+// @ref LLP 0012#the-gc-report-answers-from-its-cache -- a gc read never waits for a sweep
 const cachedReport = (target: DesktopReportTarget) => target.report === 'gc';
 
 export interface CachedReport {
@@ -83,6 +83,15 @@ export class DesktopReports {
       entry.readers--;
       stopWaiting?.();
     }
+  }
+
+  /** `get`, but while a cached report has no value yet it waits for the read under way to settle. */
+  async first(target: DesktopReportTarget): Promise<DesktopReportSnapshot> {
+    const snapshot = await this.get(target);
+    const entry = this.entries.get(reportKey(target));
+    if (snapshot.value !== null || !entry?.pending) return snapshot;
+    await entry.pending.promise;
+    return this.closed ? { pending: false, value: null, error: 'The server is closing.' } : this.snapshot(entry);
   }
 
   subscribe(target: DesktopReportTarget, listener: (snapshot: DesktopReportSnapshot) => void): () => void {
@@ -227,7 +236,7 @@ export class DesktopReports {
     if (entry.cached) {
       const { good, failure } = entry.cached;
       return {
-        pending: !good,
+        pending: !good && (entry.pending !== undefined || !failure),
         value: good?.value ?? null,
         ...(good ? { measuredAt: new Date(good.at).toISOString() } : {}),
         ...(entry.pending ? { refreshing: true } : failure ? { error: failure.message } : {}),

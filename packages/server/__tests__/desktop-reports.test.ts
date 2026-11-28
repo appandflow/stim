@@ -189,11 +189,11 @@ test('a failed gc refresh keeps the last good report, and with none says it is n
     { ok: true, report: { version: 1 } },
     { ok: false, message: 'later failed' },
   ];
-  const cache = new DesktopReports(async () => replies.shift()!);
+  const cache = new DesktopReports(async () => replies.shift() ?? { ok: false, message: 'no reply left' });
   caches.push(cache);
   expect(await cache.get(GC)).toEqual({ pending: true, value: null, refreshing: true });
   await vi.waitFor(async () => expect((await cache.get(GC)).error).toBe('first failed'));
-  expect(await cache.get(GC)).toEqual({ pending: true, value: null, error: 'first failed' });
+  expect(await cache.get(GC)).toEqual({ pending: false, value: null, error: 'first failed' });
   cache.invalidate(GC);
   await vi.waitFor(async () => expect((await cache.get(GC)).value).toEqual({ version: 1 }));
   cache.invalidate(GC);

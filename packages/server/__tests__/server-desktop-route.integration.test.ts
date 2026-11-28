@@ -67,7 +67,7 @@ import { fetchHealth } from '../src/service.ts';
 import type { InstalledService } from '../src/service-plist.ts';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { newSecret, secretValues } from '@stim-cli/core/noise-session';
-import { localConnect, setupClient, type Client } from './noise-client.ts';
+import { localConnect, settledGc, setupClient, type Client } from './noise-client.ts';
 import { captureProcessToken, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { ClaimUnavailableError, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { waitForPid } from '../../stim-cli/src/__tests__/_pid-file.ts';
@@ -763,10 +763,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       }
     }
     const client = await desktop();
-    const [first, joined] = await Promise.all([
-      client.request('desktop.reports.get', { report: 'gc' }),
-      client.request('desktop.reports.get', { report: 'gc' }),
-    ]);
+    const first = await settledGc(client);
+    const joined = await client.request('desktop.reports.get', { report: 'gc' });
     assert('result' in first && 'result' in joined);
     expect(first).toMatchObject({
       result: {
@@ -797,11 +795,16 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       'bad-request',
     );
     expect(await client.request('desktop.reports.invalidate', { report: 'gc' })).toHaveProperty('result');
-    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     expect(await client.next()).toMatchObject({
+      event: 'desktop-report',
+      snapshot: { pending: false, value: { mode: 'dry-run' }, refreshing: true },
+    });
+    const refreshed = await client.next();
+    expect(refreshed).toMatchObject({
       event: 'desktop-report',
       snapshot: { pending: false, value: { mode: 'dry-run' } },
     });
+    expect(refreshed).not.toHaveProperty('snapshot.refreshing');
     expect(stimCalls().filter((call) => /^(doctor|gc|logs)\b/.test(call.args))).toEqual([]);
   });
 
@@ -1250,14 +1253,17 @@ if (delayed) {
       env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_DAEMON: 'off' },
     });
     const client = await desktop();
-    expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
+    expect(await settledGc(client)).toMatchObject({
       error: { code: 'stim-failed', message: 'stim gc printed more than 1 bytes.' },
     });
     expect(lines).toEqual([
       expect.stringMatching(/request failed method=desktop\.reports\.get .*report=gc .*error=stim-failed$/),
     ]);
     await client.request('desktop.reports.subscribe', { report: 'gc' });
-    expect(await client.next()).toMatchObject({
+    let pushed = await client.next();
+    while ('event' in pushed && pushed.event === 'desktop-report' && pushed.snapshot.pending)
+      pushed = await client.next();
+    expect(pushed).toMatchObject({
       event: 'desktop-report',
       snapshot: { pending: false, value: null, error: 'stim gc printed more than 1 bytes.' },
     });

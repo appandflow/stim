@@ -717,10 +717,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const machineDetails = new MachineDetailsCache(() =>
     loadMachineDetails(
       async (): Promise<DetailsRead> => {
-        const snapshot = await desktopReports.get({ report: 'gc' });
+        const snapshot = await desktopReports.first({ report: 'gc' });
         return snapshot.value
           ? { ok: true, report: snapshot.value }
-          : { ok: false, message: snapshot.error ?? 'Stim is measuring storage for the first time.' };
+          : { ok: false, message: snapshot.error ?? 'stim gc did not answer.' };
       },
       loadAudit,
       () => readDetailsReport('stats'),

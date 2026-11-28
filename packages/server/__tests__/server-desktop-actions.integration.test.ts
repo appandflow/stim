@@ -37,7 +37,7 @@ import * as stimSelf from 'stim/internal/api-self';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { readAudit } from '../src/actions.ts';
-import { localConnect, type Client } from './noise-client.ts';
+import { localConnect, settledGc, type Client } from './noise-client.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
@@ -2005,7 +2005,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
       }
       await start({ env: fixture.env });
       const client = await desktop();
-      const before = await client.request('desktop.reports.get', { report: 'gc' });
+      const before = await settledGc(client);
       expect(before).toMatchObject({
         result: {
           value: {
@@ -2029,7 +2029,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
       });
       expect(existsSync(fixture.artifact)).toBe(false);
       expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
-      expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
+      expect(await settledGc(client)).not.toEqual(before);
       expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
       expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
       await vi.waitFor(() => {
