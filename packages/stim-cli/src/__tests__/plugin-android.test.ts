@@ -1,8 +1,10 @@
+import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
+import { startsWithoutLookup } from '../integrations/plugin-android.ts';
 import { androidBuildToolName } from '../devices/android.ts';
 import { getExecutor, resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -33,8 +35,12 @@ function plugin(build: Record<string, unknown>) {
   write(join(directory, 'state', 'config.json'), JSON.stringify({ plugins: [dir] }));
 }
 
-const build = (variant?: string) =>
-  buildAndroidOperation(testContext(), root, { remoteBuild: 'local', ...(variant ? { variant } : {}) });
+function build(variant?: string) {
+  const context = testContext({ cwd: root, projectRoot: root });
+  return withAmbientContext(context, () =>
+    buildAndroidOperation(context, root, { remoteBuild: 'local', abi: 'arm64-v8a', ...(variant ? { variant } : {}) }),
+  );
+}
 
 beforeEach(() => {
   directory = realpathSync(mkdtempSync(join(tmpdir(), 'stim-plugin-android-')));
@@ -166,3 +172,11 @@ test.skipIf(process.platform === 'win32')(
     expect(runs).toHaveLength(1);
   },
 );
+
+test.each([
+  ['win32', 'C:\\Godot\\Godot.EXE', true],
+  ['win32', 'C:\\tools\\export.cmd', false],
+  ['linux', '/usr/local/bin/godot', true],
+] as const)('on %s a plugin build may start %s: %s', (platform, program, allowed) => {
+  expect(startsWithoutLookup(program, platform)).toBe(allowed);
+});

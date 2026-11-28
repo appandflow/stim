@@ -23,6 +23,11 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// @ref LLP 0014#use-fixed-invocations -- on Windows only a native .exe starts without a shell or an interpreter that search the project root
+export function startsWithoutLookup(program: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform !== 'win32' || /\.exe$/i.test(program);
+}
+
 // @ref LLP 0014#use-fixed-invocations -- the manifest's program and argument list run as written, with no shell
 export function pluginAndroidProject(
   root: string,
@@ -128,6 +133,11 @@ export function pluginAndroidProject(
           return failed(
             `The plugin ${plugin.package} could not start ${executable}: it is not ${isAbsolute(executable) ? 'an executable file' : 'on PATH'}.`,
             install,
+          );
+        if (!startsWithoutLookup(program))
+          return failed(
+            `On Windows a plugin build runs only a native .exe, and the plugin ${plugin.package} resolved ${executable} to ${program}.`,
+            `Point ${manifest} at the .exe of the program.`,
           );
         const output = join(
           workspaceDir(root),

@@ -191,6 +191,9 @@ a native process with no Metro. `stim android --variant release` runs the
   the project folder only if your own `PATH` names that folder. A project
   still chooses the variant with its `android.variant` setting, and the
   program reads the project's files.
+- On Windows the file Stim finds must be a `.exe`. A script, a `.cmd` or a
+  `.bat` file fails the build: each starts through an interpreter or `cmd.exe`
+  that looks in the project folder first.
 - An argument that is exactly `{root}` becomes the project root, and one that
   is exactly `{output}` becomes a file in Stim's state for the workspace, not
   in the project. `{output}` appears exactly once, and no other argument

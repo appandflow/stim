@@ -29,15 +29,26 @@ type Stim does not bundle
 The program and its argument list come only from a `package.json` the
 machine's owner named in the machine setting `plugins`. The program is an
 absolute path, or a bare name that Stim resolves on `PATH` before the spawn; a
-relative path rejects the manifest. That lookup uses the plugin's directory
-where Windows puts the working directory ahead of `PATH` and where a relative
-`PATH` entry resolves, so neither leads into the project root. Stim fills
-`{root}` and `{output}` itself and runs the list as written, with no shell. The
-repository still controls two things: its project setting `android.variant`
-picks between the declared `debug` and `release` lists, and the program reads
-the project's files as its input.
+relative path rejects the manifest. Stim spawns the absolute result, fills
+`{root}` and `{output}` itself and runs the list as written, with no shell.
 
-Stim owns port and device selection, build selectors, and lifecycle cleanup. Fixed calls keep those choices explicit. Exact needs the owned simulator only for a native-module roster read, so it can build without booting a device when the manifest declares no modules. [Exact iOS recipe](https://github.com/appandflow/stim/pull/5397), [Exact build-only support](https://github.com/appandflow/stim/pull/5451). A plugin command keeps the rule's purpose: the person who owns the machine chose the program and its arguments, and a checkout can change neither. [Android build from a project plugin](https://github.com/appandflow/stim/issues/6599#issuecomment-7236966014).
+- The lookup reads a relative `PATH` entry, and the working directory that
+  Windows searches ahead of `PATH`, as the plugin's directory, not as the
+  project root.
+- On POSIX the spawn of an absolute path does no further lookup. A program
+  that starts other programs, as the `env` line of a script does, finds them
+  by its own rules.
+- On Windows the resolved file must be a native `.exe`, and anything else
+  fails the build before the spawn. A script starts through an interpreter and
+  a `.cmd` or `.bat` file through `cmd.exe`; both are looked up again from the
+  working directory, which is the project root.
+- An absolute entry in the user's own `PATH` can still name a folder inside
+  the checkout. Stim does not filter `PATH`.
+- The repository still controls two things: its project setting
+  `android.variant` picks between the declared `debug` and `release` lists,
+  and the program reads the project's files as its input.
+
+Stim owns port and device selection, build selectors, and lifecycle cleanup. Fixed calls keep those choices explicit. Exact needs the owned simulator only for a native-module roster read, so it can build without booting a device when the manifest declares no modules. [Exact iOS recipe](https://github.com/appandflow/stim/pull/5397), [Exact build-only support](https://github.com/appandflow/stim/pull/5451). The plugin passage is meant to keep the rule's purpose: the person who owns the machine chooses the program and its arguments, and neither the manifest rules nor Stim's lookup let a checkout replace them. The maintainer decided only that the Android target is built ([comment](https://github.com/appandflow/stim/issues/6599#issuecomment-7236966014)). The passage itself is the choice of the pull request that added it and waits for the maintainer.
 
 ## Consume an existing EAS build
 

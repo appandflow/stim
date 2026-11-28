@@ -6,10 +6,10 @@ export const PROJECT_API_VERSION = 1 as const;
 
 /**
  * One build command of a project plugin target: the executable, then its arguments. The executable is an absolute
- * path or a bare command name that Stim finds on `PATH`, never a relative path. Stim runs the list in the project
- * root with no shell. An argument that is exactly `{root}` becomes the project root and one that is exactly
- * `{output}` becomes the file Stim expects the build to write; `{output}` appears exactly once, and no other argument
- * contains a `{name}`.
+ * path or a bare command name that Stim finds on `PATH`, never a relative path, and on Windows a `.exe`. Stim runs
+ * the list in the project root with no shell. An argument that is exactly `{root}` becomes the project root and one
+ * that is exactly `{output}` becomes the file Stim expects the build to write; `{output}` appears exactly once, and
+ * no other argument contains a `{name}`.
  */
 export type ProjectPluginCommand = readonly [executable: string, ...args: string[]];
 

@@ -368,11 +368,11 @@ project.targets.android declares the one build Stim runs for the type:
 
 stim android runs that list in the project root with no shell, installs the
 APK written at {output} on the workspace's emulator and launches it as a
-native process. The executable is an absolute path or a bare name on PATH.
-{root} and {output} are whole arguments and the only placeholders; {output}
-appears once. An optional release list serves --variant release. The build is
-never cached or offloaded, and a physical or hosted device refuses. An unknown
-target key or field rejects the manifest.
+native process. The executable is an absolute path or a bare name on PATH,
+and a .exe on Windows. {root} and {output} are whole arguments and the only
+placeholders; {output} appears once. An optional release list serves
+--variant release. No cache, no offload, and no physical or hosted device.
+An unknown target key or field rejects the manifest.
 
   stim plugin list [--json]
   stim plugin test <plugin> [--json]
