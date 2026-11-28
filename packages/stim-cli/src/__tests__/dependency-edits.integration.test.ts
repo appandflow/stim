@@ -93,21 +93,31 @@ test('an untouched tree is deleted; Gradle, pnpm and tool-cache output does not 
   expect(await keptFiles()).toContain('hybrid/build/index.js');
 });
 
-test('.bin shims a version of Stim recorded as edits no longer keep the tree', async () => {
+test(".bin shims and pnpm's .package-map.json that a version of Stim recorded as edits no longer keep the tree", async () => {
   installAt(ago(HOUR));
   write(join(tree, '.bin', 'tsc'), '#!/bin/sh');
-  const shim = lstatSync(join(tree, '.bin', 'tsc'));
+  write(join(tree, '.package-map.json'), '{"packages":{}}');
+  const recorded = ['.bin/tsc', '.package-map.json'].map((rel) => {
+    const stat = lstatSync(join(tree, rel));
+    return { rel, mtimeMs: stat.mtimeMs, size: stat.size };
+  });
   const signature = treeSignature(tree);
   if (signature === null) throw new Error('the tree has no install signature');
   updateDependencyInstall(tree, (record) => ({
     ...record,
-    edits: {
-      signature,
-      files: [{ rel: '.bin/tsc', mtimeMs: shim.mtimeMs, size: shim.size }],
-      complete: true,
-      at: new Date().toISOString(),
-    },
+    edits: { signature, files: recorded, complete: true, at: new Date().toISOString() },
   }));
+
+  expect(await checkDependencyEdits(tree, { level: 'high', worktree })).toEqual({ delete: true });
+});
+
+test("pnpm's .package-map.json from an install Stim did not run after its recorded one does not keep the tree", async () => {
+  installAt(ago(0));
+  await pause();
+  recordDependencyInstall([tree]);
+  await pause();
+  write(join(tree, '.package-map.json'), '{"packages":{}}');
+  writeFileSync(join(tree, '.package-lock.json'), '{"rewritten":true}');
 
   expect(await checkDependencyEdits(tree, { level: 'high', worktree })).toEqual({ delete: true });
 });
