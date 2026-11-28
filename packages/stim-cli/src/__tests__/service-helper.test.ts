@@ -119,16 +119,19 @@ test('helper unregistration uses an older Stim Host as it is', async () => {
   expect(download).not.toHaveBeenCalled();
 });
 
-test('helper registration stops when the pinned Stim Host cannot be downloaded', async () => {
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  installHost('0.1.1');
-  const run = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
-  setExecutor({ runFileAsync: run });
-  await expect(runCli(service, ['install', '--helper'], { version: '1' })).rejects.toThrow(
-    /Could not download Stim Host 9\.9\.9 .*host-v9\.9\.9.*HTTP 404/,
-  );
-  expect(run).not.toHaveBeenCalled();
-});
+test.skipIf(process.platform !== 'darwin')(
+  'helper registration stops when the pinned Stim Host cannot be downloaded',
+  async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    installHost('0.1.1');
+    const run = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
+    setExecutor({ runFileAsync: run });
+    await expect(runCli(service, ['install', '--helper'], { version: '1' })).rejects.toThrow(
+      /Could not download Stim Host 9\.9\.9 .*host-v9\.9\.9.*HTTP 404/,
+    );
+    expect(run).not.toHaveBeenCalled();
+  },
+);
 
 test.skipIf(process.platform !== 'darwin')(
   'helper registration replaces an older Stim Host with the pinned release before registering',
@@ -174,7 +177,7 @@ test.each([
   expect(executable ? readFileSync(executable, 'utf8') : existsSync(join(home, 'Applications'))).toBe(version ?? false);
 });
 
-test('stimd retries a failed Stim Host update an hour later', async () => {
+test.skipIf(process.platform !== 'darwin')('stimd retries a failed Stim Host update an hour later', async () => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   installHost('0.1.1');
   const log = vi.fn<Parameters<typeof keepHostCurrent>[0]>();

@@ -178,7 +178,21 @@ export async function installHostApp(
   sources: string = SOURCES,
   release: HostRelease | null = RELEASE,
 ): Promise<HostApp> {
-  return withInstallLock(() => installUnlocked(sources, release));
+  return pinnedInstalled(release) ?? withInstallLock(() => installUnlocked(sources, release));
+}
+
+function pinnedInstalled(release: HostRelease | null): HostApp | null {
+  const flavor = release ? FLAVORS.release : FLAVORS.dev;
+  const app = join(homedir(), 'Applications', `${flavor.name}.app`);
+  const executable = join(app, 'Contents', 'MacOS', 'stim-host');
+  if (existsSync(app) && bundleIdOf(app) !== flavor.bundleId) {
+    throw new ServiceError(
+      `${app} is not a ${flavor.name} bundle (${flavor.bundleId}); not replacing it. Move it away, then run install again.`,
+    );
+  }
+  return release && existsSync(executable) && infoValue(app, 'CFBundleShortVersionString') === release.version
+    ? { app, executable, ...flavor, adHoc: false, replaced: false }
+    : null;
 }
 
 const INSTALL_LOCK = () => join(homedir(), '.stim', 'machine', 'host', 'install');
@@ -197,13 +211,8 @@ async function installUnlocked(sources: string, release: HostRelease | null): Pr
   const applications = join(homedir(), 'Applications');
   const app = join(applications, `${flavor.name}.app`);
   const executable = join(app, 'Contents', 'MacOS', 'stim-host');
-  if (existsSync(app) && bundleIdOf(app) !== flavor.bundleId) {
-    throw new ServiceError(
-      `${app} is not a ${flavor.name} bundle (${flavor.bundleId}); not replacing it. Move it away, then run install again.`,
-    );
-  }
-  if (release && existsSync(executable) && infoValue(app, 'CFBundleShortVersionString') === release.version)
-    return { app, executable, ...flavor, adHoc: false, replaced: false };
+  const installed = pinnedInstalled(release);
+  if (installed) return installed;
   mkdirSync(applications, { recursive: true });
   for (const entry of readdirSync(applications)) {
     const owner = STALE_TEMPORARY.exec(entry)?.[1];
