@@ -7,7 +7,17 @@ import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
 import { dirname, sep } from 'node:path';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { gcReportFile, type DaemonPressure, type PressureLevel, type RescuedCopy } from '@stim-cli/core/state';
+import {
+  GC_REPORT_CACHE_VERSION,
+  GC_REPORT_STALE_MS,
+  gcReportFile,
+  readGcReportCache,
+  type DaemonPressure,
+  type GcReportCache,
+  type GcReportPart,
+  type PressureLevel,
+  type RescuedCopy,
+} from '@stim-cli/core/state';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
@@ -18,7 +28,8 @@ import { claimFailure } from '../ownership-claim.ts';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import { runMaintenanceAtLevel, type LevelRun, type LevelRunAction } from '../stimd/passes/level-run.ts';
 import type { GcPassReply } from '../daemon/disk-owner.ts';
-import { runGcThroughStimd } from '../daemon/client.ts';
+import { readGcReportThroughStimd, runGcThroughStimd, stimdLive } from '../daemon/client.ts';
+import { formatLongDuration } from '../command-output.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { openGcLog, type GcLog } from './gc/log.ts';
 import type { GcResult } from './gc/results.ts';
@@ -67,6 +78,8 @@ const LEVELS: readonly PressureLevel[] = ['normal', 'high', 'critical'];
 
 interface GcOptions {
   dryRun?: boolean;
+  /** With `dryRun`, a sweep that starts now instead of the cached report. */
+  refresh?: boolean;
   /** The level to run at instead of the measured one. */
   pressure?: PressureLevel;
   json?: boolean;
@@ -106,6 +119,11 @@ export interface GcRunPayload {
   rescued?: RescuedCopy[];
   /** The pass already under way that this acting run joined instead of starting its own, and whose actions it lists. */
   joined?: GcPassReply['joined'];
+  /**
+   * On a dry run, where its answer comes from: stimd's cached report, a sweep stimd ran for it, or a scan in this
+   * process; `at` is when the reading started, and `parts` when each part of a shared report started.
+   */
+  measured?: { from: 'cache' | 'stimd' | 'scan'; at: string; parts?: Record<GcReportPart, string> };
 }
 
 export type GcPayload = GcRunPayload | GcRefusal;
@@ -290,24 +308,50 @@ function resultOf(action: LevelRunAction): GcResult {
 
 /** `stim gc --dry-run --json` as the API's read-only `gc()` returns it: the plan and the storage sections. */
 export async function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
+  return (await readGcParts(options, deps)).payload;
+}
+
+/**
+ * stimd's shared gc report: the dry-run payload as `readGcReport` reads it without measuring build state, with when each
+ * part started and the plan fields the plain summary reads, for `$STIM_HOME/gc/report-cache.json`.
+ */
+export async function sweepGcReport(operation: StimContext): Promise<GcReportCache> {
+  const { payload, run, parts } = await readGcParts({ measureBuildState: false }, { operation });
+  return {
+    version: GC_REPORT_CACHE_VERSION,
+    measuredAt: parts.plan,
+    parts,
+    report: { ...payload },
+    run: { usage: run.usage, cachePaths: run.cachePaths, sweptCachePaths: run.sweptCachePaths },
+  };
+}
+
+async function readGcParts(
+  options: GcReadOptions,
+  deps: GcDependencies,
+): Promise<{ payload: GcRunPayload; run: LevelRun; parts: Record<GcReportPart, string> }> {
   const closeGitReads = openGitReads(deps.operation);
   try {
+    const plan = new Date().toISOString();
     const run = await runMaintenanceAtLevel({
       level: options.pressure,
       act: false,
       operation: deps.operation,
       walkUnknown: false,
     });
+    const sections = new Date().toISOString();
     const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
+    const inventoryAt = new Date().toISOString();
+    const inventory = await collectInventory(
+      loadConfig(),
+      report.deadProjects,
+      deps.operation?.env ?? process.env,
+      deps.operation,
+    );
     return {
-      ...runPayload(run, false),
-      sections: gcReportSections(report),
-      inventory: await collectInventory(
-        loadConfig(),
-        report.deadProjects,
-        deps.operation?.env ?? process.env,
-        deps.operation,
-      ),
+      payload: { ...runPayload(run, false), sections: gcReportSections(report), inventory },
+      run,
+      parts: { plan, sections, inventory: inventoryAt },
     };
   } finally {
     closeGitReads();
@@ -406,6 +450,7 @@ export async function executeGc(
   const chosen = opts.pressure !== undefined;
   const walk = opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {};
   let closeGitReads: (() => void) | undefined;
+  let scannedAt = '';
   try {
     let reply: GcPassReply;
     if (act) {
@@ -416,6 +461,7 @@ export async function executeGc(
       );
     } else {
       closeGitReads = openGitReads(deps.operation);
+      scannedAt = new Date().toISOString();
       reply = {
         run: await runMaintenanceAtLevel({ level: opts.pressure, act, operation: deps.operation, ...walk }),
       };
@@ -431,6 +477,7 @@ export async function executeGc(
       const report = await collectGcReport({ measureBuildState: opts.measureBuildState }, deps);
       payload = {
         ...payload,
+        measured: { from: 'scan', at: scannedAt },
         sections: gcReportSections(report),
         inventory: await collectInventory(
           loadConfig(),
@@ -471,8 +518,70 @@ function saveGcDetail(lines: readonly string[]): string {
   }
 }
 
+/**
+ * A dry run's answer from stimd's shared report: the cached one, or one stimd sweeps when `--refresh` asks or none is
+ * cached; null when the dry run scans in this process instead: for `--pressure`, since the report holds only the
+ * measured level's plan, and, after saying so, when no stimd answers.
+ */
+async function sharedDryRun(
+  opts: GcOptions,
+  signal?: AbortSignal,
+): Promise<{ cache: GcReportCache; from: 'cache' | 'stimd' } | null> {
+  // @ref LLP 0001#stim-gc-deletes-by-default -- a dry run answers from stimd's cached report unless --refresh
+  if (opts.pressure) return null;
+  const cached = opts.refresh ? null : readGcReportCache();
+  if (cached) return { cache: cached, from: 'cache' };
+  if (stimdLive())
+    console.error(
+      opts.refresh
+        ? 'Stim: stimd is measuring the gc report again, which can take minutes.'
+        : 'Stim: no gc report is cached yet; asking stimd to measure one, which can take minutes.',
+    );
+  let why = 'no stimd answers for this Stim home';
+  try {
+    const answer = await readGcReportThroughStimd({ fresh: Boolean(opts.refresh) }, signal);
+    if (answer && answer !== 'started') return { cache: answer, from: 'stimd' };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    why = `stimd's gc report failed (${error instanceof Error ? error.message : String(error)})`;
+  }
+  console.error(`Stim: ${why}, so this dry run scans in this process; the cached gc report is unchanged.`);
+  return null;
+}
+
+function printSharedDryRun(
+  { cache, from }: { cache: GcReportCache; from: 'cache' | 'stimd' },
+  opts: GcOptions,
+): GcExecutionResult {
+  const payload = {
+    ...cache.report,
+    measured: { from, at: cache.measuredAt, parts: cache.parts },
+  } as unknown as GcRunPayload;
+  const age = Date.now() - Date.parse(cache.measuredAt);
+  if (from === 'cache' && age > GC_REPORT_STALE_MS) {
+    console.error(`Stim: the cached gc report is ${formatLongDuration(age)} old; pass --refresh for one measured now.`);
+    void readGcReportThroughStimd({ background: true }).catch(() => {});
+  }
+  if (opts.json) return { payload, exitCode: 0 };
+  const run = { ...cache.report, ...cache.run } as unknown as LevelRun;
+  console.log(
+    from === 'cache'
+      ? `Cached report measured ${formatLongDuration(age)} ago, at ${cache.measuredAt}; stim gc --dry-run --refresh measures again.`
+      : `Measured by stimd at ${cache.measuredAt}; the cached report is updated.`,
+  );
+  const detail = saveGcDetail(gcDetailLines(run));
+  for (const line of formatGcSummary(run, { act: false, chosen: false, detail })) console.log(line);
+  return { payload, exitCode: 0, run };
+}
+
 function gcRetryCommand(opts: GcOptions): string {
-  return ['stim gc', opts.dryRun && '--dry-run', opts.pressure && `--pressure ${opts.pressure}`, opts.json && '--json']
+  return [
+    'stim gc',
+    opts.dryRun && '--dry-run',
+    opts.refresh && '--refresh',
+    opts.pressure && `--pressure ${opts.pressure}`,
+    opts.json && '--json',
+  ]
     .filter(Boolean)
     .join(' ');
 }
@@ -488,15 +597,23 @@ export async function runGc(
 ): Promise<void> {
   let result: GcExecutionResult;
   try {
-    result = await executeGc(
-      opts,
-      deps,
-      (stream, line) => {
-        if (stream === 'stderr' || opts.json) console.error(line);
-        else console.log(line);
-      },
-      pass,
-    );
+    if (opts.refresh && !opts.dryRun)
+      throw Object.assign(new Error('--refresh applies to --dry-run; an acting gc reads every candidate fresh.'), {
+        code: 'STIM_BAD_ARG',
+        remedy: 'Run stim gc --dry-run --refresh, or stim gc without --refresh.',
+      });
+    const shared = opts.dryRun ? await sharedDryRun(opts, deps.operation?.signal) : null;
+    if (shared) result = printSharedDryRun(shared, opts);
+    else
+      result = await executeGc(
+        opts,
+        deps,
+        (stream, line) => {
+          if (stream === 'stderr' || opts.json) console.error(line);
+          else console.log(line);
+        },
+        pass,
+      );
   } catch (error) {
     const failure =
       claimFailure(error, gcRetryCommand(opts)) ??
@@ -547,7 +664,15 @@ const gc: Op = defineOp({
   description:
     "Run one automatic maintenance pass now at the measured pressure level, or the level --pressure names, and delete what it takes. At every level: workspace build outputs and shared caches over their caps, what the age sweep removes (on macOS and Linux, Jest's default cache directory in the temp directory included), unused iOS simulator runtimes, registry entries and owned devices of removed projects, stale records, workspace logs over their cap, finished linked worktrees past their grace period, and every workspace idle for idle.dormantDays reduced to its minimal size: build outputs, owned devices, and a linked worktree's node_modules and Pods; a source (main) checkout's node_modules and Pods go after those, once it is idle for idle.sourceDormantDays (7 days). At high, the pressure ladder to its end as well: parked devices, shared caches trimmed to half their caps, Cargo targets trimmed, idle dev servers and their build outputs, idle workspaces made dormant, idle Gradle daemons, unpinned Gradle versions and temporary leftovers. At critical, every shared cache Stim registered emptied, every device recording and archived content, then the caches of other tools (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM) through their own commands where they have one, when --pressure critical names the level, or when a measured critical still leaves the disk under the critical level after the earlier rungs. The ladder only reports the node_modules and Pods of idle worktrees and source checkouts and the finished worktrees it would have removed, as kept. Finished worktrees go only while maintenance.removeFinishedWorktrees is true, and clean pushed idle ones only while maintenance.removeIdleWorktrees is true. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep.",
   options: {
-    dryRun: { flags: '--dry-run', description: 'report what the run would delete, and delete nothing' },
+    dryRun: {
+      flags: '--dry-run',
+      description:
+        "report what the run would delete, and delete nothing; answers from stimd's cached report and its age when one exists",
+    },
+    refresh: {
+      flags: '--refresh',
+      description: 'with --dry-run, have stimd measure again now and update the cached report',
+    },
     pressure: {
       flags: '--pressure <level>',
       description: 'run at this level, normal, high or critical, instead of the measured one',

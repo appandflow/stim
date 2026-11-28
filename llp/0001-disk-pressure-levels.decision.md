@@ -27,6 +27,34 @@ Maintainer decision: "no need for replacement we will release 2.0 I tihnk so
 can be breaking", 2026-11-11. The removed flags (`--delete`, `--cache`,
 `--older-than`, `--worktrees`) are unknown options with no replacement hint.
 
+A dry run answers from stimd's cached gc report, the one Stim Desktop and
+phone machine details read (LLP 0012, "The gc report answers from its cache"),
+and prints when it was measured; `--json` adds `measured` with the report's
+time and each part's (plan, sections, inventory). `--refresh` asks stimd for a
+sweep that starts after the request, or the one that follows a sweep under
+way, and waits for it. With no cached report the dry run waits for stimd's
+sweep. A cached report older than 15 minutes still answers, says so, and asks
+stimd to sweep in the background. When it needs a sweep and no stimd answers
+or stimd refuses, or with `--pressure`, whose level the cached plan does not
+hold, the dry run scans in its own process as before and leaves the cache
+alone.
+`--refresh` without `--dry-run` is refused: an acting `stim gc`, a maintenance
+pass and Stim Desktop's Free space never read the cached report and read each
+candidate again before they delete. The cached sweep runs in report mode, so it
+reads saved marks and disk-usage sizes the way the daemon's report mode does
+and starts no size walk; an unmeasured size stays unknown.
+
+Maintainer decision: "could gc defaults to cached, but have refresh flag or smt", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
+
+Maintainer decision: "same way automatic maintenance and desktop will work?", 2026-11-27, quoted on [#6606](https://github.com/appandflow/stim/issues/6606).
+
+Chosen by the implementing agent, not the maintainer: the `measured` field,
+answering from a cached report of any age (with a note past 15 minutes) and
+then asking for a background sweep, waiting for stimd's sweep when nothing is
+cached instead of scanning in process, reading build-state sizes only from the
+disk-usage cache in that sweep, `--pressure` scanning in process, and refusing
+`--refresh` without `--dry-run`.
+
 ## Levels and defaults
 
 Free disk on any volume Stim writes to sets the level:
@@ -498,8 +526,9 @@ Compatibility and breaking changes).
 ## Every gc joins a pass under way
 
 An acting `stim gc` and the API's `collectGarbage` send one `gc.run` request
-to this home's stimd and run nothing in their own process; `gc --dry-run` and
-`previewGarbage` stay there, since they only read. The request starts a stimd
+to this home's stimd and run nothing in their own process; `previewGarbage`
+stays there, since it only reads, and `gc --dry-run` reads stimd's cached
+report (above) or, without one it can use, scans there. The request starts a stimd
 whatever `daemon.mode` says, as Metro does; under `off` that stimd serves the
 request as a command it runs and exits after it. With no stimd the request
 fails with `STIM_DAEMON_UNAVAILABLE`. stimd's config and environment apply to
@@ -780,7 +809,7 @@ also holds the newest activity the walk read, and the walk reads at
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo
   pressure candidate selection and saved dependency/worktree reports, not the other maintenance stages or normal
-  size/cap passes. `stim gc --dry-run` retains discovery previews.
+  size/cap passes. A `stim gc --dry-run` that scans in its own process retains discovery previews.
 
 Reason: planning dominates a pressure pass (rung 5's evidence loop took about
 13,300 s for 0 bytes on the loaded MacBook), and every pass repeats the

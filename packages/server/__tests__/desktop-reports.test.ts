@@ -1,4 +1,5 @@
-import { DesktopReports, GC_REPORT_STALE_MS } from '../src/desktop-reports.ts';
+import { DesktopReports } from '../src/desktop-reports.ts';
+import { GC_REPORT_STALE_MS } from '@stim-cli/core/state';
 import type { DetailsRead } from '../src/machine-details.ts';
 import type { DesktopReportSnapshot, DesktopReportTarget } from '../src/protocol.ts';
 
@@ -144,10 +145,10 @@ test('invalidation aborts the stale load so a waiting get takes only the fresh o
 });
 
 function gcLoads() {
-  const loads: { load: ReturnType<typeof deferred<DetailsRead>>; signal: AbortSignal }[] = [];
-  const load = (_target: DesktopReportTarget, signal: AbortSignal) => {
+  const loads: { load: ReturnType<typeof deferred<DetailsRead>>; signal: AbortSignal; fresh: boolean }[] = [];
+  const load = (_target: DesktopReportTarget, signal: AbortSignal, fresh: boolean) => {
     const next = deferred<DetailsRead>();
-    loads.push({ load: next, signal });
+    loads.push({ load: next, signal, fresh });
     return next.promise;
   };
   return { loads, load };
@@ -212,6 +213,36 @@ test('a failed gc refresh keeps the last good report, waits before retrying, and
   expect((await cache.get(GC)).value).toEqual({ version: 1 });
   await vi.advanceTimersByTimeAsync(60_000);
   expect(reads).toBe(3);
+});
+
+test('the gc report takes a newer sweep from the cache file and its own measured time, and asks fresh after an invalidation', async () => {
+  vi.useFakeTimers({ now: 10 * GC_REPORT_STALE_MS });
+  const { loads, load } = gcLoads();
+  let seeded = { value: { version: 1 }, at: Date.now() };
+  const cache = new DesktopReports(load, undefined, undefined, () => seeded);
+  caches.push(cache);
+  expect((await cache.get(GC)).value).toEqual({ version: 1 });
+  seeded = { value: { version: 2 }, at: Date.now() + 1 };
+  expect(await cache.get(GC)).toMatchObject({ value: { version: 2 }, measuredAt: new Date(seeded.at).toISOString() });
+  expect(loads).toHaveLength(0);
+
+  cache.invalidate(GC);
+  await cache.get(GC);
+  expect(loads.map((entry) => entry.fresh)).toEqual([true]);
+  await vi.advanceTimersByTimeAsync(60_000);
+  const sweptAt = Date.now() - 30_000;
+  seeded = { value: { version: 3 }, at: sweptAt };
+  loads[0]?.load.resolve({ ok: true, report: { version: 3 }, measuredAt: sweptAt });
+  await vi.waitFor(async () =>
+    expect(await cache.get(GC)).toEqual({
+      pending: false,
+      value: { version: 3 },
+      measuredAt: new Date(sweptAt).toISOString(),
+    }),
+  );
+  await vi.advanceTimersByTimeAsync(GC_REPORT_STALE_MS);
+  await cache.get(GC);
+  expect(loads.map((entry) => entry.fresh)).toEqual([true, false]);
 });
 
 test('a subscription to a seeded gc report refreshes it once the seed is stale', async () => {

@@ -54,6 +54,7 @@ import {
   readHostedSessions,
   readHostedAppMetadata,
   readServiceRecords,
+  gcReportCacheFile,
   type HostedDeviceSession,
   type CrashLoop,
   type DaemonMode,
@@ -64,6 +65,8 @@ import {
   type BuildEndMarker,
 } from '@stim-cli/core/state';
 import { startBuildEndTimer } from './build-end-timer.ts';
+import { createGcReportSweeps } from './gc-report.ts';
+import { writeCacheFile } from '../cache-file.ts';
 import {
   ClaimUnavailableError,
   claimFailure,
@@ -511,6 +514,7 @@ function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
       'lease.prepare',
       'lease.acquire',
       'gc.run',
+      'gc.report',
     ].includes(String(op))
   );
 }
@@ -1134,6 +1138,14 @@ async function runStimdInner(
       }
     },
   );
+  const gcReports = createGcReportSweeps(
+    () => threads.report(),
+    (cache) => writeCacheFile(gcReportCacheFile(), cache),
+    (error) => {
+      if (isUnverifiedCleanup(error) && !contain(error))
+        failBackground(error, 'gc report cleanup could not be verified');
+    },
+  );
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {
@@ -1644,6 +1656,28 @@ async function runStimdInner(
       )
       .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
   };
+  const requestGcReport = (socket: Socket, params: Record<string, unknown>) => {
+    const asked = gcReports.sweep(params.fresh === true ? Date.now() : undefined);
+    if (params.background === true) {
+      asked.catch((error: unknown) => log('warn', 'gc_report_failed', errorText(error)));
+      socket.end(`${JSON.stringify({ op: 'gc.report.started' })}\n`);
+      return;
+    }
+    void asked
+      .then(
+        (cache) => ({ op: 'gc.report.done', cache }),
+        (error: unknown) => ({
+          op: 'error',
+          code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
+          message: `The gc report failed: ${errorText(error)}`,
+          remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
+        }),
+      )
+      .then((answer) => {
+        if (!socket.destroyed) socket.end(`${JSON.stringify(answer)}\n`);
+        return undefined;
+      });
+  };
   const server = createServer((socket) => {
     markSegment('connection');
     open.add(socket);
@@ -2068,6 +2102,8 @@ async function runStimdInner(
             });
         } else if (op === 'gc.run') {
           requestGc(socket, isJsonObject(message.params) ? message.params : {}, reply);
+        } else if (op === 'gc.report') {
+          requestGcReport(socket, isJsonObject(message.params) ? message.params : {});
         } else if (op === 'gc.cancel') itemCancels.get(socket)?.();
         else if (op === 'gc.detach') gcDetached.add(socket);
         else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
@@ -2284,6 +2320,7 @@ async function runStimdInner(
           keepClaim();
           keepDaemon = true;
         }
+        gcReports.close();
         await awaited('the worker threads', threads.close());
         return undefined;
       })

@@ -9,6 +9,7 @@ import type {
   DaemonLadderAction,
   BuildEndMarker,
   GcMarkHealth,
+  GcReportCache,
   DaemonMode,
 } from '@stim-cli/core/state';
 import type {
@@ -46,7 +47,8 @@ type HistoryReply = { roots: HistoryRoot[] | null; marks: GcMarkHealth; holders?
 type MarkRefreshRequest = { marks: MarkRefreshInput };
 type MarkRefreshReply = { marks: true };
 
-type ThreadName = 'passes' | 'measure';
+type ThreadName = 'passes' | 'measure' | 'report';
+type ReportRequest = { report: true };
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
 type ThreadInput = PassesInput | { cwd: string; buildEnd?: BuildEndMarker[] };
 interface TrashDrainReply {
@@ -98,7 +100,8 @@ type FromThread =
         | TrashDrainReply
         | DirtyReply
         | HistoryReply
-        | MarkRefreshReply;
+        | MarkRefreshReply
+        | GcReportCache;
       failure?: Failure;
     }
   | { type: 'gcAction'; id: number; action: LevelRunAction }
@@ -128,7 +131,8 @@ interface Thread {
           | TrashDrainReply
           | DirtyReply
           | HistoryReply
-          | MarkRefreshReply,
+          | MarkRefreshReply
+          | GcReportCache,
       ) => void;
       reject: (error: Error) => void;
     }
@@ -141,6 +145,8 @@ interface Thread {
 
 export interface ThreadTable {
   marks(input: MarkRefreshInput): { result: Promise<MarkRefreshReply>; leave(): void };
+  /** Reads the gc report on the report thread, beside the passes thread's work; `leave` stops the read. */
+  report(): { result: Promise<GcReportCache>; leave(): void };
   drainTrash(critical: boolean): Promise<void>;
   /** Runs one job on the named thread, starting the thread first when it is not running. One job per thread at a time. */
   run(name: ThreadName, input: ThreadInput): Promise<DaemonLadderAction[]>;
@@ -319,14 +325,16 @@ export function createThreadTable(
       | TrashDrainReply
       | DirtyReply
       | HistoryReply
-      | MarkRefreshReply,
+      | MarkRefreshReply
+      | GcReportCache,
   >(
     type: 'ladder' | 'gc',
     input: object,
     onAction?: (action: LevelRunAction) => void,
     output?: StimContext['output'],
+    name: ThreadName = 'passes',
   ) => {
-    const thread = threads.get('passes') ?? start('passes');
+    const thread = threads.get(name) ?? start(name);
     if (thread.idle) clearTimeout(thread.idle);
     thread.idle = null;
     const id = ++nextLadder;
@@ -341,7 +349,8 @@ export function createThreadTable(
             | TrashDrainReply
             | DirtyReply
             | HistoryReply
-            | MarkRefreshReply,
+            | MarkRefreshReply
+            | GcReportCache,
         ) => void,
         reject,
       });
@@ -361,6 +370,21 @@ export function createThreadTable(
   return {
     marks(input) {
       const { thread, id, result } = ask<MarkRefreshReply>('gc', { marks: input, cwd: process.cwd() });
+      return {
+        result,
+        leave: () => {
+          if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
+        },
+      };
+    },
+    report() {
+      const { thread, id, result } = ask<GcReportCache>(
+        'gc',
+        { report: true, cwd: process.cwd() },
+        undefined,
+        undefined,
+        'report',
+      );
       return {
         result,
         leave: () => {
@@ -525,8 +549,16 @@ else if (thread && parentPort) {
     | TrashDrainInput
     | DirtyRequest
     | HistoryRequest
-    | MarkRefreshRequest,
-    GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply | DirtyReply | HistoryReply | MarkRefreshReply
+    | MarkRefreshRequest
+    | ReportRequest,
+    | GcPassReply
+    | GcItemResult
+    | HeadroomReply
+    | TrashDrainReply
+    | DirtyReply
+    | HistoryReply
+    | MarkRefreshReply
+    | GcReportCache
   >(
     port,
     processContext,
@@ -585,6 +617,14 @@ else if (thread && parentPort) {
           },
           input.critical ? CRITICAL : TRASH,
         );
+      if ('report' in input) {
+        const controller = new AbortController();
+        const operation = open(controller.signal);
+        return {
+          result: import('../commands/gc.ts').then(({ sweepGcReport }) => sweepGcReport(operation)),
+          leave: () => controller.abort(),
+        };
+      }
       if ('marks' in input) {
         const controller = new AbortController();
         const operation = open(controller.signal);

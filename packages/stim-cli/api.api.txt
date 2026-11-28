@@ -575,6 +575,7 @@
 [*] interface GcOptions { @@1 json?: boolean;
 [*] interface GcOptions { @@1 measureBuildState?: boolean;
 [*] interface GcOptions { @@1 pressure?: PressureLevel;
+[*] interface GcOptions { @@1 refresh?: boolean;
 [*] interface GcPassReply {
 [*] interface GcPassReply { @@1 joined?: {
 [*] interface GcPassReply { @@1 rescued?: RescuedCopy[];
@@ -603,12 +604,16 @@
 [*] interface GcRunPayload { @@1 inventory?: GcInventory | null;
 [*] interface GcRunPayload { @@1 joined?: GcPassReply["joined"];
 [*] interface GcRunPayload { @@1 level: PressureLevel;
+[*] interface GcRunPayload { @@1 measured?: {
 [*] interface GcRunPayload { @@1 mode: "dry-run" | "delete";
 [*] interface GcRunPayload { @@1 outside: LevelRun["outside"];
 [*] interface GcRunPayload { @@1 pressure: DaemonPressure;
 [*] interface GcRunPayload { @@1 rescued?: RescuedCopy[];
 [*] interface GcRunPayload { @@1 results: GcResult[];
 [*] interface GcRunPayload { @@1 sections?: GcJsonSections;
+[*] interface GcRunPayload { @@2 at: string;
+[*] interface GcRunPayload { @@2 from: "cache" | "stimd" | "scan";
+[*] interface GcRunPayload { @@2 parts?: Record<GcReportPart, string>;
 [*] interface GcStaleMarkEvidence {
 [*] interface GcStaleMarkEvidence { @@1 intervalMs: number;
 [*] interface GcStaleMarkEvidence { @@1 markedAt: string;
@@ -1639,6 +1644,7 @@
 [*] type GcItem = { @branch4 @@1 kind: "gradle-daemons";
 [*] type GcPayload = GcRunPayload | GcRefusal;
 [*] type GcReadOptions = Pick<GcOptions, "pressure" | "measureBuildState">;
+[*] type GcReportPart = "plan" | "sections" | "inventory";
 [*] type GcResultKind = "archive" | "device" | "parkedDevice" | "parkedHostedDevice" | "idleDevice" | "deviceRecord" | "workspaceOutputs" | "worktreeDependencies" | "recording" | "workspaceDirectory" | "project" | "buildLock" | "buildSlot" | "deviceLease" | "easSession" | "worktree" | "cache" | "statusCache" | "tempLeftover" | "trash" | "watchmanRoot" | "watchman" | "gradleDaemon" | "gradleVersion" | "kotlinDaemon" | "devServer" | "workspaceLogs" | "ledgerEntry" | "easLedgerEntry" | "homeEntry" | "runtime" | "toolCache";
 [*] type GcResultStatus = "done" | "kept" | "failed" | "pending";
 [*] type GeneratedTickets = Map<string, {

@@ -596,7 +596,9 @@ test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScr
       ),
     },
   });
-  expect(normalize(result)).toEqual(normalize(JSON.parse(json)));
+  const { measured, ...cli } = JSON.parse(json);
+  expect(measured).toMatchObject({ from: 'scan' });
+  expect(normalize(result)).toEqual(normalize(cli));
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('parity');
 });
 

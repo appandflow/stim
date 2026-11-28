@@ -3,7 +3,7 @@ import { measureDependencyTrees } from '../../daemon/dependencies.ts';
 import { createMaintenanceLane, runDiskPass, runLadderToFree, type MaintenanceLane } from '../../daemon/passes.ts';
 import type { ThreadTable } from '../../stimd/threads.ts';
 import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
-import { runGcPass } from '../../commands/gc.ts';
+import { runGcPass, sweepGcReport } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
 import { dirtyGcMarks } from '../../fsevents-state.ts';
 import { refreshKnownMarks } from '../../daemon/mark-refresh.ts';
@@ -27,6 +27,13 @@ export function createThreadTable(log: Log = () => {}): ThreadTable {
       };
     },
     drainTrash: async () => {},
+    report() {
+      const stop = new AbortController();
+      return {
+        result: sweepGcReport(processContext(process.cwd(), AbortSignal.any([stop.signal, controller.signal]))),
+        leave: () => stop.abort(),
+      };
+    },
     async run() {
       await measureDependencyTrees(processContext(process.cwd(), controller.signal)).catch((error: unknown) => {
         throw controller.signal.aborted && !(error instanceof Error && 'reportCleanup' in error)

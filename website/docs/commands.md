@@ -400,6 +400,7 @@ shows `measuring` and an old size shows its age until the next run.
 
 ```bash
 stim gc --dry-run
+stim gc --dry-run --refresh
 stim gc
 stim gc --pressure critical --dry-run
 ```
@@ -407,7 +408,12 @@ stim gc --pressure critical --dry-run
 Runs one automatic maintenance pass now and deletes what it finds: build
 outputs and caches over their caps, orphaned devices and records of removed
 projects, old archives, finished worktrees past their grace period, and the
-regenerable files of idle workspaces. Preview with `--dry-run` first.
+regenerable files of idle workspaces. Preview with `--dry-run` first. A dry
+run answers from the report `stimd` last measured, the one Stim Desktop shows,
+and prints its age; `--refresh` has `stimd` measure again now, which can take
+minutes on a machine with many checkouts. With no cached report and no
+`stimd`, or with `--pressure`, the dry run scans in its own process. `stim gc` itself always
+reads what it deletes fresh.
 It also stops orphaned EAS sessions of the current Expo project. A pnpm patch
 edit folder or a Solana keypair is copied to `$STIM_HOME/rescued` before its
 folder goes, kept 30 days and listed by `gc`. `--pressure high` or `critical`

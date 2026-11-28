@@ -361,8 +361,8 @@ export interface StimClient {
  * The client an engine of any Stim build runs: operation names and options keep the names they had when
  * builds started routing operations to each other, so a client of one build can call an engine of another.
  */
-/** stimd's background gc report: `budgetMs` replaces the 60 second report budget, and `record` saves the result. */
-export type EngineGcOptions = StimGcOptions & { budgetMs?: number; record?: true };
+/** The gc report stim-server reads in its own thread when no stimd answers: `budgetMs` replaces the 60 second budget. */
+export type EngineGcOptions = StimGcOptions & { budgetMs?: number };
 
 export interface EngineClient extends Omit<StimClient, 'previewGarbage' | 'run' | 'diagnostics'> {
   gc(options?: EngineGcOptions): Promise<StimGcReport>;

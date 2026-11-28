@@ -967,6 +967,11 @@ RULES
                   AVD name or path behind it, or null
   joined          { startedAt, trigger, level } of the pass it joined,
                   whose actions it lists
+  measured        on a dry run, { from, at, parts }: from is cache
+                  (stimd's cached report), stimd (a sweep it ran for this
+                  run) or scan (this process); at is when the reading
+                  started; parts gives plan, sections and inventory
+                  times for a shared report
   inventory       present on a dry run only. Report only, except the
                   unused simulator runtimes gc deletes.
                   { devices, runtimes, systemImages, notices }

@@ -9,11 +9,7 @@ import {
   validRunId,
   userHome,
   easMachineStateRoot,
-  gcReportCacheFile,
-  GC_REPORT_CACHE_VERSION,
-  type GcReportCache,
 } from '@stim-cli/core/state';
-import { writeCacheFile } from '../cache-file.ts';
 import { phaseLine } from '../command-output.ts';
 import { stopWorkspaceNow } from '../commands/stop.ts';
 import { runReload } from '../commands/reload.ts';
@@ -362,7 +358,7 @@ export function createLocalStim(options: EngineOptions): EngineClient {
         );
         return task;
       }),
-    gc: ({ signal, pressure, measureBuildState, budgetMs, record }: EngineGcOptions = {}) => {
+    gc: ({ signal, pressure, measureBuildState, budgetMs }: EngineGcOptions = {}) => {
       if (pressure !== undefined && !GC_LEVELS.includes(pressure))
         return Promise.reject(
           new StimError({
@@ -375,7 +371,6 @@ export function createLocalStim(options: EngineOptions): EngineClient {
         'gc',
         signal,
         async (context) => {
-          const measuredAt = new Date().toISOString();
           const result = await readGcReport(
             { pressure, measureBuildState },
             {
@@ -384,12 +379,6 @@ export function createLocalStim(options: EngineOptions): EngineClient {
             },
           );
           if ('code' in result) throw new StimError(result);
-          if (record)
-            writeCacheFile(gcReportCacheFile(), {
-              version: GC_REPORT_CACHE_VERSION,
-              measuredAt,
-              report: { ...result },
-            } satisfies GcReportCache);
           return result;
         },
         budgetMs,

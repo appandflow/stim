@@ -77,25 +77,51 @@ export function readGcLog(file: string = gcLogFile()): (GcLogRecord | GcLogEntry
     .toSorted((a, b) => a.ts - b.ts);
 }
 
-export const GC_REPORT_CACHE_VERSION = 1;
+export const GC_REPORT_CACHE_VERSION = 2;
+
+/** A cached gc report older than this is stale: a read starts a new sweep; about three of the slowest sweeps seen (#6606). */
+export const GC_REPORT_STALE_MS: number = 15 * 60_000;
+
+/** The parts of a gc report, in the order a sweep reads them: the maintenance plan, the storage sections, the inventory. */
+export type GcReportPart = 'plan' | 'sections' | 'inventory';
 
 export interface GcReportCache {
   version: typeof GC_REPORT_CACHE_VERSION;
   /** When the sweep that produced `report` started, as an ISO time. */
   measuredAt: string;
+  /** When the sweep started reading each part, as ISO times: no row of a part is older than its time. */
+  parts: Record<GcReportPart, string>;
+  /** The dry-run payload `stim gc --dry-run --json` prints. */
   report: Record<string, unknown>;
+  /** The plan's internal fields the plain dry-run summary reads; carries no compatibility. */
+  run: Record<string, unknown>;
 }
+
+const isTime = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value));
 
 /** The cached gc report, or null when it is missing, of another version or does not parse; it is rebuildable. */
 export function readGcReportCache(file: string = gcReportCacheFile()): GcReportCache | null {
-  const value = readJsonObject(file);
+  return parseGcReportCache(readJsonObject(file));
+}
+
+/** `value` as a gc report cache entry, or null when it is not one of this version. */
+export function parseGcReportCache(value: unknown): GcReportCache | null {
   if (
-    !value ||
+    !isJsonObject(value) ||
     value.version !== GC_REPORT_CACHE_VERSION ||
-    typeof value.measuredAt !== 'string' ||
-    !Number.isFinite(Date.parse(value.measuredAt)) ||
-    !isJsonObject(value.report)
+    !isTime(value.measuredAt) ||
+    !isJsonObject(value.parts) ||
+    !isJsonObject(value.report) ||
+    !isJsonObject(value.run)
   )
     return null;
-  return { version: GC_REPORT_CACHE_VERSION, measuredAt: value.measuredAt, report: value.report };
+  const { plan, sections, inventory } = value.parts;
+  if (!isTime(plan) || !isTime(sections) || !isTime(inventory)) return null;
+  return {
+    version: GC_REPORT_CACHE_VERSION,
+    measuredAt: value.measuredAt,
+    parts: { plan, sections, inventory },
+    report: value.report,
+    run: value.run,
+  };
 }

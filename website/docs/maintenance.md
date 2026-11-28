@@ -21,6 +21,10 @@ use stay. It is on by default and off in CI. Preview what it would do now:
 
 <StimTabs code="stim gc --dry-run" />
 
+The preview answers from the report `stimd` last measured, the same one Stim
+Desktop shows, and says how old it is. Add `--refresh` to measure again now,
+for example right after adding or removing worktrees.
+
 ## Phases
 
 A workspace moves through these as it sits unused:

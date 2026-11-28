@@ -7,6 +7,7 @@ test('a worker cleanup refusal stays visible after the lane settles', async () =
   const threads: ThreadTable = {
     marks: () => ({ result: Promise.resolve({ marks: true as const }), leave() {} }),
     drainTrash: async () => {},
+    report: () => ({ result: new Promise(() => {}), leave: () => {} }),
     run: async () => {
       throw failure;
     },

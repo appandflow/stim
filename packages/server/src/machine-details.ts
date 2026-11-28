@@ -4,7 +4,10 @@ import type { BuildClientSummary, BuildMachineReport, MachineDetails } from './p
 
 const MACHINE_DETAILS_TTL_MS = 60_000;
 
-export type DetailsRead = { ok: true; report: Record<string, unknown> } | { ok: false; message: string };
+/** A report read; `measuredAt`, in epoch milliseconds, is when a shared read that produced `report` started. */
+export type DetailsRead =
+  | { ok: true; report: Record<string, unknown>; measuredAt?: number }
+  | { ok: false; message: string };
 
 const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
 
