@@ -124,17 +124,28 @@ export async function scanSourceWrites(
     } catch (error) {
       return unreadable(dir, error);
     }
+    const outputs = entries.filter((entry) => SKIPPED_WHERE_IGNORED.has(entry.name)).map((entry) => entry.name);
+    let ignored = new Set<string>();
+    if (outputs.length) {
+      if (left() < 0) return outOfTime();
+      const at = relative(root, dir);
+      const listed = await gitQuietAsync(root, ['check-ignore', '-z', '--stdin'], {
+        signal,
+        timeoutMs: Math.max(1, left()),
+        input: outputs.map((name) => join(at, name)).join('\0'),
+        untrimmed: true,
+      });
+      ignored = new Set(
+        (listed ?? '')
+          .split('\0')
+          .filter(Boolean)
+          .map((path) => path.split(/[\\/]/).pop() ?? ''),
+      );
+    }
     for (const entry of entries) {
       if (ALWAYS_SKIPPED.has(entry.name)) continue;
       const path = join(dir, entry.name);
-      if (SKIPPED_WHERE_IGNORED.has(entry.name)) {
-        if (left() < 0) return outOfTime();
-        const ignored = await gitQuietAsync(root, ['check-ignore', '-q', '--', relative(root, path)], {
-          signal,
-          timeoutMs: Math.max(1, left()),
-        });
-        if (ignored !== null) continue;
-      }
+      if (ignored.has(entry.name)) continue;
       const busy = pendingRead() && (await waiting(left, signal, waitedOut));
       if (busy) return busy;
       let mtime: number;
