@@ -1,10 +1,10 @@
 import { testContext } from './_context.ts';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
 import { androidBuildToolName } from '../devices/android.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { makeExecutor, makeExitingChild } from './_factories.ts';
 
@@ -61,8 +61,13 @@ beforeEach(() => {
     return 0;
   };
   vi.spyOn(console, 'error').mockImplementation(() => {});
+  useExecutor((name) => join(directory, 'bin', name));
+});
+
+function useExecutor(findExecutable: Executor['findExecutable']) {
   setExecutor(
     makeExecutor({
+      findExecutable,
       spawn: (file, args = [], options) => {
         runs.push({ file, args, cwd: options?.cwd });
         const code = exportApk(args.at(-1) ?? '');
@@ -77,7 +82,7 @@ beforeEach(() => {
       },
     }),
   );
-});
+}
 
 afterEach(() => {
   resetExecutor();
@@ -89,7 +94,9 @@ afterEach(() => {
 test('a declared Android build runs the plugin command in the project root and takes the APK it wrote outside the tree', async () => {
   const debug = await build();
   const output = join(workspaceDir(root), 'plugin-build', 'android-debug.apk');
-  expect(runs).toEqual([{ file: 'export-tool', args: ['--path', root, '--debug', output], cwd: root }]);
+  expect(runs).toEqual([
+    { file: join(directory, 'bin', 'export-tool'), args: ['--path', root, '--debug', output], cwd: root },
+  ]);
   expect(debug).toMatchObject({
     androidPackage: 'dev.example.game',
     variant: 'debug',
@@ -135,3 +142,27 @@ test('a variant the plugin declares no command for refuses before anything runs'
   });
   expect(runs).toEqual([]);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a bare executable name runs the file found on PATH, never one of that name in the project root',
+  async () => {
+    resetExecutor();
+    const lookup = getExecutor().findExecutable;
+    for (const dir of [root, join(directory, 'bin')]) {
+      write(join(dir, 'export-tool'), '#!/bin/sh\n');
+      chmodSync(join(dir, 'export-tool'), 0o755);
+    }
+    vi.stubEnv('PATH', ['.', '', join(directory, 'bin')].join(delimiter));
+    useExecutor(lookup);
+
+    await build();
+    expect(runs.map((run) => run.file)).toEqual([join(directory, 'bin', 'export-tool')]);
+
+    rmSync(join(directory, 'bin', 'export-tool'));
+    await expect(build()).rejects.toMatchObject({
+      code: 'STIM_BUILD_FAILED',
+      message: 'The plugin stim-plugin-game could not start export-tool: it is not on PATH.',
+    });
+    expect(runs).toHaveLength(1);
+  },
+);

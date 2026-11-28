@@ -185,17 +185,22 @@ a native process with no Metro. `stim android --variant release` runs the
 `release` list when the plugin declares one.
 
 - Each list is the executable and its arguments. Stim runs it in the project
-  root as written, with no shell, and takes nothing for it from the project.
+  root as written, with no shell.
+- The executable is an absolute path or a bare command name that Stim finds
+  on `PATH`. A relative path rejects the manifest, so the program comes from
+  the project folder only if your own `PATH` names that folder. A project
+  still chooses the variant with its `android.variant` setting, and the
+  program reads the project's files.
 - An argument that is exactly `{root}` becomes the project root, and one that
   is exactly `{output}` becomes a file in Stim's state for the workspace, not
-  in the project. `{output}` appears exactly once, and no other argument has
-  the form `{name}`.
+  in the project. `{output}` appears exactly once, and no other argument
+  contains a `{name}`.
 - The command writes one signed, standalone APK there. Stim reads the package
   name from the APK.
 - The build is never cached and never runs on a build machine, and a physical
   or hosted device refuses. `stim ios`, `stim macos` and `stim start` still
   refuse.
-- The executable has to be on `PATH`, with whatever it needs to build: for
+- The executable needs whatever it builds with on the machine: for
   Godot, the export templates of its version and the Android SDK path and
   keystore in its editor settings. A Godot export also writes `.import` and
   `.uid` files next to new assets in the project.

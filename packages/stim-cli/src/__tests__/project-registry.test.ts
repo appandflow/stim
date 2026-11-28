@@ -307,6 +307,24 @@ test.each([
     /build\.debug holds "\{preset\}"; \{root\} and \{output\} are the only placeholders/,
   ],
   [
+    'a placeholder inside a longer argument',
+    androidTarget({ debug: ['godot', '--path={root}', '{output}'] }),
+    { project: 1 },
+    /build\.debug holds "--path=\{root\}"; \{root\} and \{output\} are the only placeholders, each as a whole argument/,
+  ],
+  [
+    'an executable at a relative path',
+    androidTarget({ debug: ['tools/export.sh', '{output}'] }),
+    { project: 1 },
+    /build\.debug starts with "tools\/export\.sh"; the executable is an absolute path or a bare command name/,
+  ],
+  [
+    'an executable with surrounding space',
+    androidTarget({ debug: [' ', '{output}'] }),
+    { project: 1 },
+    /build\.debug starts with " "; the executable is an absolute path or a bare command name/,
+  ],
+  [
     'an output that is not an APK',
     androidTarget({ output: 'aab' }),
     { project: 1 },

@@ -1,10 +1,10 @@
 import { mkdir, rm, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { skippedMissReason } from '../cache/miss-reason.ts';
 import { androidProcessRuntime } from '../commands/android/launch.ts';
 import { resolveVariant } from '../commands/android/support.ts';
 import { planFlagRefusal, planPayload } from '../commands/build-plan.ts';
-import { androidHome } from '../devices/android.ts';
+import { androidHome, findBuildTool } from '../devices/android.ts';
 import { validateDeviceSlot } from '../devices/device-slots.ts';
 import { runCaptured } from '../engine/deps.ts';
 import type { BuildAndroidResult } from '../engine/gradle.ts';
@@ -23,10 +23,10 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// @ref LLP 0014#use-fixed-invocations -- the manifest's argument list runs as written, with no shell and nothing from the repository
+// @ref LLP 0014#use-fixed-invocations -- the manifest's program and argument list run as written, with no shell
 export function pluginAndroidProject(
   root: string,
-  plugin: { name: string; package: string },
+  plugin: { name: string; package: string; dir: string },
   { build }: ProjectPluginAndroidTarget,
 ): AndroidProject {
   const uncached = `the plugin ${plugin.package} builds this ${plugin.name} project with its own command, on this machine and with no cache`;
@@ -99,7 +99,36 @@ export function pluginAndroidProject(
       compile: async (): Promise<BuildAndroidResult> => {
         if (!operation) throw new Error('A plugin Android build requires an operation context.');
         const signal = runCancellationSignal(operation) ?? operation.signal;
-        const command = (buildPlan.release && build.release) || build.debug;
+        const failed = (
+          reason: string,
+          remedy: string,
+          run?: { transcript: string[]; durationMs: number },
+        ): BuildAndroidResult => ({
+          ok: false,
+          code: 'STIM_BUILD_FAILED',
+          reason,
+          remedy,
+          diagnostics: [],
+          truncated: 0,
+          lastLines: run?.transcript.slice(-TAIL_LINES) ?? [],
+          durationMs: run?.durationMs ?? 0,
+        });
+        const [executable, ...declared] = (buildPlan.release && build.release) || build.debug;
+        const manifest = `the Android build command in the package.json of the plugin ${plugin.package}`;
+        const sdk = androidHome(operation.env);
+        if (!findBuildTool(['apksigner'], { home: sdk }) || !findBuildTool(['aapt'], { home: sdk }))
+          return failed(
+            `Stim verifies the APK that a plugin builds with apksigner and aapt, and the Android SDK at ${sdk} does not have both.`,
+            'Install the Android SDK build-tools, or set ANDROID_HOME to an SDK that has them, then retry.',
+          );
+        // @ref LLP 0014#use-fixed-invocations -- a bare name resolves on PATH from the plugin's directory, never from the project root
+        const program = getExecutor().findExecutable(executable, { cwd: plugin.dir, env: operation.env });
+        const install = `Install ${executable}${isAbsolute(executable) ? '' : ' and put it on PATH'}, or correct ${manifest}.`;
+        if (!program)
+          return failed(
+            `The plugin ${plugin.package} could not start ${executable}: it is not ${isAbsolute(executable) ? 'an executable file' : 'on PATH'}.`,
+            install,
+          );
         const output = join(
           workspaceDir(root),
           'plugin-build',
@@ -107,11 +136,9 @@ export function pluginAndroidProject(
         );
         await mkdir(dirname(output), { recursive: true });
         await rm(output, { force: true });
-        const [executable, ...declared] = command;
-        const args = declared.map((arg) => (arg === '{root}' ? root : arg === '{output}' ? output : arg));
         const run = await runCaptured({
-          cmd: executable,
-          args,
+          cmd: program,
+          args: declared.map((arg) => (arg === '{root}' ? root : arg === '{output}' ? output : arg)),
           cwd: root,
           env: operation.env,
           spawn: (file, spawnArgs, options) => getExecutor().spawn(file, spawnArgs, options),
@@ -123,40 +150,26 @@ export function pluginAndroidProject(
           label: 'build',
           estimateMs: estimates().coldBuildMs,
         });
-        const failed = (reason: string, remedy: string): BuildAndroidResult => ({
-          ok: false,
-          code: 'STIM_BUILD_FAILED',
-          reason,
-          remedy,
-          diagnostics: [],
-          truncated: 0,
-          lastLines: run.transcript.slice(-TAIL_LINES),
-          durationMs: run.durationMs,
-        });
-        const manifest = `the Android build command in the package.json of the plugin ${plugin.package}`;
         if (run.error)
           return failed(
             `The plugin ${plugin.package} could not start ${executable}: ${message(run.error)}`,
-            `Install ${executable} and put it on PATH, or correct ${manifest}.`,
+            install,
+            run,
           );
         if (run.code !== 0)
           return failed(
             `The Android build command of the plugin ${plugin.package} (${executable}) ${run.code === null ? `was stopped by ${run.signal ?? 'a signal'}` : `exited with code ${run.code}`}.`,
             `Read the build log, fix the ${plugin.name} project or ${manifest}, then retry.`,
+            run,
           );
         if (!(await stat(output).catch(() => null))?.isFile())
           return failed(
             `The Android build command of the plugin ${plugin.package} (${executable}) exited with code 0 and wrote no APK at ${output}.`,
             `Check that ${manifest} writes its APK to the {output} argument.`,
+            run,
           );
         try {
-          const { androidPackage } = await inspectApk(
-            output,
-            androidHome(operation.env),
-            target.abi,
-            operation,
-            signal,
-          );
+          const { androidPackage } = await inspectApk(output, sdk, target.abi, operation, signal);
           return {
             ok: true,
             apkPath: output,
@@ -170,6 +183,7 @@ export function pluginAndroidProject(
           return failed(
             `The APK that the plugin ${plugin.package} built could not be verified: ${message(error)}`,
             `Make ${manifest} write one signed, standalone APK for the emulator's ABI.`,
+            run,
           );
         }
       },

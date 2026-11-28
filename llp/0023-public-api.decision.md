@@ -107,8 +107,9 @@ internals, and its integer may change in a minor release like the other two.
   list in the project root with no shell
   ([LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations)),
   installs the APK it wrote at `{output}` on the workspace's owned emulator
-  and launches it as a native process. `{root}` and `{output}` are whole
-  arguments and the only placeholders. The build is never cached or
+  and launches it as a native process. The executable is an absolute path or
+  a bare name found on `PATH`, never a relative path. `{root}` and `{output}`
+  are whole arguments and the only placeholders. The build is never cached or
   offloaded, and a physical or hosted device refuses.
 - A match that serves an operation yields it to a bundled integration that
   serves the same operation in the same root, so a plugin never takes a build

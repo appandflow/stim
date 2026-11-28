@@ -139,7 +139,7 @@ export function pluginProjectIntegration(bundled: () => ReadonlyMap<string, stri
               android: async () =>
                 (await import('./plugin-android.ts')).pluginAndroidProject(
                   root,
-                  { name, package: plugin.package },
+                  { name, package: plugin.package, dir: plugin.dir },
                   android,
                 ),
             }

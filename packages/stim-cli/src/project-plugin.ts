@@ -5,10 +5,11 @@ import { isJsonObject } from '@stim-cli/core/state';
 export const PROJECT_API_VERSION = 1 as const;
 
 /**
- * One build command of a project plugin target: the executable, then its arguments. Stim runs it in the project root
- * as an argument list with no shell. An argument that is exactly `{root}` becomes the project root and one that is
- * exactly `{output}` becomes the file Stim expects the build to write; `{output}` appears exactly once, and no other
- * argument has the form `{name}`.
+ * One build command of a project plugin target: the executable, then its arguments. The executable is an absolute
+ * path or a bare command name that Stim finds on `PATH`, never a relative path. Stim runs the list in the project
+ * root with no shell. An argument that is exactly `{root}` becomes the project root and one that is exactly
+ * `{output}` becomes the file Stim expects the build to write; `{output}` appears exactly once, and no other argument
+ * contains a `{name}`.
  */
 export type ProjectPluginCommand = readonly [executable: string, ...args: string[]];
 
@@ -117,21 +118,30 @@ function markersError(markers: unknown): string | null {
     : `stimPlugin.project.markers holds ${JSON.stringify(bad)}; a marker is the name of a file directly in the project root, with no path separator and no glob character`;
 }
 
-const PLACEHOLDER = /^\{[^{}]*\}$/;
+const PLACEHOLDER = /\{\w+\}/;
 
 function unknownKey(value: Record<string, unknown>, known: readonly string[]): string | undefined {
   return Object.keys(value).find((key) => !known.includes(key));
 }
 
+// @ref LLP 0014#use-fixed-invocations -- the executable is an absolute path or a bare name, never a path into the checkout
 function readCommand(command: unknown, at: string): { command: ProjectPluginCommand } | { error: string } {
   const [executable, ...args] = isStrings(command) ? command : [];
   if (!isStrings(command) || executable === undefined || command.includes(''))
     return { error: `${at} must be an array of non-empty strings: the executable, then its arguments` };
-  const reserved = command.find((arg) => PLACEHOLDER.test(arg) && arg !== '{root}' && arg !== '{output}');
+  if (
+    executable !== executable.trim() ||
+    PLACEHOLDER.test(executable) ||
+    (!isAbsolute(executable) && /[\\/]/.test(executable))
+  )
+    return {
+      error: `${at} starts with ${JSON.stringify(executable)}; the executable is an absolute path or a bare command name found on PATH`,
+    };
+  const reserved = args.find((arg) => PLACEHOLDER.test(arg) && arg !== '{root}' && arg !== '{output}');
   if (reserved !== undefined)
-    return { error: `${at} holds ${JSON.stringify(reserved)}; {root} and {output} are the only placeholders` };
-  if (PLACEHOLDER.test(executable))
-    return { error: `${at} starts with ${JSON.stringify(executable)}; the first entry is the executable` };
+    return {
+      error: `${at} holds ${JSON.stringify(reserved)}; {root} and {output} are the only placeholders, each as a whole argument`,
+    };
   const outputs = args.filter((arg) => arg === '{output}').length;
   return outputs === 1
     ? { command: [executable, ...args] }
